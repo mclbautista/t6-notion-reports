@@ -1,0 +1,12 @@
+# Own compose file, separate from the gateway's. Deploy: `git pull && docker compose up -d --build`.
+# Rollback: `PSR_TAG=<previous> docker compose up -d` (see "Rollback" in the README).
+services:
+  psr-brief:
+    build: .
+    image: psr-brief:${PSR_TAG:-latest}
+    platform: linux/amd64
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data            # SQLite file lives here; host dir owned by uid 1001
+      - ./config.yaml:/app/config.yaml:ro

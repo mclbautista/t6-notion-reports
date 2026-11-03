@@ -1,0 +1,8 @@
+# Non-secret configuration. Copy to config.yaml (mounted read-only into the container).
+# The secret NOTION_TOKEN goes in .env, never here. Every key is validated at boot; a bad
+# value fails the boot with a message naming the key.
+# Quote the ids: an all-digit id is read by YAML as a number.
+
+projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projects data source id
+contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
+database_path: /app/data/psr.db

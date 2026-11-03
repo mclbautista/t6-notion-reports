@@ -4,9 +4,45 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 (per-coordinator diffs) and the meeting minutes. Sends nothing itself: delivery goes through the
 Telegram gateway's `POST /notify`.
 
-Status: early. Done: Notion fetcher, snapshot store (kinds, baseline, removed, content hash), diff core,
-`snapshot` command. Not done: PM Notes parsing, briefing text, minutes draft, gateway client.
-
-    NOTION_TOKEN=... python -m t6_psr_brief snapshot --kind manual --projects-ds <id> --contacts-ds <id>
+Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila). Not done: briefing
+text, minutes draft, gateway client.
 
     pip install -e '.[dev]' && pytest
+
+## Run on the Mac mini
+
+psr-brief runs as its own container on the T6 Mac mini (Intel, Colima), next to the gateway, with its
+own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 18:00
+Asia/Manila time. It does not catch up missed slots: if the container is down at 11:00, take one by hand.
+
+Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_TOKEN` in `.env`
+(see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
+its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
+
+### Deploy
+
+    git clone https://github.com/mclbautista/t6-psr-brief && cd t6-psr-brief   # first time only
+    cp config.example.yaml config.yaml && cp .env.example .env                 # fill both in
+    mkdir -p data && sudo chown 1001:1001 data && chmod 0700 data
+    git pull && docker compose up -d --build
+    docker compose logs -f psr-brief      # expect: serving db=... / scheduler next=... kind=...
+
+Logs carry one line per job run with counts only (`snapshot id=... kind=monday baseline=True
+changed=... unchanged=... removed=...`). No secrets, no note text.
+
+### Rollback
+
+Each build is tagged `psr-brief:<PSR_TAG>` (default `latest`). Tag before deploying, then roll back:
+
+    docker tag psr-brief:latest psr-brief:previous      # before the new deploy
+    PSR_TAG=previous docker compose up -d               # roll back
+    # or: git checkout <old-commit> && docker compose up -d --build
+
+`./data` is never touched by a rollback. Snapshots are append-only.
+
+### Manual snapshot
+
+    docker compose run --rm psr-brief snapshot --config /app/config.yaml --kind manual
+
+`--kind` is `monday`, `friday` or `manual`. The first snapshot ever taken is flagged as the
+baseline (planned: Mon 2026-11-09 11:00, after Cyril's go-ahead).
