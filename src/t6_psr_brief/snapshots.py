@@ -194,3 +194,19 @@ def latest_snapshot_ids(conn: sqlite3.Connection, n: int = 2) -> list[int]:
     """Newest first."""
     return [r[0] for r in conn.execute(
         "SELECT snapshot_id FROM snapshots ORDER BY snapshot_id DESC LIMIT ?", (n,))]
+
+
+def default_diff_pair(conn: sqlite3.Connection) -> tuple[int, int] | None:
+    """(old, new): the Monday snapshot before the latest Friday snapshot, and that Friday.
+
+    None when either does not exist yet.
+    """
+    friday = conn.execute(
+        "SELECT snapshot_id FROM snapshots WHERE kind = 'friday' ORDER BY snapshot_id DESC LIMIT 1"
+    ).fetchone()
+    if not friday:
+        return None
+    monday = conn.execute(
+        "SELECT snapshot_id FROM snapshots WHERE kind = 'monday' AND snapshot_id < ? "
+        "ORDER BY snapshot_id DESC LIMIT 1", (friday[0],)).fetchone()
+    return (monday[0], friday[0]) if monday else None

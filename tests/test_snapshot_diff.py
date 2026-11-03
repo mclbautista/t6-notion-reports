@@ -45,7 +45,8 @@ def test_field_change_added_removed():
     assert changes["p2"].kind == "removed"
     assert changes["p3"].kind == "added"
     fields = {f.field: (f.old, f.new) for f in changes["p1"].changes}
-    assert fields == {"Stage": ("Offline", "Online"), "PM Notes": ("", "new note")}
+    assert fields == {"Stage": ("Offline", "Online")}
+    assert changes["p1"].notes.text_diff == ["+ new note"]
 
 
 def test_whitespace_only_change_is_not_a_change():
@@ -66,4 +67,5 @@ def test_group_by_coordinator_and_unassigned():
         [rec("p1", Stage="Online"), rec("p2", Stage="Online", **{"T6 Post Coordinator": []})],
     )
     grouped = group_by_coordinator(diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b)))
-    assert set(grouped) == {"Pio", "(unassigned)"}
+    assert set(grouped.by_coordinator) == {"c1"}
+    assert [c.page_id for c in grouped.no_coordinator] == ["p2"]
