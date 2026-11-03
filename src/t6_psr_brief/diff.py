@@ -1,7 +1,6 @@
 """Diff two snapshots: added, removed and per-field changes, PM Notes compared by block."""
 from __future__ import annotations
 
-import difflib
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
@@ -97,18 +96,17 @@ def group_by_coordinator(changes: list[ProjectChange]) -> CoordinatorGroups:
     return CoordinatorGroups(by_coordinator, no_coordinator)
 
 
-def last_updated_text(notes: object, snapshot_date: date) -> str:
-    when = last_updated(notes if isinstance(notes, str) else None, snapshot_date)
+def last_updated_text(when: date | None) -> str:
     return f"{when:%b} {when.day}" if when else "no notes yet"
 
 
-def format_diff(changes: list[ProjectChange], new_date: date | None = None) -> str:
+def format_diff(changes: list[ProjectChange]) -> str:
     """Readable summary: one section per coordinator, then projects with none (digest only)."""
     if not changes:
         return "No changes."
     groups = group_by_coordinator(changes)
     out: list[str] = []
-    for _id, (name, items) in sorted(groups.by_coordinator.items(), key=lambda kv: kv[1][0].lower()):
+    for name, items in sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower()):
         out += [f"== {name} ==", *_format_items(items)]
     if groups.no_coordinator:
         out += ["== No coordinator (digest only) ==", *_format_items(groups.no_coordinator)]
@@ -118,7 +116,7 @@ def format_diff(changes: list[ProjectChange], new_date: date | None = None) -> s
 def _format_items(items: list[ProjectChange]) -> list[str]:
     lines: list[str] = []
     for ch in items:
-        lines.append(f"[{ch.kind}] {ch.name} · {ch.health or 'no Health'}")
+        lines.append(f"[{ch.kind}] {ch.name} · {ch.health or 'no Health'} · notes: {last_updated_text(ch.last_updated)}")
         for fc in ch.changes:
             lines.append(f"    {fc.field}: {_show(fc.old)} → {_show(fc.new)}")
         if ch.notes:
@@ -126,7 +124,7 @@ def _format_items(items: list[ProjectChange]) -> list[str]:
                 lines.append(f"    PM Notes ({bc.kind}):")
                 lines += [f"      {ln}" for ln in bc.block.text.splitlines()]
             for ln in ch.notes.text_diff or []:
-                lines.append(f"    PM Notes (+): {ln}")
+                lines.append(f"    PM Notes {ln}")
     return lines
 
 
@@ -155,9 +153,10 @@ def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChan
     if not new.blocks:
         if squash(old_text) == squash(new_text):
             return None
-        before = {squash(ln) for ln in old_text.splitlines()}
-        added = [squash(ln) for ln in new_text.splitlines() if squash(ln) and squash(ln) not in before]
-        return NotesChange(text_diff=added or [])
+        before = [squash(ln) for ln in old_text.splitlines() if squash(ln)]
+        after = [squash(ln) for ln in new_text.splitlines() if squash(ln)]
+        lines = [f"+ {ln}" for ln in after if ln not in before] + [f"- {ln}" for ln in before if ln not in after]
+        return NotesChange(text_diff=lines) if lines else None
     old_keys = {b.key for b in old.blocks}
     old_dates = {b.header_date for b in old.blocks if b.header_date}
     blocks = [

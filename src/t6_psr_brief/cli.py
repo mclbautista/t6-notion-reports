@@ -76,6 +76,13 @@ def _diff(args) -> int:
         print(f"no database at {db}", file=sys.stderr)
         return 2
     conn = connect(db)
+    try:
+        return _diff_conn(conn, args)
+    finally:
+        conn.close()
+
+
+def _diff_conn(conn, args) -> int:
     if args.old is None and args.new is None:
         pair = default_diff_pair(conn)
         if pair is None:
@@ -88,11 +95,11 @@ def _diff(args) -> int:
         return 2
     else:
         old_id, new_id = args.old, args.new
-    try:
-        old_info, new_info = snapshot_info(conn, old_id), snapshot_info(conn, new_id)
-    except TypeError:
+    if not all(conn.execute("SELECT 1 FROM snapshots WHERE snapshot_id = ?", (i,)).fetchone()
+               for i in (old_id, new_id)):
         print("unknown snapshot id", file=sys.stderr)
         return 2
+    old_info, new_info = snapshot_info(conn, old_id), snapshot_info(conn, new_id)
     old_on, new_on = _local_date(old_info.taken_at), _local_date(new_info.taken_at)
     print(f"diff snapshot {old_id} ({old_info.kind}, {old_on}) → {new_id} ({new_info.kind}, {new_on})")
     print(format_diff(diff_snapshots(load_snapshot(conn, old_id), load_snapshot(conn, new_id), old_on, new_on)))

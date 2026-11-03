@@ -11,7 +11,7 @@ from .snapshots import squash
 _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
            "august", "september", "october", "november", "december")
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-_HEADER = re.compile(r"^\W*as\s*of\b[\s.,:;-]*(?P<rest>.*)$", re.IGNORECASE)
+_HEADER = re.compile(r"^\s*as\s*of\b[\s.,:;-]*(?P<rest>.*)$", re.IGNORECASE)
 _BULLET = re.compile(r"^\s*[•\-*·–]+\s*")
 _DATE = re.compile(r"^(?P<month>[A-Za-z]{3,})\.?\s*(?P<day>\d{1,2})\b[\s.,:;-]*(?P<tail>.*)$")
 
@@ -25,7 +25,9 @@ class Block:
     @property
     def key(self) -> tuple[str, ...]:
         """Compare form: the text, not the header date; bullet markers and whitespace ignored."""
-        return tuple(squash(b) for b in self.bullets if squash(b))
+        bullets = tuple(squash(b) for b in self.bullets if squash(b))
+        # Without a parseable date the header text is all that tells blocks apart.
+        return bullets if self.header_date and bullets else (squash(self.header), *bullets)
 
     @property
     def text(self) -> str:
@@ -70,8 +72,8 @@ def _header_block(line: str, rest: str, snapshot_date: date) -> Block:
     if not (m and month):
         return Block(line, None)
     when = _infer_year(month, int(m.group("day")), snapshot_date)
-    block = Block(line, when)
     tail = m.group("tail").strip()
+    block = Block(line[: len(line) - len(tail)].rstrip() if tail else line, when)
     if tail:
         block.bullets.append(_BULLET.sub("", tail).strip())
     return block

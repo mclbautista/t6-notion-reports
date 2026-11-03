@@ -46,7 +46,7 @@ def test_note_without_headers_falls_back_to_text_diff():
     old = {"p": proj(notes="Waiting on VBM")}
     new = {"p": proj(notes="Waiting on VBM\nQC done")}
     (ch,) = run(old, new)
-    assert ch.notes.blocks == [] and ch.notes.text_diff == ["QC done"]
+    assert ch.notes.blocks == [] and ch.notes.text_diff == ["+ QC done"]
     assert run(old, {"p": proj(notes="Waiting   on VBM")}) == []
 
 
@@ -111,3 +111,24 @@ def test_format_diff_is_readable():
     assert "Stage: Offline → Online" in out and "Online booked" in out
     assert out.index("== No coordinator (digest only) ==") > out.index("== Pio ==")
     assert format_diff([]) == "No changes."
+
+
+def test_plain_text_diff_reports_removed_lines_and_ignores_reorder():
+    old = {"p": proj(notes="Waiting on VBM\nQC done")}
+    (ch,) = run(old, {"p": proj(notes="Waiting on VBM")})
+    assert ch.notes.text_diff == ["- QC done"]
+    assert run(old, {"p": proj(notes="QC done\nWaiting on VBM")}) == []
+
+
+def test_header_tail_is_not_duplicated_and_mid_block_as_of_bullet_stays_a_bullet():
+    from t6_psr_brief.pm_notes import parse_pm_notes
+    b = parse_pm_notes("As of Oct 26: delay\n- two", D1).blocks[0]
+    assert b.text.count("delay") == 1
+    notes = parse_pm_notes("As of Oct 26\n- as of Nov 5 VBM files\n- x", D1)
+    assert len(notes.blocks) == 1 and notes.blocks[0].bullets[0].startswith("as of Nov 5")
+
+
+def test_block_with_unparsed_date_is_diffed_by_header_text():
+    old = {"p": proj(notes="As of sometime\n- x")}
+    (ch,) = run(old, {"p": proj(notes="As of sometime\n- x\nAs of later")})
+    assert [b.block.header for b in ch.notes.blocks] == ["As of later"]

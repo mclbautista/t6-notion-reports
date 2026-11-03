@@ -46,7 +46,7 @@ def test_field_change_added_removed():
     assert changes["p3"].kind == "added"
     fields = {f.field: (f.old, f.new) for f in changes["p1"].changes}
     assert fields == {"Stage": ("Offline", "Online")}
-    assert changes["p1"].notes.text_diff == ["new note"]
+    assert changes["p1"].notes.text_diff == ["+ new note"]
 
 
 def test_whitespace_only_change_is_not_a_change():
