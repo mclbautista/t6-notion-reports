@@ -41,7 +41,7 @@ class Person:
 class ProjectChange:
     page_id: str
     name: str  # display name: code, or name, or "CODE (Name)" when a code is shared
-    kind: str  # "added" | "removed" | "changed"
+    kind: str  # "added" | "removed" | "changed" | "unchanged" (briefing only, for owed items)
     changes: list[FieldChange]
     coordinators: list[Person]
     health: str | None = None
@@ -143,6 +143,15 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         last_updated=last_updated(state.get("PM Notes"), snap_date),
         code=state.get("Project Code") or None, title=state.get("Name") or None,
     )
+
+
+def unchanged_project(page_id: str, names: dict[str, str], state: dict[str, object], snap_date: date) -> ProjectChange:
+    """A project with no changes, for the briefing when it has owed items."""
+    return _project(page_id, names, "unchanged", [], state, None, snap_date)
+
+
+def sort_projects(items: list[ProjectChange]) -> list[ProjectChange]:
+    return sorted(items, key=_sort_key)
 
 
 def _sort_key(ch: ProjectChange):

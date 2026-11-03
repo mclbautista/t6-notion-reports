@@ -13,6 +13,7 @@ from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
+from .llm import OpenRouterClient
 from .mom_job import MomAlreadySent, run_draft_mom
 from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
@@ -56,9 +57,10 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         cfg = _load(args.config)
         if cfg is None:
             return 2
-        if cfg.brief and not cfg.brief.psr_secret:
-            print("config error: missing environment variable: PSR_SECRET", file=sys.stderr)
-            return 2
+        for name, value in _brief_secrets(cfg):
+            if not value:
+                print(f"config error: missing environment variable: {name}", file=sys.stderr)
+                return 2
         notion = notion or NotionClient(cfg.notion_token)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
@@ -100,9 +102,11 @@ def _brief(args, notion, now) -> int:
     if cfg.brief is None:
         print("config error: missing config key: gateway_url (briefing settings)", file=sys.stderr)
         return 2
-    if not args.dry_print and not cfg.brief.psr_secret:
-        print("config error: missing environment variable: PSR_SECRET", file=sys.stderr)
-        return 2
+    if not args.dry_print:
+        for name, value in _brief_secrets(cfg):
+            if not value:
+                print(f"config error: missing environment variable: {name}", file=sys.stderr)
+                return 2
     db = args.db or cfg.database_path
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
@@ -112,7 +116,7 @@ def _brief(args, notion, now) -> int:
     conn = connect(db)
     try:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
-                  gateway=gateway, dry_print=args.dry_print,
+                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -122,12 +126,23 @@ def _brief(args, notion, now) -> int:
     return 0
 
 
+def _brief_secrets(cfg):
+    if cfg.brief is None:
+        return []
+    return [("PSR_SECRET", cfg.brief.psr_secret), ("OPENROUTER_API_KEY", cfg.brief.openrouter_api_key)]
+
+
+def _llm(cfg):
+    key = cfg.brief.openrouter_api_key if cfg.brief else None
+    return OpenRouterClient(key, cfg.brief.llm_model) if key else None
+
+
 def make_job(conn, notion, cfg, gateway, clock):
     """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
     def job(kind: str) -> None:
         moment = clock()
         if kind == "brief":
-            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway,
+            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
                       log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)

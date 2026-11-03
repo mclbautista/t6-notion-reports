@@ -5,7 +5,7 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila), and the Sunday 16:00
-briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). Not done: owed items, LLM condensing, sending the minutes.
+briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Not done: LLM condensing of the minutes, sending the minutes.
 
     pip install -e '.[dev]' && pytest
 
@@ -65,6 +65,14 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
+- **What you owe**: with `OPENROUTER_API_KEY` in `.env`, an LLM (OpenRouter, `llm_model` in config,
+  default Claude Haiku) reads each project's PM Notes, Stage, Status, Health, Deadline and team and
+  returns up to 15 items (`missing_date`, `missing_role`, `open_item`, `stale_field`). Every request
+  sends `provider.zdr: true` and is never retried without it. An item must cite an exact PM Notes line
+  or an empty property; code drops the rest. A project with no changes but owed items still appears.
+  If the call fails for a project, its briefing says "Owed items unavailable this week", the failure
+  is logged (project id only) and the digest names it. `--dry-print` without the key leaves owed
+  items out; a real send needs it.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
 
     docker compose run --rm psr-brief brief --config /app/config.yaml --dry-print   # print, send nothing

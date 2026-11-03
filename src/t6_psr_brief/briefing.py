@@ -10,6 +10,7 @@ from datetime import date
 
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, last_updated_text
+from .owed import OwedOutcome
 from .telegram_html import (
     Block, Line, Span, bold, line, mention_handle, quote, render_messages,
 )
@@ -18,6 +19,11 @@ BANNER = "🧪 TEST"
 NO_CHANGES = "No changes on your projects this week"
 HEALTH_MARK = {"Critical": "🔴", "At Risk": "🟠", "On Track": "🟡"}
 NOTION_PAGE = "https://www.notion.so/"
+OWED_UNAVAILABLE = "Owed items unavailable this week"
+KIND_LABEL = {
+    "missing_date": "Missing date", "missing_role": "Missing role",
+    "open_item": "Open", "stale_field": "Check field",
+}
 
 
 @dataclass(frozen=True)
@@ -47,8 +53,14 @@ def build_briefing(
     contacts: dict[str, Contact],
     settings: Settings,
     today: date,
+    owed: dict[str, OwedOutcome] | None = None,
+    owed_failed: list[str] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
+
+    ``changes`` holds the changed projects plus any unchanged project that has owed items. ``owed`` maps
+    page id → its owed items (``None``: no LLM, so no owed section); ``owed_failed`` names the projects
+    whose owed-items call failed, for Cyril's digest.
 
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
@@ -65,7 +77,7 @@ def build_briefing(
         chat = contact.telegram_id if contact else None
         if not projects:
             quiet.append(name)
-        blocks: list[Block] = [line(NO_CHANGES)] if not projects else _dm_blocks(projects, stamp)
+        blocks: list[Block] = [line(NO_CHANGES)] if not projects else _dm_blocks(projects, stamp, owed)
         key = f"psr-brief-{today.isoformat()}-{contact_id}"
         if chat is not None:
             messages += _parts(chat, None, blocks, banner, key, name)
@@ -79,7 +91,7 @@ def build_briefing(
 
     if digest_missing(settings):
         return messages
-    digest = _digest_blocks(groups, stamp, quiet, fallbacks, bool(changes))
+    digest = _digest_blocks(groups, stamp, quiet, fallbacks, any(c.kind != "unchanged" for c in changes), owed, owed_failed or [])
     messages += _parts(settings.cyril.telegram_id, None, digest, banner, f"psr-digest-{today.isoformat()}", settings.cyril.name)
     return messages
 
@@ -93,30 +105,32 @@ def _parts(to, topic, blocks, banner, key, recipient) -> list[OutboundMessage]:
     ]
 
 
-def _dm_blocks(projects: list[ProjectChange], stamp: str) -> list[Block]:
+def _dm_blocks(projects: list[ProjectChange], stamp: str, owed) -> list[Block]:
     blocks: list[Block] = [line(bold(f"PSR briefing · {stamp}")), line()]
     for ch in projects:
-        blocks += project_blocks(ch)
+        blocks += project_blocks(ch, (owed or {}).get(ch.page_id))
     return blocks
 
 
-def _digest_blocks(groups, stamp: str, quiet: list[str], fallbacks: list[str], any_changes: bool) -> list[Block]:
+def _digest_blocks(groups, stamp: str, quiet: list[str], fallbacks: list[str], any_changes: bool, owed, owed_failed: list[str]) -> list[Block]:
     blocks: list[Block] = [line(bold(f"PSR digest · {stamp}")), line()]
     if not any_changes:
         blocks.append(line("No changes on any project this week"))
     for name, projects in sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower()):
-        blocks += [line(bold(name)), *[b for ch in projects for b in project_blocks(ch)]]
+        blocks += [line(bold(name)), *[b for ch in projects for b in project_blocks(ch, (owed or {}).get(ch.page_id))]]
     if groups.no_coordinator:
-        blocks += [line(bold("No coordinator")), *[b for ch in groups.no_coordinator for b in project_blocks(ch)]]
+        blocks += [line(bold("No coordinator")), *[b for ch in groups.no_coordinator for b in project_blocks(ch, (owed or {}).get(ch.page_id))]]
     if quiet:
         blocks.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:
         blocks.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
+    if owed_failed:
+        blocks.append(line(f"⚠️ {OWED_UNAVAILABLE}: " + ", ".join(owed_failed)))
     return blocks
 
 
-def project_blocks(ch: ProjectChange) -> list[Block]:
-    """Heading, field changes and raw new PM Notes for one project, then a blank line."""
+def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None) -> list[Block]:
+    """Heading, field changes, raw new PM Notes and owed items for one project, then a blank line."""
     title = f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
     health = f"{HEALTH_MARK[ch.health]} {ch.health}" if ch.health in HEALTH_MARK else "Health not set"
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
@@ -134,7 +148,21 @@ def project_blocks(ch: ProjectChange) -> list[Block]:
             lines += [line(text) for text in bc.block.text.splitlines()]
         lines += [line(text) for text in ch.notes.text_diff or []]
         blocks.append(quote(*lines))
+    if owed is not None:
+        blocks += owed_blocks(owed)
     blocks.append(line())
+    return blocks
+
+
+def owed_blocks(owed: OwedOutcome) -> list[Block]:
+    if owed.failed:
+        return [line(f"⚠️ {OWED_UNAVAILABLE}")]
+    if not owed.items:
+        return []
+    blocks: list[Block] = [line(bold("What you owe"))]
+    blocks += [line(f"• {KIND_LABEL[item.kind]}: {item.text.strip()}") for item in owed.items]
+    if owed.more:
+        blocks.append(line(f"+{owed.more} more"))
     return blocks
 
 
