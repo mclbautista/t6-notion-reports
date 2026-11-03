@@ -3,7 +3,7 @@ name = "t6-psr-brief"
 version = "0.0.1"
 description = "Snapshot Notion Projects into SQLite and draft the weekly PSR briefings and minutes."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["PyYAML>=6", "tzdata"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
