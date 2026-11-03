@@ -10,6 +10,8 @@ from datetime import date, datetime, timezone
 from .config import ConfigError, load_config
 from .notion import NotionClient
 from .snapshot_job import run_snapshot
+from .jo_snapshot_job import run_jo_snapshot
+from . import jo_snapshots
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
@@ -29,6 +31,10 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     snap.add_argument("--config", help="config.yaml; used when the flags below are not given")
     snap.add_argument("--projects-ds", default=os.environ.get("PROJECTS_DS"))
     snap.add_argument("--contacts-ds", default=os.environ.get("CONTACTS_DS"))
+    jo = sub.add_parser("jo-snapshot", help="snapshot the Notion Job Orders database")
+    jo.add_argument("--kind", choices=jo_snapshots.KINDS, default="manual")
+    jo.add_argument("--config", default="config.yaml")
+    jo.add_argument("--db", help="default: database_path from --config")
     dif = sub.add_parser("diff", help="print what changed between two snapshots")
     dif.add_argument("--db", default=os.environ.get("PSR_DB"), help="default: data/psr.db")
     dif.add_argument("--old", type=int, help="snapshot id; default: latest Monday before the latest Friday")
@@ -50,6 +56,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
 
     if args.command == "diff":
         return _diff(args)
+
+    if args.command == "jo-snapshot":
+        return _jo_snapshot(args, notion, now)
 
     if args.command == "brief":
         return _brief(args, notion, now)
@@ -99,6 +108,29 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     notion = notion or NotionClient(os.environ["NOTION_TOKEN"])
     _ensure_dir(db)
     _snapshot(connect(db), notion, projects_ds, contacts_ds, args.kind, now or datetime.now(timezone.utc))
+    return 0
+
+
+def _jo_snapshot(args, notion, now) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if not cfg.jo_data_source:
+        print("config error: missing config key: jo_data_source", file=sys.stderr)
+        return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    db = args.db or cfg.database_path
+    _ensure_dir(db)
+    conn = jo_snapshots.connect(db)
+    try:
+        res = run_jo_snapshot(conn, notion, cfg.jo_data_source, cfg.contacts_data_source,
+                              cfg.projects_data_source, args.kind, now or datetime.now(timezone.utc))
+    finally:
+        conn.close()
+    # One line per run, counts only: never field values or secrets.
+    print(f"jo-snapshot id={res.snapshot_id} kind={args.kind} baseline={res.is_baseline} "
+          f"changed={res.changed} unchanged={res.unchanged} removed={res.removed} pruned={res.pruned}",
+          flush=True)
     return 0
 
 
