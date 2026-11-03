@@ -78,8 +78,13 @@ def run_brief(
         for page_id in failed_ids:
             log(f"brief owed items unavailable project={page_id}")
     contacts = load_contacts(notion, contacts_ds)
-    cyril = contacts.get(brief.cyril_contact_id) or Contact(brief.cyril_contact_id, "Cyril")
-    settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner)
+    cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
+    cyril = contacts.get(cyril_id) or Contact(cyril_id, "Cyril")
+    digest_contacts = tuple(
+        contacts.get(cid) or Contact(cid, cid)
+        for cid in brief.digest_recipients
+    ) or (cyril,)
+    settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         owed, owed_failed,
@@ -91,7 +96,7 @@ def run_brief(
             out(f"--- to={m.to} topic={m.topic} key={m.key} ({m.recipient}) ---\n{m.text}\n")
         log(f"brief dry_print=True messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
         if no_digest:
-            raise BriefFailed("Cyril's Contacts row has no TelegramUserID: digest not built")
+            raise BriefFailed("No digest recipient has a TelegramUserID: digest not built")
         return BriefResult(messages=tuple(messages), changed=changed, owed_failed=len(owed_failed))
 
     sent = failed = 0
@@ -104,7 +109,7 @@ def run_brief(
             log(f"brief send failed key={m.key} error={exc}")
     log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
     if no_digest:
-        raise BriefFailed("Cyril's Contacts row has no TelegramUserID: DMs sent, digest not sent")
+        raise BriefFailed("No digest recipient has a TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, owed_failed=len(owed_failed))

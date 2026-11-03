@@ -18,8 +18,8 @@ PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner", "llm_model"}
-BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id", "cyril_contact_id")
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "test_banner", "llm_model"}
+BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
@@ -35,9 +35,10 @@ class BriefSettings:
     gateway_url: str
     group_chat_id: int
     group_topic_id: int | None
-    cyril_contact_id: str
+    cyril_contact_id: str | None
     test_banner: bool
     psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
+    digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
     openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
 
@@ -107,13 +108,29 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
     url = _gateway_url(raw)
     banner = _banner(raw)
     topic = _integer(raw, "psr_group_topic_id") if "psr_group_topic_id" in raw else None
+    cyril_id = _notion_id(raw, "cyril_contact_id") if "cyril_contact_id" in raw else None
+    digest_recipients: list[str] = []
+    if "digest_recipients" in raw:
+        val = raw["digest_recipients"]
+        if not isinstance(val, list) or not val:
+            raise ConfigError("invalid config key: digest_recipients (expected a non-empty list)")
+        for i, item in enumerate(val):
+            if not isinstance(item, str) or not _NOTION_ID.match(item.strip()):
+                raise ConfigError(f"invalid config key: digest_recipients (entry {i} is not a Notion id)")
+            digest_recipients.append(item.strip())
+    elif cyril_id is not None:
+        digest_recipients.append(cyril_id)
+    else:
+        raise ConfigError("missing config key: cyril_contact_id or digest_recipients")
+
     return BriefSettings(
         gateway_url=url,
         group_chat_id=_integer(raw, "psr_group_chat_id"),
         group_topic_id=topic,
-        cyril_contact_id=_notion_id(raw, "cyril_contact_id"),
+        cyril_contact_id=cyril_id,
         test_banner=banner,
         psr_secret=env.get(PSR_SECRET_ENV, "").strip() or None,
+        digest_recipients=tuple(digest_recipients),
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
     )

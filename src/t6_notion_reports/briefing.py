@@ -41,10 +41,12 @@ class Settings:
     group_chat_id: int
     group_topic_id: int | None
     test_banner: bool = False
+    digest_recipients: tuple[Contact, ...] = ()
 
 
 def digest_missing(settings: Settings) -> bool:
-    return settings.cyril.telegram_id is None
+    recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
+    return not any(c.telegram_id is not None for c in recipients)
 
 
 def build_briefing(
@@ -92,7 +94,12 @@ def build_briefing(
     if digest_missing(settings):
         return messages
     digest = _digest_blocks(groups, stamp, quiet, fallbacks, bool(changes), owed, owed_failed or [])
-    messages += _parts(settings.cyril.telegram_id, None, digest, banner, f"psr-digest-{today.isoformat()}", settings.cyril.name)
+    recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
+    multi = len(recipients) > 1
+    for contact in recipients:
+        if contact.telegram_id is not None:
+            key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
+            messages += _parts(contact.telegram_id, None, digest, banner, key, contact.name)
     return messages
 
 
