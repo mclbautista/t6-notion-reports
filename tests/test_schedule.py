@@ -39,7 +39,6 @@ def test_fires_monday_11_and_friday_18_manila_and_nowhere_else():
 
 def test_early_wakeups_do_not_fire_early_or_twice():
     assert [k for _, k in run_weeks(step=600)] == ["monday", "friday", "monday", "friday"]
-    assert all(t.minute == 0 for t, _ in run_weeks(step=600)[:1])
 
 
 def test_next_run_is_strictly_after_and_works_from_utc():

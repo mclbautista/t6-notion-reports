@@ -15,6 +15,10 @@ psr-brief runs as its own container on the T6 Mac mini (Intel, Colima), next to 
 own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 18:00
 Asia/Manila time. It does not catch up missed slots: if the container is down at 11:00, take one by hand.
 
+The scheduler fires on its own, so **do not start the container before Cyril's go-ahead**: the
+first snapshot taken becomes the baseline. A bad config exits with code 2, and
+`restart: unless-stopped` then restarts it in a loop; read `docker compose logs psr-brief`.
+
 Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_TOKEN` in `.env`
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
@@ -32,7 +36,8 @@ changed=... unchanged=... removed=...`). No secrets, no note text.
 
 ### Rollback
 
-Each build is tagged `psr-brief:<PSR_TAG>` (default `latest`). Tag before deploying, then roll back:
+Each build is tagged `psr-brief:<PSR_TAG>` (default `latest`). **Before every deploy**, tag the
+running image; without that tag there is nothing to roll back to:
 
     docker tag psr-brief:latest psr-brief:previous      # before the new deploy
     PSR_TAG=previous docker compose up -d               # roll back
