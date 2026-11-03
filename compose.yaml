@@ -1,5 +1,7 @@
 # Own compose file, separate from the gateway's. Deploy: `git pull && docker compose up -d --build`.
 # Rollback: `PSR_TAG=<previous> docker compose up -d` (see "Rollback" in the README).
+# Pinned so the Compose project name doesn't follow the clone folder (repo renamed from t6-psr-brief).
+name: psr-brief
 services:
   psr-brief:
     build: .

@@ -1,7 +1,7 @@
 ## Agent skills
 
 ### Issue tracker
-Issues and specs live in GitHub Issues for `mclbautista/t6-psr-brief`.
+Issues and specs live in GitHub Issues for `mclbautista/t6-notion-reports`.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
