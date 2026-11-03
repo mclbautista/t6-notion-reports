@@ -149,3 +149,7 @@ or to the shift group marked 🚨 when `ops_chat_id` is not set, and skips the s
 catch-up. The next slot compares with the latest earlier snapshot and says so.
 
 Do not send by hand before the dry-run go-ahead: it posts to `shift_chat_id`.
+
+## Workflow
+
+Work moves through five separate stages: grill, spec, tickets, implement, code review. Finish one before starting the next. Work is tracked in GitHub Issues and sub-issues (spec as one issue, tickets as its sub-issues). Agent instructions: see `CLAUDE.md`.
