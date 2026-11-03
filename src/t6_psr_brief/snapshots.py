@@ -88,7 +88,7 @@ class ProjectRecord:
     def content_hash(self) -> str:
         """Hash of the compare form: whitespace-only edits do not change it."""
         compare = {
-            k: (squash(v) if isinstance(v, str) and k != "PM Notes" else v)
+            k: (squash(v) if isinstance(v, str) else v)
             for k, v in self.normalized().items()
         }
         blob = json.dumps(compare, sort_keys=True, ensure_ascii=False)

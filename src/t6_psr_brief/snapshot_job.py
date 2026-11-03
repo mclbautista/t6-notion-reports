@@ -1,14 +1,19 @@
 """Read Notion Projects and Contacts and store one snapshot."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime
 from typing import Protocol
 
-from .snapshots import RELATION_FIELDS, ProjectRecord, SnapshotResult, squash, take_snapshot
+from .snapshots import RELATION_FIELDS, ProjectRecord, SnapshotResult, take_snapshot
 
-# Never snapshotted (spec section 4). Compared after whitespace is squashed.
-EXCLUDED_STATUSES = {"📦 Archived", "🧭 Lost"}
+# Never snapshotted (spec section 4). Matched on the word, ignoring emoji and whitespace.
+EXCLUDED_STATUSES = {"archived", "lost"}
+
+
+def _is_excluded(status: object) -> bool:
+    return re.sub(r"[^\w\s]", "", str(status or "")).strip().lower() in EXCLUDED_STATUSES
 
 # Only these Notion properties are read. Formula fields are never touched.
 NOTION_NAMES = {
@@ -36,7 +41,7 @@ def run_snapshot(
         if page.get("in_trash") or page.get("archived"):
             continue
         rec = parse_project(page, names)
-        if squash(str(rec.fields.get("Status") or "")) in EXCLUDED_STATUSES:
+        if _is_excluded(rec.fields.get("Status")):
             continue
         records.append(rec)
     return take_snapshot(conn, records, now, kind)

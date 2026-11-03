@@ -130,3 +130,17 @@ def test_reads_only_projects_and_contacts():
     notion = FakeNotion([project("p1")], CONTACTS_LIST)
     snap(connect(), notion)
     assert sorted(notion.queried) == [CONTACTS, PROJECTS]
+
+
+def test_pm_notes_whitespace_only_edit_is_unchanged():
+    conn = connect()
+    snap(conn, FakeNotion([project("p1", **{"PM Notes": rich("As of Oct 26,\n • Delay")})], CONTACTS_LIST))
+    res = snap(conn, FakeNotion([project("p1", **{"PM Notes": rich("As of Oct 26,\n  •  Delay")})],
+                                CONTACTS_LIST), at=T2)
+    assert res.unchanged == 1
+
+
+def test_plain_archived_status_without_emoji_is_excluded():
+    conn = connect()
+    sid = snap(conn, FakeNotion([project("a", Status=select("Archived")), project("b")], CONTACTS_LIST)).snapshot_id
+    assert set(load_snapshot(conn, sid)) == {"b"}
