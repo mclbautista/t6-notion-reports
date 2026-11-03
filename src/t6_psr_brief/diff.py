@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Status/Stage values that mean a project has left the active board.
-ARCHIVED_STATUSES = {"📦 Archived", "📦 Archiving", "Archived"}
+from .snapshots import squash
 
 
 @dataclass(frozen=True)
@@ -38,7 +37,7 @@ def diff_snapshots(
             changes = [
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
-                if o.get(f) != n.get(f)
+                if _cmp(o.get(f)) != _cmp(n.get(f))
             ]
             if changes:
                 results.append(ProjectChange(page_id, _name(n), "changed", changes, _coords(n)))
@@ -54,6 +53,15 @@ def group_by_coordinator(changes: list[ProjectChange]) -> dict[str, list[Project
     return grouped
 
 
+def _cmp(value: object) -> object:
+    """Comparison form: whitespace-insensitive; relations compared by id, order-insensitive."""
+    if isinstance(value, str):
+        return squash(value)
+    if isinstance(value, list):
+        return sorted(r["id"] if isinstance(r, dict) else str(r) for r in value)
+    return value
+
+
 def _name(state: dict[str, object]) -> str:
     code = state.get("Project Code")
     name = state.get("Name")
@@ -62,4 +70,4 @@ def _name(state: dict[str, object]) -> str:
 
 def _coords(state: dict[str, object]) -> list[str]:
     value = state.get("T6 Post Coordinator") or []
-    return list(value) if isinstance(value, list) else [str(value)]
+    return [str(r.get("name") or r["id"]) if isinstance(r, dict) else str(r) for r in value]

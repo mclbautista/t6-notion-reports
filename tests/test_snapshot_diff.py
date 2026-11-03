@@ -2,14 +2,18 @@ from datetime import datetime, timezone
 
 from t6_psr_brief.diff import diff_snapshots, group_by_coordinator
 from t6_psr_brief.snapshots import (
-    ProjectRecord, connect, latest_snapshot_ids, load_snapshot, take_snapshot,
+    ProjectRecord, connect, latest_snapshot_ids, load_snapshot, take_snapshot as _take,
 )
+
+
+def take_snapshot(conn, records, at):
+    return _take(conn, records, at).snapshot_id
 
 
 def rec(page_id, **fields):
     base = {"Name": "Show", "Project Code": "PAS", "Stage": "Offline",
             "Status": "In-Progress", "PM Notes": "", "Deadline": None,
-            "T6 Post Coordinator": ["Pio"], "T6 Team": []}
+            "T6 Post Coordinator": [{"id": "c1", "name": "Pio"}], "Editors": []}
     base.update(fields)
     return ProjectRecord(page_id, base)
 
@@ -51,7 +55,8 @@ def test_whitespace_only_change_is_not_a_change():
 
 def test_relation_order_is_ignored():
     conn, a, b = two_snapshots(
-        [rec("p1", **{"T6 Team": ["Tim", "Jason"]})], [rec("p1", **{"T6 Team": ["Jason", "Tim"]})])
+        [rec("p1", Editors=[{"id": "t", "name": "Tim"}, {"id": "j", "name": "Jason"}])],
+        [rec("p1", Editors=[{"id": "j", "name": "Jason"}, {"id": "t", "name": "Tim"}])])
     assert diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b)) == []
 
 
