@@ -7,7 +7,10 @@ from typing import Callable
 
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
+from .midshift_report import MidshiftReport, build_midshift
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
+
+MIDSHIFT_SLOT = "1200"
 
 
 def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tuple[JoSnapshot | None, str | None]:
@@ -49,10 +52,17 @@ def run_shift_report(
     banner: bool = False,
     out: Callable[[str], None] = print,
     log: Callable[[str], None] = print,
-) -> EndOfShiftReport:
+) -> EndOfShiftReport | MidshiftReport:
     """Snapshot Job Orders (kind = slot), build that slot's report and print it. Sends nothing."""
     run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
     current = load_latest(conn)
+    if slot == MIDSHIFT_SLOT:
+        mid = build_midshift(current, banner)
+        for number, text in enumerate(mid.messages, 1):
+            out(f"--- part {number}/{len(mid.messages)} ---\n{text}\n")
+        log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
+            f"unfinished={mid.active} received=0 processed=0 accomplished=0 parts={len(mid.messages)}")
+        return mid
     older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
     report = build_end_of_shift(
         slot, current, older, compared_with, banner,
