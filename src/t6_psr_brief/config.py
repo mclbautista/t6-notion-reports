@@ -12,7 +12,10 @@ from typing import Mapping
 import yaml
 
 SECRET_ENV = "NOTION_TOKEN"
-KEYS = {"projects_data_source", "contacts_data_source", "database_path"}
+PSR_SECRET_ENV = "PSR_SECRET"
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner"}
+BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id", "cyril_contact_id")
+KEYS = {"projects_data_source", "contacts_data_source", "database_path"} | BRIEF_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -21,11 +24,24 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class BriefSettings:
+    """Sunday briefing settings. Present only when the briefing keys are in config.yaml."""
+
+    gateway_url: str
+    group_chat_id: int
+    group_topic_id: int | None
+    cyril_contact_id: str
+    test_banner: bool
+    psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
+
+
+@dataclass(frozen=True)
 class Config:
     projects_data_source: str
     contacts_data_source: str
     database_path: str
     notion_token: str
+    brief: BriefSettings | None = None
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -49,7 +65,38 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         contacts_data_source=_notion_id(raw, "contacts_data_source"),
         database_path=_string(raw, "database_path", default="data/psr.db"),
         notion_token=_secret(env, SECRET_ENV),
+        brief=_brief(raw, env),
     )
+
+
+def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
+    if not BRIEF_KEYS & set(raw):
+        return None
+    for key in BRIEF_REQUIRED:
+        if key not in raw:
+            raise ConfigError(f"missing config key: {key}")
+    url = _string(raw, "gateway_url")
+    if not url.startswith(("http://", "https://")):
+        raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
+    banner = raw.get("test_banner", False)
+    if not isinstance(banner, bool):
+        raise ConfigError("invalid config key: test_banner (expected true or false)")
+    topic = _integer(raw, "psr_group_topic_id") if "psr_group_topic_id" in raw else None
+    return BriefSettings(
+        gateway_url=url,
+        group_chat_id=_integer(raw, "psr_group_chat_id"),
+        group_topic_id=topic,
+        cyril_contact_id=_notion_id(raw, "cyril_contact_id"),
+        test_banner=banner,
+        psr_secret=env.get(PSR_SECRET_ENV, "").strip() or None,
+    )
+
+
+def _integer(raw: dict, key: str) -> int:
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"invalid config key: {key} (expected an integer)")
+    return value
 
 
 def _string(raw: dict, key: str, default: str | None = None) -> str:

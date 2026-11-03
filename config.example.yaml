@@ -6,3 +6,12 @@
 projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projects data source id
 contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
 database_path: /app/data/psr.db
+
+# Sunday briefing (optional; leave all of these out to run snapshots only).
+# When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
+# The secret PSR_SECRET goes in .env. Briefings fire Sunday 16:00 Asia/Manila.
+# gateway_url: "http://192.168.88.151:8780"
+# psr_group_chat_id: -1000000000000        # FILL IN: PSR group chat id (fallback for coordinators with no Telegram id)
+# psr_group_topic_id: 1                    # optional topic in that group
+# cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
+# test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)

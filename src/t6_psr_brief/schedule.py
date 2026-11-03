@@ -1,4 +1,4 @@
-"""When snapshots fire: Monday 11:00 and Friday 18:00, Asia/Manila."""
+"""When jobs fire, Asia/Manila: snapshots Monday 11:00 and Friday 18:00, briefing Sunday 16:00."""
 from __future__ import annotations
 
 import logging
@@ -9,15 +9,16 @@ from zoneinfo import ZoneInfo
 MANILA = ZoneInfo("Asia/Manila")
 # (weekday with Monday=0, local time, snapshot kind)
 SLOTS = [(0, time(11, 0), "monday"), (4, time(18, 0), "friday")]
+BRIEF_SLOT = (6, time(16, 0), "brief")
 
 
-def next_run(after: datetime) -> tuple[datetime, str]:
-    """The first slot strictly after ``after`` (an aware datetime), and its snapshot kind."""
+def next_run(after: datetime, slots=SLOTS) -> tuple[datetime, str]:
+    """The first slot strictly after ``after`` (an aware datetime), and its kind."""
     local = after.astimezone(MANILA)
     best: tuple[datetime, str] | None = None
     for day in range(8):
         date = (local + timedelta(days=day)).date()
-        for weekday, at, kind in SLOTS:
+        for weekday, at, kind in slots:
             if date.weekday() != weekday:
                 continue
             slot = datetime.combine(date, at, tzinfo=MANILA)
@@ -32,13 +33,14 @@ class Scheduler:
 
     def __init__(self, job: Callable[[str], None], clock: Callable[[], datetime],
                  sleep: Callable[[float], None], log: Callable[[str], None] = print,
-                 max_sleep: float = 3600):
+                 max_sleep: float = 3600, slots=SLOTS):
+        self._slots = slots
         self._job, self._clock, self._sleep, self._log = job, clock, sleep, log
         self._max_sleep = max_sleep
 
     def run(self, stop: Callable[[], bool] = lambda: False) -> None:
         while not stop():
-            when, kind = next_run(self._clock())
+            when, kind = next_run(self._clock(), self._slots)
             self._log(f"scheduler next={when.isoformat()} kind={kind}")
             while not stop() and self._clock() < when:
                 self._sleep(min(self._max_sleep, (when - self._clock()).total_seconds()))
@@ -47,7 +49,7 @@ class Scheduler:
             try:
                 self._job(kind)
             except Exception as exc:  # keep the loop alive; type only, messages may hold data
-                self._log(f"snapshot failed kind={kind} error={type(exc).__name__}")
+                self._log(f"job failed kind={kind} error={type(exc).__name__}")
             # A job that returns before the slot ends must not fire it again.
             while self._clock() <= when:
                 self._sleep(1)

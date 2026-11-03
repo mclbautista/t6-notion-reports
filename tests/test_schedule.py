@@ -60,3 +60,23 @@ def test_failed_job_is_logged_without_message_and_loop_continues():
     Scheduler(boom, fake.clock, fake.sleep, log=logs.append).run(stop=lambda: fake.now >= end)
     assert any("failed kind=monday error=RuntimeError" in line for line in logs)
     assert not any("secret" in line for line in logs)
+
+
+def test_briefing_fires_sunday_16_manila_when_enabled():
+    from t6_psr_brief.schedule import BRIEF_SLOT, SLOTS
+    fake = FakeClock(manila(2026, 11, 8, 0, 0))
+    fired = []
+    end = manila(2026, 11, 16, 12, 0)
+    Scheduler(lambda k: fired.append((fake.now, k)), fake.clock, fake.sleep, log=lambda _: None,
+              slots=SLOTS + [BRIEF_SLOT]).run(stop=lambda: fake.now >= end)
+    assert fired == [
+        (manila(2026, 11, 8, 16), "brief"),
+        (manila(2026, 11, 9, 11), "monday"),
+        (manila(2026, 11, 13, 18), "friday"),
+        (manila(2026, 11, 15, 16), "brief"),
+        (manila(2026, 11, 16, 11), "monday"),
+    ]
+
+
+def test_briefing_is_off_by_default():
+    assert "brief" not in [k for _, k in run_weeks()]
