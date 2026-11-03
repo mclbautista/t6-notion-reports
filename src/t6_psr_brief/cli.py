@@ -12,7 +12,7 @@ from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
-from .shift_job import MIDSHIFT_SLOT, ShiftTarget, run_shift_report
+from .shift_job import MIDSHIFT_SLOT, NotionUnavailable, ShiftTarget, run_shift_report
 from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
@@ -170,7 +170,7 @@ def _shift_report(args, notion, now) -> int:
         run_shift_report(conn, notion, cfg.jo_data_source, cfg.contacts_data_source, cfg.projects_data_source,
                          args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
                          log=lambda text: print(text, file=sys.stderr, flush=True), target=target)
-    except GatewayError as exc:
+    except (GatewayError, NotionUnavailable) as exc:
         print(f"shift-report failed: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -191,7 +191,7 @@ def _shift_secrets(cfg):
 def _shift_target(cfg) -> ShiftTarget:
     """A gateway client authenticated with SHIFT_SECRET, never PSR_SECRET."""
     shift = cfg.shift
-    return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.chat_id, shift.topic_id)
+    return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.chat_id, shift.topic_id, shift.ops_chat_id)
 
 
 def _brief(args, notion, now) -> int:

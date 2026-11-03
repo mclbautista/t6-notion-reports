@@ -126,7 +126,7 @@ Projects snapshot runs first. Turn it on in `config.yaml`:
     shift_reports_enabled: true
     shift_chat_id: -1000000000000    # required
     shift_topic_id: 1                # optional
-    ops_chat_id: 274983989           # optional; the ops alert (a later ticket) will use it
+    ops_chat_id: 274983989           # optional; the Notion-outage alert goes here (else to shift_chat_id)
     test_banner: true                # 🧪 TEST on every part
 
 `SHIFT_SECRET` goes in `.env`. The shift reports authenticate to the gateway as the `shift` module with that
@@ -142,5 +142,10 @@ accomplished, parts).
 
     docker compose run --rm psr-brief shift-report --slot 1800 --config /app/config.yaml --dry-print   # print, send nothing
     docker compose run --rm psr-brief shift-report --slot 1800 --config /app/config.yaml               # send one slot now
+
+If Notion cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
+alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from Notion) to `ops_chat_id`,
+or to the shift group marked 🚨 when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
+catch-up. The next slot compares with the latest earlier snapshot and says so.
 
 Do not send by hand before the dry-run go-ahead: it posts to `shift_chat_id`.
