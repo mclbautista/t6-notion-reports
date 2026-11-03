@@ -7,13 +7,13 @@ grouping, deadline sort and footer are public helpers so the 12:00 report can re
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 from datetime import datetime
 
-from .briefing import BANNER
+from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
 from .telegram_html import Block, Line, bold, line, link, render_messages
 
-NOTION_PAGE = "https://www.notion.so/"
 SEP = " · "
 
 DONE, CANCELLED = "Done", "Cancelled"
@@ -25,10 +25,18 @@ OTHER_DEPARTMENTS = ("OE", "COOR", "COLOR", "VFX", "SOUND", "ADMIN")
 NO_DEPARTMENT = "No department"
 SLOT_LABEL = {"0500": "05:00", "1200": "12:00", "1800": "18:00", "manual": "manual"}
 
-# slot -> (report title, TOC heading, AE heading, window name, kind of the snapshot that opens the window)
+
+class Slot(NamedTuple):
+    title: str
+    toc_heading: str
+    ae_heading: str
+    window_name: str
+    opens_kind: str  # kind of the snapshot that opens the window
+
+
 SLOTS = {
-    "1800": ("Day shift end of shift", "TOC tonight", "AE tomorrow", "Day shift window", "0500"),
-    "0500": ("Night shift end of shift", "TOC to day shift", "AE", "Night shift window", "1800"),
+    "1800": Slot("Day shift end of shift", "TOC tonight", "AE tomorrow", "Day shift window", "0500"),
+    "0500": Slot("Night shift end of shift", "TOC to day shift", "AE", "Night shift window", "1800"),
 }
 
 Fields = dict[str, object]
@@ -77,11 +85,15 @@ def sort_by_deadline(items: list[tuple[str, Fields]]) -> list[tuple[str, Fields]
     return sorted(items, key=key)
 
 
+def department_of(fields: Fields) -> str | None:
+    department = fields.get("Department")
+    return str(department) if department else None
+
+
 def group_by_department(items: list[tuple[str, Fields]]) -> dict[str | None, list[tuple[str, Fields]]]:
     groups: dict[str | None, list[tuple[str, Fields]]] = {}
     for item in items:
-        department = item[1].get("Department")
-        groups.setdefault(str(department) if department else None, []).append(item)
+        groups.setdefault(department_of(item[1]), []).append(item)
     return groups
 
 
@@ -165,8 +177,7 @@ def window_counts(
         row = Counts(received, processed, accomplished)
         if row.zero:
             continue
-        department = f.get("Department")
-        key = str(department) if department else None
+        key = department_of(f)
         totals[key] = totals.get(key, Counts()) + row
         counted.add(page_id)
     return WindowCounts(totals, frozenset(counted))
@@ -192,13 +203,13 @@ def build_end_of_shift(
     """``older`` None means the baseline: received only, with a note. ``compared_with`` is the
     "<slot> on <date>" text when ``older`` is a fallback rather than the expected bounding snapshot.
     ``window_start`` opens the received window when there is no ``older``."""
-    title, toc_heading, ae_heading, window_name, _ = SLOTS[slot]
+    report_slot = SLOTS[slot]
     moment = current.taken_at.astimezone(MANILA)
-    blocks: list[Block] = [line(bold(f"{title} · {moment.strftime('%a %b %-d')}"))]
+    blocks: list[Block] = [line(bold(f"{report_slot.title} · {moment.strftime('%a %b %-d')}"))]
 
     active = [(p, f) for p, f in current.pages.items() if is_active(f)]
     groups = group_by_department(active)
-    headings = {"TOC": toc_heading, "AE": ae_heading, None: NO_DEPARTMENT}
+    headings = {"TOC": report_slot.toc_heading, "AE": report_slot.ae_heading, None: NO_DEPARTMENT}
     shown = [d for d in department_order(set(groups) | {"TOC", "AE"})
              if d in ("TOC", "AE") or groups.get(d)]
     for department in shown:
@@ -210,7 +221,7 @@ def build_end_of_shift(
     if start is None:
         raise ValueError("window_start is required when there is no older snapshot")
     counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at)
-    blocks += [Line(), line(bold(window_name))]
+    blocks += [Line(), line(bold(report_slot.window_name))]
     if older is None:
         blocks.append(line("First snapshot: processed and accomplished start next time."))
     elif compared_with:

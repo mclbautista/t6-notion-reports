@@ -16,7 +16,7 @@ def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tupl
     Expected: the 05:00 snapshot of the same Manila day (18:00 report) or the 18:00 snapshot of the
     day before (05:00 report). If that one is missing, the latest earlier snapshot of any kind.
     """
-    opens_kind = SLOTS[slot][4]
+    opens_kind = SLOTS[slot].opens_kind
     day = current.taken_at.astimezone(MANILA).date()
     expected_day = day if slot == "1800" else day - timedelta(days=1)
     before = current.taken_at - timedelta(microseconds=1)
