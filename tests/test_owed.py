@@ -158,7 +158,7 @@ def test_project_without_changes_but_with_owed_items_appears():
 
 def test_unchanged_project_with_no_owed_items_stays_out():
     msgs = brief({"p1": OwedOutcome()}, changes=[])
-    assert "No changes on your projects this week" in next(m for m in msgs if m.recipient == "Pio").text
+    assert [m for m in msgs if m.recipient == "Pio"] == []
 
 
 def test_more_than_fifteen_shows_plus_n_more():
@@ -169,7 +169,7 @@ def test_more_than_fifteen_shows_plus_n_more():
 
 def test_failure_shows_the_unavailable_line_and_digest_notes_it():
     msgs = brief({"p1": OwedOutcome(failed=True)}, failed=["MAU"], changes=[])
-    assert "No changes on your projects" in next(m for m in msgs if m.recipient == "Pio").text
+    assert [m for m in msgs if m.recipient == "Pio"] == []
     assert f"{OWED_UNAVAILABLE}: MAU" in next(m for m in msgs if m.recipient == "Cyril").text
 
 
@@ -195,5 +195,5 @@ def test_failure_on_a_changed_project_keeps_raw_changes_and_adds_the_line():
 
 
 def test_no_llm_means_no_owed_section():
-    dm = next(m for m in brief(None, changes=[]) if m.recipient == "Pio")
+    dm = next(m for m in brief(None) if m.recipient == "Pio")
     assert "owe" not in dm.text and OWED_UNAVAILABLE not in dm.text

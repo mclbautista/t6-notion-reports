@@ -16,7 +16,6 @@ from .telegram_html import (
 )
 
 BANNER = "🧪 TEST"
-NO_CHANGES = "No changes on your projects this week"
 HEALTH_MARK = {"Critical": "🔴", "At Risk": "🟠", "On Track": "🟡"}
 NOTION_PAGE = "https://www.notion.so/"
 OWED_UNAVAILABLE = "Owed items unavailable this week"
@@ -57,12 +56,17 @@ def build_briefing(
     today: date,
     owed: dict[str, OwedOutcome] | None = None,
     owed_failed: list[str] | None = None,
+    active: set[str] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
     ``changes`` holds the changed projects plus any unchanged project that has owed items. ``owed`` maps
     page id → its owed items (``None``: no LLM, so no owed section); ``owed_failed`` names the projects
     whose owed-items call failed, for Cyril's digest.
+
+    A coordinator with nothing changed and nothing owed gets no message at all (no DM, no group fallback).
+    Their name goes on the digest's "No changes" line only if their id is in ``active`` (those with an
+    In-Progress or Archiving project); ``None`` means no filtering.
 
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
@@ -78,8 +82,10 @@ def build_briefing(
         contact = contacts.get(contact_id)
         chat = contact.telegram_id if contact else None
         if not projects:
-            quiet.append(name)
-        blocks: list[Block] = [line(NO_CHANGES)] if not projects else _dm_blocks(projects, stamp, owed)
+            if active is None or contact_id in active:
+                quiet.append(name)
+            continue
+        blocks: list[Block] = _dm_blocks(projects, stamp, owed)
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
         if chat is not None:
             messages += _parts(chat, None, blocks, banner, key, name)

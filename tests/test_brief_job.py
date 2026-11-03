@@ -29,10 +29,11 @@ def contacts():
     return out
 
 
-def pages(stage):
+def pages(stage, dubbing_status=None):
+    extra = {"Status": select(dubbing_status)} if dubbing_status else {}
     return [
         project("p1", "Show", "PAS", Stage=select(stage), **{"T6 Post Coordinator": relation("c-pio")}),
-        project("p2", "Dubbing", "DW", **{"T6 Post Coordinator": relation("c-angel")}),
+        project("p2", "Dubbing", "DW", **extra, **{"T6 Post Coordinator": relation("c-angel")}),
     ]
 
 
@@ -65,22 +66,44 @@ class FakeGateway:
         return len(self.sent)
 
 
-def test_sends_one_dm_per_coordinator_plus_digest_through_the_gateway(conn):
+def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(conn):
     gw = FakeGateway()
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert res.sent == 3 and res.failed == 0
+    assert res.sent == 2 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
         (111, None, "notion-reports-2026-11-15-c-pio"),
-        (-1003, 7, "notion-reports-2026-11-15-c-angel"),
         (999, None, "psr-digest-2026-11-15"),
     }
+
+
+def digest_text(gw):
+    return next(text for to, _, _, text in gw.sent if to == 999)
+
+
+def test_digest_no_changes_line_skips_coordinators_with_only_standby_projects():
+    c = sqlite3.connect(":memory:")
+    from t6_notion_reports.snapshots import SCHEMA
+    c.executescript(SCHEMA)
+    for kind, stage, at in (("monday", "Offline", datetime(2026, 11, 9, 3, tzinfo=timezone.utc)),
+                            ("friday", "Online", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))):
+        run_snapshot(c, FakeNotion(pages(stage, "⏸ Standby"), contacts()), PROJECTS, CONTACTS, kind, at)
+    gw = FakeGateway()
+    run_brief(c, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    assert "No changes" not in digest_text(gw)
+    assert all(to != -1003 for to, *_ in gw.sent)
+
+
+def test_digest_no_changes_line_lists_active_quiet_coordinators(conn):
+    gw = FakeGateway()
+    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    assert "No changes: Angel Gaas" in digest_text(gw)
 
 
 def test_dry_print_prints_and_sends_nothing(conn):
     gw, printed = FakeGateway(), []
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
                     dry_print=True, out=printed.append, log=lambda _: None)
-    assert gw.sent == [] and res.sent == 0 and len(res.messages) == 3
+    assert gw.sent == [] and res.sent == 0 and len(res.messages) == 2
     assert any("psr-digest-2026-11-15" in p for p in printed)
 
 
@@ -88,7 +111,7 @@ def test_a_failed_send_does_not_stop_the_others_and_then_raises(conn):
     gw, logs = FakeGateway(fail_for={111}), []
     with pytest.raises(BriefFailed):
         run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=logs.append)
-    assert len(gw.sent) == 2
+    assert len(gw.sent) == 1
     assert not any("s3cret" in line for line in logs)
 
 
@@ -110,7 +133,7 @@ def test_real_gateway_client_posts_through_the_fake_transport(conn):
 
     gw = GatewayClient("http://gw:8780", "s3cret", transport, sleep=lambda _: None)
     run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert all(url == "http://gw:8780/notify" and auth == "Bearer s3cret" and body["format"] == "html"
                for url, auth, body in calls)
 
@@ -189,7 +212,7 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     no_id[1]["properties"]["TelegramUserID"] = {"type": "number", "number": None}
     with pytest.raises(BriefFailed, match="digest"):
         run_brief(conn, FakeNotion([], no_id), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert len(gw.sent) == 2
+    assert len(gw.sent) == 1
 
 
 class FakeLlm:
