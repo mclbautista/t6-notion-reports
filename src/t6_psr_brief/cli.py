@@ -11,10 +11,11 @@ from .config import ConfigError, load_config
 from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
-from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
+from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
 from .llm import OpenRouterClient, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
+from .mom_send import MomSendFailed, run_send_ready_mom
 from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
@@ -42,6 +43,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     mom.add_argument("--config", default="config.yaml")
     mom.add_argument("--db", help="default: database_path from --config")
     mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
+    send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
+    send.add_argument("--config", default="config.yaml")
+    send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
     args = parser.parse_args(argv)
 
     if args.command == "diff":
@@ -52,6 +56,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
 
     if args.command == "draft-mom":
         return _draft_mom(args, notion, now)
+
+    if args.command == "send-ready-mom":
+        return _send_ready_mom(args, notion, now)
 
     if args.command == "serve":
         cfg = _load(args.config)
@@ -73,7 +80,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
             clock=clock,
             sleep=time.sleep,
             log=lambda line: print(line, flush=True),
-            slots=SLOTS + [BRIEF_SLOT] if cfg.brief else SLOTS,
+            slots=_slots(cfg),
         ).run()
         return 0
 
@@ -126,6 +133,13 @@ def _brief(args, notion, now) -> int:
     return 0
 
 
+def _slots(cfg):
+    slots = SLOTS + [BRIEF_SLOT] if cfg.brief else list(SLOTS)
+    if cfg.brief and cfg.meeting_notes_data_source:
+        slots.append(SEND_MOM_SLOT)
+    return slots
+
+
 def _brief_secrets(cfg):
     if cfg.brief is None:
         return []
@@ -145,6 +159,11 @@ def make_job(conn, notion, cfg, gateway, clock):
     """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
     def job(kind: str) -> None:
         moment = clock()
+        if kind == "send_mom":
+            run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+                               cfg.brief.group_topic_id, moment, banner=cfg.brief.test_banner,
+                               log=lambda text: print(text, flush=True))
+            return
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
                       log=lambda text: print(text, flush=True))
@@ -181,6 +200,34 @@ def _draft_mom(args, notion, now) -> int:
         conn.close()
     if result.page_id is None:
         print("no minutes drafted: need a Monday snapshot with an earlier Friday one", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _send_ready_mom(args, notion, now) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if cfg.brief is None:
+        print("config error: missing config key: gateway_url (briefing settings)", file=sys.stderr)
+        return 2
+    if not cfg.meeting_notes_data_source:
+        print("config error: missing config key: meeting_notes_data_source", file=sys.stderr)
+        return 2
+    if not args.dry_print:
+        for name, value in _brief_secrets(cfg):
+            if not value:
+                print(f"config error: missing environment variable: {name}", file=sys.stderr)
+                return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
+    try:
+        run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+                           cfg.brief.group_topic_id, now or datetime.now(timezone.utc),
+                           banner=cfg.brief.test_banner, dry_print=args.dry_print,
+                           log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
+    except MomSendFailed as exc:
+        print(f"send-ready-mom failed: {exc}", file=sys.stderr)
         return 1
     return 0
 

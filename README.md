@@ -5,7 +5,7 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila), and the Sunday 16:00
-briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Not done: LLM condensing of the minutes, sending the minutes.
+briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Approved minutes are sent to the PSR group topic when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
 
     pip install -e '.[dev]' && pytest
 
@@ -97,3 +97,19 @@ Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.
 `draft-mom` re-drafts by hand (default date: today, Manila). It trashes an earlier **unsent** page for
 that date and makes a new one, and exits 1 without touching a page whose `Sent at` is set. The
 `Sent at` (date) property must exist on Meeting Notes (spec 3.3); it is only read here.
+
+## Sending the approved minutes
+
+Leizette edits the draft in Notion and ticks `Ready to send`. Every 5 minutes (when the briefing keys
+and `meeting_notes_data_source` are in `config.yaml`) the scheduler looks for `PSR MOM` pages with
+`Ready to send` ticked and `Sent at` empty, reads each page as it is now, and sends it to the PSR group
+topic: one message per group (header first, 🔴 🟠 🟡 🔵 🟢, ⚫️ Others last), split on bullet boundaries
+past 4,096 characters. The "Unchanged" heading and everything after it, and any toggle, stay in Notion.
+Keys are `psr-mom-<meeting date>-<part n>`. `Sent at` is set only once every part is accepted; on a
+gateway failure it stays empty, the next check retries, and the gateway drops parts it already accepted.
+`Ready to send` and `Sent at` must exist on Meeting Notes (spec 3.3).
+
+    docker compose run --rm psr-brief send-ready-mom --config /app/config.yaml --dry-print   # print, send nothing
+    docker compose run --rm psr-brief send-ready-mom --config /app/config.yaml               # check once now
+
+`test_banner` adds the 🧪 TEST banner here too.

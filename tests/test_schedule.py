@@ -80,3 +80,13 @@ def test_briefing_fires_sunday_16_manila_when_enabled():
 
 def test_briefing_is_off_by_default():
     assert "brief" not in [k for _, k in run_weeks()]
+
+
+def test_every_five_minutes_slot_fires_on_the_clock_and_yields_to_weekly_slots():
+    from t6_psr_brief.schedule import SEND_MOM_SLOT, SLOTS
+    slots = SLOTS + [SEND_MOM_SLOT]
+    assert next_run(manila(2026, 11, 10, 9, 3), slots) == (manila(2026, 11, 10, 9, 5), "send_mom")
+    assert next_run(manila(2026, 11, 10, 9, 5), slots) == (manila(2026, 11, 10, 9, 10), "send_mom")
+    assert next_run(manila(2026, 11, 10, 9, 59, 59), slots) == (manila(2026, 11, 10, 10), "send_mom")
+    assert next_run(manila(2026, 11, 9, 10, 57), slots) == (manila(2026, 11, 9, 11), "monday")  # tie: weekly wins
+    assert next_run(manila(2026, 11, 9, 11), slots) == (manila(2026, 11, 9, 11, 5), "send_mom")
