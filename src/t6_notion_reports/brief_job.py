@@ -12,6 +12,7 @@ from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .gateway import GatewayError
 from .llm import LlmClient
+from .mom import norm
 from .owed import OwedOutcome, find_owed
 from .schedule import MANILA
 from .snapshots import default_diff_pair, load_snapshot, snapshot_info
@@ -87,7 +88,7 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        owed, owed_failed,
+        owed, owed_failed, active_coordinators_in(new_state),
     )
     no_digest = digest_missing(settings)
 
@@ -125,3 +126,15 @@ def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:
                     people.setdefault(str(ref["id"]), str(ref.get("name") or ref["id"]))
     return people
 
+
+
+ACTIVE_STATUSES = {"in-progress", "archiving"}
+
+
+def active_coordinators_in(state: dict[str, dict[str, object]]) -> set[str]:
+    """Contact page ids of coordinators with an In-Progress or Archiving project in the snapshot."""
+    return {
+        str(ref["id"])
+        for project in state.values() if norm(project.get("Status")) in ACTIVE_STATUSES
+        for ref in project.get("T6 Post Coordinator") or [] if isinstance(ref, dict)
+    }

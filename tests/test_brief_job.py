@@ -65,13 +65,12 @@ class FakeGateway:
         return len(self.sent)
 
 
-def test_sends_one_dm_per_coordinator_plus_digest_through_the_gateway(conn):
+def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(conn):
     gw = FakeGateway()
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert res.sent == 3 and res.failed == 0
+    assert res.sent == 2 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
         (111, None, "notion-reports-2026-11-15-c-pio"),
-        (-1003, 7, "notion-reports-2026-11-15-c-angel"),
         (999, None, "psr-digest-2026-11-15"),
     }
 
@@ -80,7 +79,7 @@ def test_dry_print_prints_and_sends_nothing(conn):
     gw, printed = FakeGateway(), []
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
                     dry_print=True, out=printed.append, log=lambda _: None)
-    assert gw.sent == [] and res.sent == 0 and len(res.messages) == 3
+    assert gw.sent == [] and res.sent == 0 and len(res.messages) == 2
     assert any("psr-digest-2026-11-15" in p for p in printed)
 
 
@@ -88,7 +87,7 @@ def test_a_failed_send_does_not_stop_the_others_and_then_raises(conn):
     gw, logs = FakeGateway(fail_for={111}), []
     with pytest.raises(BriefFailed):
         run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=logs.append)
-    assert len(gw.sent) == 2
+    assert len(gw.sent) == 1
     assert not any("s3cret" in line for line in logs)
 
 
@@ -110,7 +109,7 @@ def test_real_gateway_client_posts_through_the_fake_transport(conn):
 
     gw = GatewayClient("http://gw:8780", "s3cret", transport, sleep=lambda _: None)
     run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert all(url == "http://gw:8780/notify" and auth == "Bearer s3cret" and body["format"] == "html"
                for url, auth, body in calls)
 
@@ -189,7 +188,7 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     no_id[1]["properties"]["TelegramUserID"] = {"type": "number", "number": None}
     with pytest.raises(BriefFailed, match="digest"):
         run_brief(conn, FakeNotion([], no_id), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert len(gw.sent) == 2
+    assert len(gw.sent) == 1
 
 
 class FakeLlm:
