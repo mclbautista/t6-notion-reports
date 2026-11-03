@@ -7,9 +7,9 @@ import pytest
 from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
 from test_shift_report import PM, PREV_1800, at, jo, prior, world
 from test_shift_send import CHAT, TOPIC, FakeTransport
-from t6_psr_brief.gateway import GatewayClient
-from t6_psr_brief.jo_snapshots import connect
-from t6_psr_brief.shift_job import NotionUnavailable, ShiftTarget, run_shift_report
+from t6_notion_reports.gateway import GatewayClient
+from t6_notion_reports.jo_snapshots import connect
+from t6_notion_reports.shift_job import NotionUnavailable, ShiftTarget, run_shift_report
 
 OPS = 4242
 MNL = timezone(timedelta(hours=8))
@@ -141,7 +141,7 @@ def test_dry_print_does_not_retry_or_alert():
 
 
 def test_retrying_slot_gives_up_before_the_next_slot_is_due():
-    from t6_psr_brief.shift_job import RETRY_FOR
-    from t6_psr_brief.schedule import SHIFT_SLOTS
+    from t6_notion_reports.shift_job import RETRY_FOR
+    from t6_notion_reports.schedule import SHIFT_SLOTS
     gaps = [(b.at.hour - a.at.hour) % 24 for a, b in zip(SHIFT_SLOTS, SHIFT_SLOTS[1:] + SHIFT_SLOTS[:1])]
     assert RETRY_FOR < timedelta(hours=min(gaps))

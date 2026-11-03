@@ -1,5 +1,5 @@
 from fake_notion import FakeNotion, contact, rich, select
-from t6_psr_brief.contacts import load_contacts
+from t6_notion_reports.contacts import load_contacts
 
 
 def test_reads_id_handle_and_name_from_number_or_text():

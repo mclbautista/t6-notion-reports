@@ -1,7 +1,7 @@
 import pytest
 
 from html_check import assert_valid_html
-from t6_psr_brief.telegram_html import (
+from t6_notion_reports.telegram_html import (
     LIMIT, bold, code, line, link, mention_handle, mention_user, quote, render_messages,
 )
 

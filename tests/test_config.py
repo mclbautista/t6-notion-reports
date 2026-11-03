@@ -1,7 +1,7 @@
 import pytest
 
-from t6_psr_brief import cli
-from t6_psr_brief.config import ConfigError, load_config
+from t6_notion_reports import cli
+from t6_notion_reports.config import ConfigError, load_config
 
 ID_A = "11111111-1111-1111-1111-111111111111"
 ID_B = "22222222222222222222222222222222"

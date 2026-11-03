@@ -5,10 +5,10 @@ import pytest
 from pydantic import BaseModel
 
 from html_check import assert_valid_html
-from t6_psr_brief.briefing import OWED_UNAVAILABLE, Settings, build_briefing
-from t6_psr_brief.contacts import Contact
-from t6_psr_brief.llm import LlmError, OpenRouterClient
-from t6_psr_brief.owed import MAX_ITEMS, OwedItem, OwedItems, OwedOutcome, find_owed
+from t6_notion_reports.briefing import OWED_UNAVAILABLE, Settings, build_briefing
+from t6_notion_reports.contacts import Contact
+from t6_notion_reports.llm import LlmError, OpenRouterClient
+from t6_notion_reports.owed import MAX_ITEMS, OwedItem, OwedItems, OwedOutcome, find_owed
 
 NOTES = "As of Nov 12,\n  • TLR piclock TBC\n  • Shoot today"
 STATE = {"Name": "Show", "Project Code": "MAU", "Stage": "Preprod", "Status": "In-Progress",
@@ -142,7 +142,7 @@ SETTINGS = Settings(CONTACTS["c-cyril"], -1003, 7)
 
 
 def brief(owed, failed=(), changes=None):
-    from t6_psr_brief.diff import display_names, unchanged_project
+    from t6_notion_reports.diff import display_names, unchanged_project
     names = display_names({}, {"p1": STATE})
     shown = changes if changes is not None else [unchanged_project("p1", names, STATE, date(2026, 11, 13))]
     return build_briefing(shown, {"c-pio": "Pio"}, CONTACTS, SETTINGS, date(2026, 11, 15), owed, list(failed))
@@ -174,7 +174,7 @@ def test_failure_shows_the_unavailable_line_and_digest_notes_it():
 
 
 def test_failed_project_without_changes_still_gets_the_unavailable_line():
-    from t6_psr_brief.diff import display_names, unchanged_project
+    from t6_notion_reports.diff import display_names, unchanged_project
     names = display_names({}, {"p1": STATE})
     shown = [unchanged_project("p1", names, STATE, date(2026, 11, 13))]
     msgs = brief({"p1": OwedOutcome(failed=True)}, ["MAU"], shown)
@@ -187,7 +187,7 @@ def test_property_citation_only_for_date_and_role_kinds():
 
 
 def test_failure_on_a_changed_project_keeps_raw_changes_and_adds_the_line():
-    from t6_psr_brief.diff import diff_snapshots
+    from t6_notion_reports.diff import diff_snapshots
     changed = diff_snapshots({"p1": {**STATE, "Stage": "Offline"}}, {"p1": STATE}, date(2026, 11, 9), date(2026, 11, 13))
     msgs = brief({"p1": OwedOutcome(failed=True)}, ["MAU"], changed)
     dm = next(m for m in msgs if m.recipient == "Pio")

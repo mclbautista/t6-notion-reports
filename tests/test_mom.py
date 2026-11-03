@@ -6,15 +6,15 @@ import yaml
 
 from fake_notion import (CONTACTS, MEETING, PROJECTS, FakeNotion, contact, meeting_page, project,
                          rich, select)
-from t6_psr_brief import cli
-from t6_psr_brief.cli import make_job, main
-from t6_psr_brief.config import load_config
-from t6_psr_brief.holidays import upcoming_entries
-from t6_psr_brief.mom import GROUPS, build_draft, group_of
-from t6_psr_brief.mom_job import MomAlreadySent, run_draft_mom
-from t6_psr_brief.schedule import MANILA, Scheduler
-from t6_psr_brief.snapshot_job import run_snapshot
-from t6_psr_brief.snapshots import SCHEMA, mom_diff_pair
+from t6_notion_reports import cli
+from t6_notion_reports.cli import make_job, main
+from t6_notion_reports.config import load_config
+from t6_notion_reports.holidays import upcoming_entries
+from t6_notion_reports.mom import GROUPS, build_draft, group_of
+from t6_notion_reports.mom_job import MomAlreadySent, run_draft_mom
+from t6_notion_reports.schedule import MANILA, Scheduler
+from t6_notion_reports.snapshot_job import run_snapshot
+from t6_notion_reports.snapshots import SCHEMA, mom_diff_pair
 
 FRIDAY = datetime(2026, 11, 13, 10, tzinfo=timezone.utc)
 MONDAY = datetime(2026, 11, 16, 3, tzinfo=timezone.utc)  # 11:00 Manila

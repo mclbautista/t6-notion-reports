@@ -1,6 +1,6 @@
 from datetime import date
 
-from t6_psr_brief.pm_notes import last_updated, parse_pm_notes
+from t6_notion_reports.pm_notes import last_updated, parse_pm_notes
 
 SNAP = date(2026, 10, 26)
 

@@ -4,9 +4,9 @@ import pytest
 
 from fake_notion import MEETING, FakeNotion, block, meeting_page, rt
 from html_check import assert_valid_html
-from t6_psr_brief.gateway import GatewayError
-from t6_psr_brief.mom_send import MomSendFailed, run_send_ready_mom
-from t6_psr_brief.telegram_html import LIMIT
+from t6_notion_reports.gateway import GatewayError
+from t6_notion_reports.mom_send import MomSendFailed, run_send_ready_mom
+from t6_notion_reports.telegram_html import LIMIT
 
 NOW = datetime(2026, 11, 16, 6, 5, tzinfo=timezone.utc)  # 14:05 Manila
 CHAT, TOPIC = -100123, 7
@@ -208,7 +208,7 @@ class Routed(FakeNotion):
 
 
 def test_cli_dry_print_renders_and_does_not_mark_sent(tmp_path, monkeypatch, capsys):
-    from t6_psr_brief.cli import main
+    from t6_notion_reports.cli import main
     n = setup()
     n.__class__ = Routed
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, secret=False), "--dry-print"],
@@ -217,7 +217,7 @@ def test_cli_dry_print_renders_and_does_not_mark_sent(tmp_path, monkeypatch, cap
 
 
 def test_cli_needs_meeting_notes_config_and_secret(tmp_path, monkeypatch, capsys):
-    from t6_psr_brief.cli import main
+    from t6_notion_reports.cli import main
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, notes=False)], notion=FakeNotion()) == 2
     assert "meeting_notes_data_source" in capsys.readouterr().err
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, secret=False)], notion=FakeNotion()) == 2
@@ -226,9 +226,9 @@ def test_cli_needs_meeting_notes_config_and_secret(tmp_path, monkeypatch, capsys
 
 def test_scheduler_job_runs_the_check_and_serve_adds_the_slot(tmp_path, monkeypatch):
     import sqlite3
-    from t6_psr_brief.cli import _slots, make_job
-    from t6_psr_brief.config import load_config
-    from t6_psr_brief.schedule import SEND_MOM_SLOT
+    from t6_notion_reports.cli import _slots, make_job
+    from t6_notion_reports.config import load_config
+    from t6_notion_reports.schedule import SEND_MOM_SLOT
     cfg = load_config(cli_cfg(tmp_path, monkeypatch))
     assert SEND_MOM_SLOT in _slots(cfg)
     assert SEND_MOM_SLOT not in _slots(load_config(cli_cfg(tmp_path, monkeypatch, notes=False)))

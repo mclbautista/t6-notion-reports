@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from t6_psr_brief.cli import main
-from t6_psr_brief.snapshots import ProjectRecord, connect, default_diff_pair, take_snapshot
+from t6_notion_reports.cli import main
+from t6_notion_reports.snapshots import ProjectRecord, connect, default_diff_pair, take_snapshot
 
 
 def rec(stage, notes=""):

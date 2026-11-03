@@ -1,4 +1,4 @@
-"""Command line: ``python -m t6_psr_brief snapshot``."""
+"""Command line: ``python -m t6_notion_reports snapshot``."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapsho
 
 
 def main(argv=None, notion=None, now: datetime | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="t6_psr_brief")
+    parser = argparse.ArgumentParser(prog="t6_notion_reports")
     sub = parser.add_subparsers(dest="command", required=True)
     snap = sub.add_parser("snapshot", help="snapshot the Notion Projects database")
     snap.add_argument("--kind", choices=KINDS, default="manual")
