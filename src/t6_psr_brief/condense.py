@@ -96,7 +96,7 @@ def check_grounding(bullets: list[str], notes: str, source: list[str], meeting: 
     for name in sorted(out.names - STRUCTURE_WORDS):
         if name not in words:
             return f"{name.title()} is not in the notes"
-    older = out.dates - fresh.dates
+    older = out.dates - fresh.dates - {(meeting.month, meeting.day)}  # the meeting's own date is not an older one
     if len(older) > 1:
         return "more than one date from an older block"
     for d in older:

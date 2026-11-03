@@ -168,3 +168,8 @@ def test_ungrounded_or_failed_projects_keep_raw_bullets_marked_raw():
     assert pas[0][0].endswith("(raw)") and pas[1][0] == "Ep 3 locked na"
     assert lsb[0][0].endswith("(raw)") and lsb[1][0] == "Mixing delayed ng 2 days"
     assert not wed[0][0].endswith("(raw)") and wed[1][0] == "Online on Nov 9; Colorist: Tin"
+
+
+def test_echoing_the_meeting_date_does_not_use_up_the_older_date_allowance():
+    out, _ = run(["Ep 3 locked Oct 26", "QCinema submission on Nov 6"])
+    assert not out.raw
