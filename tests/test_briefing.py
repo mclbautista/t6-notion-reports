@@ -88,8 +88,7 @@ def test_quiet_coordinator_without_telegram_id_triggers_no_group_fallback():
     contacts = {**CONTACTS, "c-zed": Contact("c-zed", "Zed", "zed_h", None)}
     quiet = rec("p5", "QQ", ("c-zed",))
     msgs = run(BEFORE + [quiet], AFTER + [quiet], contacts=contacts)
-    assert "Zed" not in by_recipient(msgs) or all(m.to != SETTINGS.group_chat_id for m in by_recipient(msgs)["Zed"])
-    assert not [m for m in msgs if m.to == SETTINGS.group_chat_id and "Zed" in m.recipient]
+    assert "Zed" not in by_recipient(msgs)
 
 
 def test_digest_no_changes_line_lists_only_active_coordinators():
