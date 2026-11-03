@@ -12,6 +12,8 @@ from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
+from .shift_job import run_shift_report
+from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
@@ -35,6 +37,11 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     jo.add_argument("--kind", choices=jo_snapshots.KINDS, default="manual")
     jo.add_argument("--config", default="config.yaml")
     jo.add_argument("--db", help="default: database_path from --config")
+    shift = sub.add_parser("shift-report", help="build one end-of-shift Job Orders report")
+    shift.add_argument("--slot", choices=sorted(SHIFT_SLOTS), required=True)
+    shift.add_argument("--config", default="config.yaml")
+    shift.add_argument("--db", help="default: database_path from --config")
+    shift.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")
     dif = sub.add_parser("diff", help="print what changed between two snapshots")
     dif.add_argument("--db", default=os.environ.get("PSR_DB"), help="default: data/psr.db")
     dif.add_argument("--old", type=int, help="snapshot id; default: latest Monday before the latest Friday")
@@ -59,6 +66,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
 
     if args.command == "jo-snapshot":
         return _jo_snapshot(args, notion, now)
+
+    if args.command == "shift-report":
+        return _shift_report(args, notion, now)
 
     if args.command == "brief":
         return _brief(args, notion, now)
@@ -131,6 +141,30 @@ def _jo_snapshot(args, notion, now) -> int:
     print(f"jo-snapshot id={res.snapshot_id} kind={args.kind} baseline={res.is_baseline} "
           f"changed={res.changed} unchanged={res.unchanged} removed={res.removed} pruned={res.pruned}",
           flush=True)
+    return 0
+
+
+def _shift_report(args, notion, now) -> int:
+    if not args.dry_print:
+        print("shift-report can only --dry-print for now: sending is not built yet", file=sys.stderr)
+        return 2
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if not cfg.jo_data_source:
+        print("config error: missing config key: jo_data_source", file=sys.stderr)
+        return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    db = args.db or cfg.database_path
+    _ensure_dir(db)
+    conn = jo_snapshots.connect(db)
+    try:
+        run_shift_report(conn, notion, cfg.jo_data_source, cfg.contacts_data_source, cfg.projects_data_source,
+                         args.slot, now or datetime.now(timezone.utc),
+                         banner=bool(cfg.brief and cfg.brief.test_banner),
+                         log=lambda text: print(text, file=sys.stderr, flush=True))
+    finally:
+        conn.close()
     return 0
 
 
