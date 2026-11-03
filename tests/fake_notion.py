@@ -1,6 +1,10 @@
 """A fake Notion that returns raw API-shaped pages. No network."""
 from __future__ import annotations
 
+import itertools
+
+_ids = itertools.count(1)
+
 PROJECTS = "projects-ds"
 CONTACTS = "contacts-ds"
 MEETING = "meeting-ds"
@@ -56,10 +60,23 @@ def people(*users):
     return {"type": "people", "people": [{"id": i, "name": n} for i, n in users]}
 
 
-def meeting_page(page_id, name, day, attendees=(), sent_at=None, handle_props=None):
+def meeting_page(page_id, name, day, attendees=(), sent_at=None, handle_props=None, ready=False):
     return {"id": page_id, "properties": {
         "Name": title(name), "Meeting Date": date(day), "Team Attendees": people(*attendees),
-        "Sent at": date(sent_at)}}
+        "Sent at": date(sent_at), "Ready to send": {"type": "checkbox", "checkbox": ready}}}
+
+
+def rt(text, bold=False, code=False, href=None):
+    """A rich-text item as the API returns it (plain_text plus annotations)."""
+    return {"type": "text", "plain_text": text, "href": href,
+            "annotations": {"bold": bold, "code": code}}
+
+
+def block(kind, text="", children=(), **rich_kw):
+    """A block as the API returns it. ``text`` may be a string or a list of rt() items."""
+    items = text if isinstance(text, list) else ([rt(text, **rich_kw)] if text else [])
+    return {"object": "block", "id": f"b-{next(_ids)}", "type": kind, "has_children": bool(children),
+            "_children": list(children), kind: {"rich_text": items}}
 
 
 class FakeNotion:
@@ -72,6 +89,8 @@ class FakeNotion:
         self.created: list[dict] = []  # raw create_page bodies: {"properties", "children"}
         self.appended: list[tuple[str, list[dict]]] = []
         self.trashed: list[str] = []
+        self.sent_marked: list[tuple[str, dict]] = []  # (page id, properties) from property updates
+        self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
 
     def query_data_source(self, data_source_id, filter=None):
         self.queried.append(data_source_id)
@@ -88,13 +107,39 @@ class FakeNotion:
         return {"id": page_id}
 
     def update_page(self, page_id, body):
+        if "properties" in body:
+            self.sent_marked.append((page_id, body["properties"]))
+            for p in self.meetings:
+                if p["id"] == page_id:
+                    p["properties"].update(body["properties"])
+            return {"id": page_id}
         self.trashed.append(page_id)
         for p in self.meetings:
             if p["id"] == page_id:
                 p["in_trash"] = True
         return {"id": page_id}
 
+    def list_block_children(self, block_id):
+        """Children of a page (from ``page_blocks``) or of a block built with block(children=...)."""
+        if block_id in self.page_blocks:
+            return list(self.page_blocks[block_id])
+        for blocks in self.page_blocks.values():
+            found = _find(blocks, block_id)
+            if found is not None:
+                return list(found["_children"])
+        raise KeyError(block_id)
+
     def append_children(self, block_id, children):
         assert len(children) <= 100
         self.appended.append((block_id, children))
         return {}
+
+
+def _find(blocks, block_id):
+    for b in blocks:
+        if b["id"] == block_id:
+            return b
+        inner = _find(b["_children"], block_id)
+        if inner is not None:
+            return inner
+    return None

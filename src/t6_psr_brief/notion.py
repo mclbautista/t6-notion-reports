@@ -49,6 +49,18 @@ class NotionClient:
     def append_children(self, block_id: str, children: list[dict]) -> dict:
         return self._call("PATCH", f"/blocks/{block_id}/children", {"children": children})
 
+    def list_block_children(self, block_id: str) -> list[dict]:
+        """All direct children of a page or block, oldest first."""
+        blocks: list[dict] = []
+        cursor = None
+        while True:
+            path = f"/blocks/{block_id}/children?page_size=100" + (f"&start_cursor={cursor}" if cursor else "")
+            data = self._call("GET", path, {})
+            blocks.extend(data["results"])
+            if not data.get("has_more"):
+                return blocks
+            cursor = data["next_cursor"]
+
     def query_data_source(self, data_source_id: str, filter: dict | None = None) -> list[dict]:
         pages: list[dict] = []
         body: dict = {"filter": filter} if filter else {}

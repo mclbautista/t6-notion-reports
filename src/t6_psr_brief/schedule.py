@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -12,18 +13,37 @@ SLOTS = [(0, time(11, 0), "monday"), (4, time(18, 0), "friday")]
 BRIEF_SLOT = (6, time(16, 0), "brief")
 
 
+@dataclass(frozen=True)
+class Every:
+    """A slot that fires every ``minutes`` on the local clock (minute 0, 5, 10... for 5)."""
+
+    minutes: int
+    kind: str
+
+
+# When it lands on the same minute as a weekly slot the weekly one wins, and this check runs five
+# minutes later.
+SEND_MOM_SLOT = Every(5, "send_mom")
+
+
 def next_run(after: datetime, slots=SLOTS) -> tuple[datetime, str]:
     """The first slot strictly after ``after`` (an aware datetime), and its kind."""
     local = after.astimezone(MANILA)
     best: tuple[datetime, str] | None = None
     for day in range(8):
         date = (local + timedelta(days=day)).date()
-        for weekday, at, kind in slots:
+        for weekday, at, kind in (s for s in slots if not isinstance(s, Every)):
             if date.weekday() != weekday:
                 continue
             slot = datetime.combine(date, at, tzinfo=MANILA)
             if slot > after and (best is None or slot < best[0]):
                 best = (slot, kind)
+    for slot in slots:
+        if isinstance(slot, Every):
+            base = local.replace(second=0, microsecond=0)
+            base += timedelta(minutes=slot.minutes - base.minute % slot.minutes)
+            if best is None or base < best[0]:
+                best = (base, slot.kind)
     assert best is not None
     return best
 
