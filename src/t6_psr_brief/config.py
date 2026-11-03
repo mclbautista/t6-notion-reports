@@ -16,9 +16,11 @@ from .llm import DEFAULT_MODEL
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
+SHIFT_SECRET_ENV = "SHIFT_SECRET"
+SHIFT_KEYS = {"shift_reports_enabled", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner", "llm_model"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id", "cyril_contact_id")
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS
+KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -41,6 +43,18 @@ class BriefSettings:
 
 
 @dataclass(frozen=True)
+class ShiftSettings:
+    """JO shift report settings. Present only when ``shift_reports_enabled`` is true."""
+
+    gateway_url: str
+    chat_id: int
+    topic_id: int | None
+    ops_chat_id: int | None  # for the ops alert (a later ticket); unset until Cyril gives the id
+    test_banner: bool
+    shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
+
+
+@dataclass(frozen=True)
 class Config:
     projects_data_source: str
     contacts_data_source: str
@@ -49,6 +63,7 @@ class Config:
     brief: BriefSettings | None = None
     jo_data_source: str | None = None  # Job Orders data source; needed by jo-snapshot
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
+    shift: ShiftSettings | None = None  # None when shift reports are disabled
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -76,21 +91,21 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         jo_data_source=_notion_id(raw, "jo_data_source") if "jo_data_source" in raw else None,
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
+        shift=_shift(raw, env),
     )
 
 
 def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
-    if not BRIEF_KEYS & set(raw):
+    present = BRIEF_KEYS & set(raw)
+    if raw.get("shift_reports_enabled", False) is not False:  # the shift reports share these two keys without the briefing
+        present -= {"gateway_url", "test_banner"}
+    if not present:
         return None
     for key in BRIEF_REQUIRED:
         if key not in raw:
             raise ConfigError(f"missing config key: {key}")
-    url = _string(raw, "gateway_url")
-    if not url.startswith(("http://", "https://")):
-        raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
-    banner = raw.get("test_banner", False)
-    if not isinstance(banner, bool):
-        raise ConfigError("invalid config key: test_banner (expected true or false)")
+    url = _gateway_url(raw)
+    banner = _banner(raw)
     topic = _integer(raw, "psr_group_topic_id") if "psr_group_topic_id" in raw else None
     return BriefSettings(
         gateway_url=url,
@@ -101,6 +116,42 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         psr_secret=env.get(PSR_SECRET_ENV, "").strip() or None,
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
+    )
+
+
+def _gateway_url(raw: dict) -> str:
+    url = _string(raw, "gateway_url")
+    if not url.startswith(("http://", "https://")):
+        raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
+    return url
+
+
+def _banner(raw: dict) -> bool:
+    banner = raw.get("test_banner", False)
+    if not isinstance(banner, bool):
+        raise ConfigError("invalid config key: test_banner (expected true or false)")
+    return banner
+
+
+def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
+    enabled = raw.get("shift_reports_enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("invalid config key: shift_reports_enabled (expected true or false)")
+    if not enabled:  # nothing else about the shift reports is read, so existing configs behave as before
+        return None
+    chat = _integer(raw, "shift_chat_id") if "shift_chat_id" in raw else None
+    topic = _integer(raw, "shift_topic_id") if "shift_topic_id" in raw else None
+    ops = _integer(raw, "ops_chat_id") if "ops_chat_id" in raw else None
+    for key in ("jo_data_source", "shift_chat_id"):
+        if key not in raw:
+            raise ConfigError(f"missing config key: {key} (needed when shift_reports_enabled is true)")
+    return ShiftSettings(
+        gateway_url=_gateway_url(raw),
+        chat_id=chat,
+        topic_id=topic,
+        ops_chat_id=ops,
+        test_banner=_banner(raw),
+        shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
     )
 
 

@@ -34,6 +34,11 @@ class Daily:
     kind: str
 
 
+# JO shift reports: snapshot Job Orders, then build and send that slot's report. Kind "shift<slot>".
+# Declared after SLOTS, so on Friday 18:00 the Projects snapshot runs first.
+SHIFT_SLOTS = [Daily(time(5, 0), "shift0500"), Daily(time(12, 0), "shift1200"), Daily(time(18, 0), "shift1800")]
+
+
 def next_batch(after: datetime, slots=SLOTS) -> tuple[datetime, list[str]]:
     """The first minute strictly after ``after`` with a slot, and every kind due then.
 
