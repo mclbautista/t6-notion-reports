@@ -20,7 +20,6 @@ from .telegram_html import Block, Line, Span, Quote, render_messages
 
 UNCHANGED_PREFIX = "unchanged"  # the "Unchanged (Notion only, not sent)" heading and all after it stay in Notion
 LIST_KINDS = {"bulleted_list_item", "numbered_list_item", "to_do"}
-TEXT_KINDS = {"paragraph", "quote", "callout"}
 HEADING_KINDS = {"heading_1", "heading_2", "heading_3"}
 INDENT = "  "  # Telegram trims plain leading spaces
 
@@ -115,9 +114,9 @@ def _groups(notion, page_id: str) -> list[list[Block]]:
     header: list[list[dict]] = [[]]
     groups: list[list[dict]] = []
     for blk in notion.list_block_children(page_id):
+        if blk["type"] in HEADING_KINDS and _text(blk).strip().lower().startswith(UNCHANGED_PREFIX):
+            break  # whatever the heading level, the Unchanged list and all after it stay in Notion
         if blk["type"] == "heading_2":
-            if _text(blk).strip().lower().startswith(UNCHANGED_PREFIX):
-                break
             groups.append([blk])
         else:
             (groups[-1] if groups else header[0]).append(blk)
