@@ -172,7 +172,7 @@ def make_job(conn, notion, cfg, gateway, clock):
         if kind == "monday" and cfg.meeting_notes_data_source:
             run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
                           cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
-                          log=lambda text: print(text, flush=True))
+                          log=lambda text: print(text, flush=True), llm=_llm(cfg))
     return job
 
 
@@ -192,7 +192,8 @@ def _draft_mom(args, notion, now) -> int:
     conn = connect(db)
     try:
         result = run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
-                               cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True))
+                               cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
+                               llm=_llm(cfg))
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
         return 1
