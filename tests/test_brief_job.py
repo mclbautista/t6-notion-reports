@@ -173,3 +173,12 @@ def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
     assert main(["brief", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=SUNDAY) == 1
     captured = capsys.readouterr()
     assert "s3cret" not in captured.out + captured.err and "brief failed" in captured.err
+
+
+def test_missing_cyril_id_sends_dms_then_fails(conn):
+    gw = FakeGateway()
+    no_id = [c for c in contacts()]
+    no_id[1]["properties"]["TelegramUserID"] = {"type": "number", "number": None}
+    with pytest.raises(BriefFailed, match="digest"):
+        run_brief(conn, FakeNotion([], no_id), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    assert len(gw.sent) == 2

@@ -13,7 +13,6 @@ from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .briefing import BriefingError
 from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
@@ -114,7 +113,7 @@ def _brief(args, notion, now) -> int:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print,
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
-    except (BriefFailed, BriefingError) as exc:
+    except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -37,8 +37,8 @@ class Settings:
     test_banner: bool = False
 
 
-class BriefingError(Exception):
-    pass
+def digest_missing(settings: Settings) -> bool:
+    return settings.cyril.telegram_id is None
 
 
 def build_briefing(
@@ -48,9 +48,10 @@ def build_briefing(
     settings: Settings,
     today: date,
 ) -> list[OutboundMessage]:
-    """``coordinators`` maps contact page id → name, for everyone who owns a project this week."""
-    if settings.cyril.telegram_id is None:
-        raise BriefingError("Cyril's Contacts row has no TelegramUserID; the digest cannot be sent")
+    """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
+
+    Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
+    """
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
     stamp = f"{today:%a %b} {today.day}"
@@ -76,6 +77,8 @@ def build_briefing(
             blocks = [line(who, ":"), *blocks]
             messages += _parts(settings.group_chat_id, settings.group_topic_id, blocks, banner, key, name)
 
+    if digest_missing(settings):
+        return messages
     digest = _digest_blocks(groups, stamp, quiet, fallbacks, bool(changes))
     messages += _parts(settings.cyril.telegram_id, None, digest, banner, f"psr-digest-{today.isoformat()}", settings.cyril.name)
     return messages

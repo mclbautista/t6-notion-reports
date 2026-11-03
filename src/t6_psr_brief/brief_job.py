@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
-from .briefing import OutboundMessage, Settings, build_briefing
+from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
 from .config import BriefSettings
 from .contacts import Contact, load_contacts
 from .diff import diff_snapshots
@@ -56,16 +56,18 @@ def run_brief(
     )
     contacts = load_contacts(notion, contacts_ds)
     cyril = contacts.get(brief.cyril_contact_id) or Contact(brief.cyril_contact_id, "Cyril")
+    settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner)
     messages = build_briefing(
-        changes, coordinators_in(old_state, new_state), contacts,
-        Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner),
-        now.astimezone(MANILA).date(),
+        changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
     )
+    no_digest = digest_missing(settings)
 
     if dry_print or gateway is None:
         for m in messages:
             out(f"--- to={m.to} topic={m.topic} key={m.key} ({m.recipient}) ---\n{m.text}\n")
         log(f"brief dry_print=True messages={len(messages)} changed={len(changes)}")
+        if no_digest:
+            raise BriefFailed("Cyril's Contacts row has no TelegramUserID: digest not built")
         return BriefResult(messages=tuple(messages), changed=len(changes))
 
     sent = failed = 0
@@ -77,6 +79,8 @@ def run_brief(
             failed += 1
             log(f"brief send failed key={m.key} error={exc}")
     log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={len(changes)}")
+    if no_digest:
+        raise BriefFailed("Cyril's Contacts row has no TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=len(changes))

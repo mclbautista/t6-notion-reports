@@ -4,7 +4,7 @@ import pytest
 
 from html_check import assert_valid_html
 from t6_psr_brief.brief_job import coordinators_in
-from t6_psr_brief.briefing import NO_CHANGES, BriefingError, Settings, build_briefing
+from t6_psr_brief.briefing import NO_CHANGES, Settings, build_briefing
 from t6_psr_brief.contacts import Contact
 from t6_psr_brief.diff import diff_snapshots
 from t6_psr_brief.snapshots import ProjectRecord, connect, load_snapshot, take_snapshot
@@ -142,6 +142,6 @@ def test_long_briefing_splits_with_unique_keys_and_valid_parts():
         assert_valid_html(m.text)
 
 
-def test_digest_needs_cyrils_telegram_id():
-    with pytest.raises(BriefingError):
-        run(BEFORE, AFTER, settings=Settings(Contact(CYRIL, "Cyril"), -1003, 7))
+def test_without_cyrils_telegram_id_the_dms_still_go_and_the_digest_is_left_out():
+    msgs = run(BEFORE, AFTER, settings=Settings(Contact(CYRIL, "Cyril"), -1003, 7))
+    assert {m.recipient for m in msgs} == {"Pio", "Ana", "Angel Gaas"}
