@@ -1,6 +1,7 @@
 """The PSR minutes draft: which projects appear, in which group, and the Notion page it becomes.
 
-Spec section 8. Bullets are the raw PM Notes blocks; LLM condensing comes in a later ticket.
+Spec section 8. Bullets start as the raw PM Notes blocks; ``condense_draft`` may replace them with
+LLM-condensed ones that pass the grounding check (``condense.py``).
 """
 from __future__ import annotations
 
@@ -8,7 +9,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+from .condense import condense_bullets
 from .diff import ProjectChange, diff_snapshots, display_names, last_updated_text
+from .llm import LlmClient
 from .pm_notes import last_updated
 from .snapshots import squash
 
@@ -23,6 +26,7 @@ GROUPS = (
 OTHERS_TITLE = "⚫️ Others"
 UNCHANGED_TITLE = "Unchanged (Notion only, not sent)"
 HEALTH_NOT_SET = "Health not set"
+RAW_TOGGLE = "Raw source"
 
 ARCHIVING_STAGES = {"archiving", "for drives turnover", "waiting for payment"}
 INCOMING_STATUSES = {"leads", "lead", "negotiations", "proposal made"}
@@ -52,6 +56,8 @@ class Entry:
     bullets: list[str] = field(default_factory=list)
     last_updated_line: str | None = None  # set instead of bullets when nothing is new
     flag: str | None = None
+    source: list[str] = field(default_factory=list)  # raw bullets from PM Notes, for the raw toggle
+    raw_fallback: bool = False  # condensing was tried and rejected or failed: shown as "(raw)"
 
 
 @dataclass
@@ -106,7 +112,21 @@ def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_d
     entry.last_updated_line = f"last updated {last_updated_text(when)}" if when else last_updated_text(None)
     if change:
         entry.bullets = _bullets(change)
+        if change.notes:
+            entry.source = list(entry.bullets)
     return entry
+
+
+def condense_draft(draft: Draft, llm: LlmClient, new: dict[str, dict[str, object]]) -> tuple[int, int]:
+    """Condense each notes-sourced entry in place. Returns (condensed, raw fallbacks)."""
+    done = raw = 0
+    for e in draft.entries:
+        if not e.source or e.bullets != e.source:
+            continue
+        result = condense_bullets(llm, e.label, str(new[e.page_id].get("PM Notes") or ""), e.source, draft.meeting_date)
+        e.bullets, e.raw_fallback = result.bullets, result.raw
+        done, raw = done + (not result.raw), raw + result.raw
+    return done, raw
 
 
 def _bullets(change: ProjectChange) -> list[str]:
@@ -157,8 +177,13 @@ def render_blocks(draft: Draft, attendee_names: list[str], others: list[str], me
 
 def _project_block(e: Entry) -> dict:
     label = f"{e.label} ({e.flag})" if e.flag else e.label
+    if e.raw_fallback:
+        label += " (raw)"
     if e.bullets:
-        return _block("bulleted_list_item", label, [_block("bulleted_list_item", b) for b in e.bullets], bold=True)
+        children = [_block("bulleted_list_item", b) for b in e.bullets]
+        if e.source:  # lets the reviewer compare with what the PM wrote
+            children.append(_block("toggle", RAW_TOGGLE, [_block("bulleted_list_item", b) for b in e.source]))
+        return _block("bulleted_list_item", label, children, bold=True)
     return _block("bulleted_list_item", f"{label} - {e.last_updated_line}")
 
 

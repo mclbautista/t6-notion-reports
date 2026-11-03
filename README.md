@@ -87,7 +87,7 @@ With `meeting_notes_data_source` in `config.yaml`, the Monday 11:00 job takes it
 drafts a page named `PSR MOM <YYYY-MM-DD>` in Meeting Notes: `Meeting Date`, a `Project` relation to
 every project on the page, and `Team Attendees` copied from the previous `PSR MOM` page. The diff is
 that Monday's snapshot against the Friday one before it. Groups, order and rules are in
-`src/t6_psr_brief/mom.py` (spec section 8); bullets are the raw new PM Notes blocks. In-Progress and
+`src/t6_psr_brief/mom.py` (spec section 8); bullets are the raw new PM Notes blocks, condensed by the LLM when `OPENROUTER_API_KEY` is set (`condense.py`, spec 8.3): code rejects any output whose date, number, episode or capitalised word (names) is not in the project's PM Notes, or with more than one date from an older block (which must still be upcoming); a rejected or failed project keeps the raw bullets and is marked `(raw)`. Every project with notes has a "Raw source" toggle. In-Progress and
 Archiving projects always appear; everything else without changes goes under "Unchanged" at the
 bottom (Notion only). ⚫️ Others lists the lines of the Projects database description's "Upcoming
 Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.

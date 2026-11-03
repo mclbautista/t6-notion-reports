@@ -8,7 +8,8 @@ from typing import Callable
 
 from .contacts import load_contacts
 from .holidays import upcoming_entries
-from .mom import build_draft, render_blocks
+from .llm import LlmClient
+from .mom import build_draft, condense_draft, render_blocks
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
@@ -33,7 +34,7 @@ def title_for(meeting_date: date) -> str:
 
 def run_draft_mom(
     conn: sqlite3.Connection, notion, projects_ds: str, contacts_ds: str, meeting_notes_ds: str,
-    meeting_date: date, log: Callable[[str], None] = print,
+    meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
 ) -> MomResult:
     pair = mom_diff_pair(conn, meeting_date)
     if pair is None:
@@ -50,7 +51,11 @@ def run_draft_mom(
 
     old_on = _local_date(snapshot_info(conn, old_id).taken_at)
     new_on = _local_date(snapshot_info(conn, new_id).taken_at)
-    draft = build_draft(load_snapshot(conn, old_id), load_snapshot(conn, new_id), old_on, new_on, meeting_date)
+    new_state = load_snapshot(conn, new_id)
+    draft = build_draft(load_snapshot(conn, old_id), new_state, old_on, new_on, meeting_date)
+    condensed = raw = 0
+    if llm is not None:
+        condensed, raw = condense_draft(draft, llm, new_state)
 
     description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
     others = upcoming_entries(description, meeting_date)
@@ -77,7 +82,7 @@ def run_draft_mom(
     for old_page in existing:
         notion.update_page(old_page["id"], {"in_trash": True})
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
-        f"projects={len(draft.project_ids)} others={len(others)}")
+        f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
     return MomResult(page["id"], len(draft.entries), len(draft.unchanged))
 
 
