@@ -7,6 +7,9 @@ projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projec
 contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
 database_path: /app/data/psr.db
 
+# Job Orders (optional). Needed by `jo-snapshot`. Job Orders: collection://3d8fb4d5-9e59-8073-a0d0-000b77632947
+# jo_data_source: "3d8fb4d5-9e59-8073-a0d0-000b77632947"
+
 # Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
 # Meeting Notes, and `draft-mom` works. Meeting Notes: collection://e77662de-dbca-47c3-80ac-355716f6fe43
 # meeting_notes_data_source: "e77662de-dbca-47c3-80ac-355716f6fe43"

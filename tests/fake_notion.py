@@ -8,6 +8,7 @@ _ids = itertools.count(1)
 PROJECTS = "projects-ds"
 CONTACTS = "contacts-ds"
 MEETING = "meeting-ds"
+JOB_ORDERS = "jo-ds"
 
 # Formula property names. The snapshot must never read them.
 FORMULAS = ("Coordinator", "Label A", "Deadline Display", "Separator 1")
@@ -51,6 +52,23 @@ def project(page_id, name="Show", code="PAS", **props):
     return {"id": page_id, "in_trash": False, "properties": base}
 
 
+def status(name):
+    return {"type": "status", "status": {"name": name} if name else None}
+
+
+def job_order(page_id, name="TWBTY - AE - JO #48", edited="2026-11-03T10:00:00.000Z", **props):
+    """A Job Orders page as the API returns it. Note the trailing space in "Blocker "."""
+    base = {
+        "Name": title(name), "JO Number": rich("48"), "Task": rich("Export"),
+        "Date": date("2026-11-03T09:00:00.000+08:00"), "Deadline": date("2026-11-03T18:00:00.000+08:00"),
+        "Status": status("Pending"), "Department": select("AE"),
+        "Assigned": relation(), "Projects": relation(), "Blocker ": rich(""),
+        "Health": formula("🔵 On Track"),
+    }
+    base.update(props)
+    return {"id": page_id, "in_trash": False, "last_edited_time": edited, "properties": base}
+
+
 def contact(page_id, name):
     return {"id": page_id, "properties": {"Name": title(name)}}
 
@@ -80,7 +98,8 @@ def block(kind, text="", children=(), **rich_kw):
 
 
 class FakeNotion:
-    def __init__(self, projects=(), contacts=(), meetings=(), description=""):
+    def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=()):
+        self.job_orders = list(job_orders)
         self.projects = list(projects)
         self.contacts = list(contacts)
         self.meetings = list(meetings)
@@ -94,7 +113,8 @@ class FakeNotion:
 
     def query_data_source(self, data_source_id, filter=None):
         self.queried.append(data_source_id)
-        pages = {PROJECTS: self.projects, CONTACTS: self.contacts, MEETING: self.meetings}[data_source_id]
+        pages = {PROJECTS: self.projects, CONTACTS: self.contacts, MEETING: self.meetings,
+                 JOB_ORDERS: self.job_orders}[data_source_id]
         return [p for p in pages if not p.get("in_trash")]
 
     def retrieve_data_source(self, data_source_id):

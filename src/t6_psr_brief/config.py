@@ -18,7 +18,7 @@ PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner", "llm_model"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id", "cyril_contact_id")
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source"} | BRIEF_KEYS
+KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -47,6 +47,7 @@ class Config:
     database_path: str
     notion_token: str
     brief: BriefSettings | None = None
+    jo_data_source: str | None = None  # Job Orders data source; needed by jo-snapshot
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
 
 
@@ -72,6 +73,7 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         database_path=_string(raw, "database_path", default="data/psr.db"),
         notion_token=_secret(env, SECRET_ENV),
         brief=_brief(raw, env),
+        jo_data_source=_notion_id(raw, "jo_data_source") if "jo_data_source" in raw else None,
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
     )
