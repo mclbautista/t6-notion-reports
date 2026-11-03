@@ -18,4 +18,5 @@ database_path: /app/data/psr.db
 # psr_group_chat_id: -1000000000000        # FILL IN: PSR group chat id (fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 1                    # optional topic in that group
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
+# llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for owed items (default shown)
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)

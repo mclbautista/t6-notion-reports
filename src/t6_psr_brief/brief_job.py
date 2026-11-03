@@ -9,8 +9,10 @@ from typing import Callable
 from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
 from .config import BriefSettings
 from .contacts import Contact, load_contacts
-from .diff import diff_snapshots
+from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .gateway import GatewayError
+from .llm import LlmClient
+from .owed import OwedOutcome, find_owed
 from .schedule import MANILA
 from .snapshots import default_diff_pair, load_snapshot, snapshot_info
 
@@ -26,6 +28,7 @@ class BriefResult:
     sent: int = 0
     failed: int = 0
     changed: int = 0
+    owed_failed: int = 0
 
 
 def run_brief(
@@ -35,11 +38,15 @@ def run_brief(
     brief: BriefSettings,
     now: datetime,
     gateway=None,
+    llm: LlmClient | None = None,
     dry_print: bool = False,
     out: Callable[[str], None] = print,
     log: Callable[[str], None] = print,
 ) -> BriefResult:
-    """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing."""
+    """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
+
+    With ``llm``, each project also gets its owed items; without one the owed section is left out.
+    """
     pair = default_diff_pair(conn)
     if pair is None:
         out("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one)")
@@ -54,21 +61,38 @@ def run_brief(
         datetime.fromisoformat(old_on).astimezone(MANILA).date(),
         datetime.fromisoformat(new_on).astimezone(MANILA).date(),
     )
+    changed = len(changes)
+    owed: dict[str, OwedOutcome] | None = None
+    owed_failed: list[str] = []
+    if llm is not None:
+        owed = {page_id: find_owed(llm, state) for page_id, state in new_state.items()}
+        names = display_names(old_state, new_state)
+        owed_failed = sorted(names[p] for p, o in owed.items() if o.failed)
+        failed_ids = sorted(p for p, o in owed.items() if o.failed)
+        shown = {c.page_id for c in changes}
+        new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
+        changes = sort_projects(changes + [
+            unchanged_project(p, names, new_state[p], new_day)
+            for p, o in owed.items() if (o.items or o.failed) and p not in shown
+        ])
+        for page_id in failed_ids:
+            log(f"brief owed items unavailable project={page_id}")
     contacts = load_contacts(notion, contacts_ds)
     cyril = contacts.get(brief.cyril_contact_id) or Contact(brief.cyril_contact_id, "Cyril")
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
+        owed, owed_failed,
     )
     no_digest = digest_missing(settings)
 
     if dry_print or gateway is None:
         for m in messages:
             out(f"--- to={m.to} topic={m.topic} key={m.key} ({m.recipient}) ---\n{m.text}\n")
-        log(f"brief dry_print=True messages={len(messages)} changed={len(changes)}")
+        log(f"brief dry_print=True messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
         if no_digest:
             raise BriefFailed("Cyril's Contacts row has no TelegramUserID: digest not built")
-        return BriefResult(messages=tuple(messages), changed=len(changes))
+        return BriefResult(messages=tuple(messages), changed=changed, owed_failed=len(owed_failed))
 
     sent = failed = 0
     for m in messages:
@@ -78,12 +102,12 @@ def run_brief(
         except GatewayError as exc:
             failed += 1
             log(f"brief send failed key={m.key} error={exc}")
-    log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={len(changes)}")
+    log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
     if no_digest:
         raise BriefFailed("Cyril's Contacts row has no TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
-    return BriefResult(messages=tuple(messages), sent=sent, changed=len(changes))
+    return BriefResult(messages=tuple(messages), sent=sent, changed=changed, owed_failed=len(owed_failed))
 
 
 def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:

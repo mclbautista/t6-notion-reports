@@ -11,9 +11,12 @@ from typing import Mapping
 
 import yaml
 
+from .llm import DEFAULT_MODEL
+
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner"}
+OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "test_banner", "llm_model"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id", "cyril_contact_id")
 KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source"} | BRIEF_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
@@ -33,6 +36,8 @@ class BriefSettings:
     cyril_contact_id: str
     test_banner: bool
     psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
+    llm_model: str = DEFAULT_MODEL
+    openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,8 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         cyril_contact_id=_notion_id(raw, "cyril_contact_id"),
         test_banner=banner,
         psr_secret=env.get(PSR_SECRET_ENV, "").strip() or None,
+        llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
+        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
     )
 
 

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -45,6 +46,11 @@ def conn():
     notion = FakeNotion(pages("Online"), contacts())
     run_snapshot(c, notion, PROJECTS, CONTACTS, "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
     return c
+
+
+class NoOwedLlm:
+    def complete(self, system, user, schema):
+        return schema(items=[])
 
 
 class FakeGateway:
@@ -167,6 +173,8 @@ def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys
 def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.setenv("PSR_SECRET", "s3cret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setattr("t6_psr_brief.cli.OpenRouterClient", lambda key, model: NoOwedLlm())
     monkeypatch.setattr("t6_psr_brief.cli.GatewayClient",
                         lambda url, secret: GatewayClient(url, secret, lambda *a: (500, None), sleep=lambda _: None))
     cfg = write_config(tmp_path, seeded_db(tmp_path))
@@ -182,3 +190,49 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     with pytest.raises(BriefFailed, match="digest"):
         run_brief(conn, FakeNotion([], no_id), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert len(gw.sent) == 2
+
+
+class FakeLlm:
+    def __init__(self, fail_for=()):
+        self.users, self.fail_for = [], set(fail_for)
+
+    def complete(self, system, user, schema):
+        from t6_psr_brief.llm import LlmError
+        data = json.loads(user)
+        self.users.append(data)
+        if data["project"] in self.fail_for:
+            raise LlmError("down")
+        if data["project"] == "Show" and data["pm_notes"]:
+            return schema(items=[{"kind": "open_item", "text": "Confirm grade date", "notes_line": "Grade date pending"}])
+        if data["project"] == "Dubbing":
+            return schema(items=[{"kind": "missing_date", "text": "No deadline", "empty_property": "Deadline"}])
+        return schema(items=[])
+
+
+def test_brief_job_adds_owed_items_and_includes_unchanged_projects(conn):
+    # p2 (Angel's Dubbing) is unchanged but has an owed item, so it still gets a briefing.
+    gw, llm = FakeGateway(), FakeLlm()
+    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, llm=llm, log=lambda _: None)
+    texts = {key: text for _, _, key, text in gw.sent}
+    angel = texts["psr-brief-2026-11-15-c-angel"]
+    assert "DW" in angel and "No deadline" in angel and "No changes on your projects" not in angel
+    assert "No deadline" in texts["psr-digest-2026-11-15"]
+    assert res.owed_failed == 0 and len(llm.users) == 2
+
+
+def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn):
+    gw = FakeGateway()
+    logs = []
+    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
+                    llm=FakeLlm(fail_for={"Show"}), log=logs.append)
+    texts = {key: text for _, _, key, text in gw.sent}
+    assert "Owed items unavailable this week" in texts["psr-brief-2026-11-15-c-pio"]
+    assert "Owed items unavailable this week: PAS" in texts["psr-digest-2026-11-15"]
+    assert res.sent == 3 and res.owed_failed == 1
+    assert any("owed items unavailable" in line for line in logs)
+
+
+def test_no_llm_leaves_out_owed_items(conn):
+    gw = FakeGateway()
+    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    assert not any("What you owe" in text or "unavailable" in text for *_, text in gw.sent)
