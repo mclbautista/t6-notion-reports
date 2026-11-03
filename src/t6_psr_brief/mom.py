@@ -59,7 +59,7 @@ class Draft:
     meeting_date: date
     entries: list[Entry]  # shown, in page order
     unchanged: list[str]  # Notion only
-    project_ids: list[str]  # every project on the page, for the Project relation
+    project_ids: list[str]  # projects shown on the page, for the Project relation
 
 
 def build_draft(
@@ -90,7 +90,7 @@ def build_draft(
     return Draft(
         meeting_date, shown,
         [f"{e.label} - {e.last_updated_line}" for e in unchanged],
-        [e.page_id for e in shown + unchanged],
+        [e.page_id for e in shown],  # Notion caps a relation at 100; unchanged projects are not related
     )
 
 
@@ -102,8 +102,8 @@ def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_d
     entry = Entry(page_id, label, group)
     if group == "on_track" and not str(state.get("Health") or "").strip():
         entry.flag = HEALTH_NOT_SET
-    updated = f"last updated {last_updated_text(last_updated(state.get('PM Notes'), snap_date))}"
-    entry.last_updated_line = updated
+    when = last_updated(state.get("PM Notes"), snap_date)
+    entry.last_updated_line = f"last updated {last_updated_text(when)}" if when else last_updated_text(None)
     if change:
         entry.bullets = _bullets(change)
     return entry

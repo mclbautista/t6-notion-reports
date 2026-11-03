@@ -64,18 +64,18 @@ def run_draft_mom(
 
     blocks = render_blocks(draft, [str(p.get("name") or "") for p in people], others, [m for m in mentions if m])
 
-    # A re-run replaces the unsent draft: trash it first, then create the new one.
-    for page in existing:
-        notion.update_page(page["id"], {"in_trash": True})
     properties = {
         "Name": {"title": [{"type": "text", "text": {"content": title}}]},
         "Meeting Date": {"date": {"start": meeting_date.isoformat()}},
-        "Project": {"relation": [{"id": i} for i in draft.project_ids]},
+        "Project": {"relation": [{"id": i} for i in draft.project_ids[:100]]},
         "Team Attendees": {"people": [{"object": "user", "id": p["id"]} for p in people]},
     }
     page = notion.create_page(meeting_notes_ds, properties, blocks[:CHUNK])
     for i in range(CHUNK, len(blocks), CHUNK):
         notion.append_children(page["id"], blocks[i:i + CHUNK])
+    # A re-run replaces the unsent draft, but only once the new page exists.
+    for old_page in existing:
+        notion.update_page(old_page["id"], {"in_trash": True})
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)}")
     return MomResult(page["id"], len(draft.entries), len(draft.unchanged))

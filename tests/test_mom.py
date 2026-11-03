@@ -99,7 +99,7 @@ def test_creates_page_with_title_date_and_relations(conn):
     assert props["Name"]["title"][0]["text"]["content"] == "PSR MOM 2026-11-16"
     assert props["Meeting Date"]["date"]["start"] == "2026-11-16"
     related = {r["id"] for r in props["Project"]["relation"]}
-    assert related == {"ling", "lead-idle", "lead-new", "nohealth", "crit", "standby", "empty"}
+    assert related == {"ling", "lead-new", "nohealth", "crit", "empty"}  # shown projects only
     assert res.page_id == "new-1"
 
 
@@ -118,7 +118,7 @@ def test_ling_under_archiving_lead_under_incoming_empty_health_flagged(conn):
 def test_in_progress_without_changes_gets_last_updated_line(conn):
     n, _ = draft(conn)
     flat = [x for _, x in texts(all_blocks(n))]
-    assert "FRS - last updated no notes yet" in flat
+    assert "FRS - no notes yet" in flat
     assert "LING - last updated Nov 6" in flat
 
 
@@ -127,7 +127,7 @@ def test_unchanged_leads_only_in_unchanged_list(conn):
     t = texts(all_blocks(n))
     flat = [x for _, x in t]
     cut = flat.index("Unchanged (Notion only, not sent)")
-    assert [x for x in flat[cut + 1:]] == ["IDL - last updated no notes yet", "SBY - last updated no notes yet"]
+    assert [x for x in flat[cut + 1:]] == ["IDL - no notes yet", "SBY - no notes yet"]
     assert not any(x.startswith(("IDL", "SBY")) for x in flat[:cut])
 
 
@@ -286,3 +286,12 @@ def test_holidays_window_and_year_wrap():
     d = date(2026, 12, 28)
     got = upcoming_entries("Upcoming Holidays and Leaves\n- Dec 30 Rizal Day\n- Dec 31 - Jan 2: Pio\n- Jan 20 later\n- no date here", d)
     assert got == ["Dec 30 Rizal Day", "Dec 31 - Jan 2: Pio"]
+
+
+def test_failed_create_keeps_the_old_unsent_draft(conn):
+    old = meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16")
+    n = FakeNotion(pages(True), contacts(), [old])
+    n.create_page = lambda *a: (_ for _ in ()).throw(RuntimeError("notion down"))
+    with pytest.raises(RuntimeError):
+        run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
+    assert n.trashed == []
