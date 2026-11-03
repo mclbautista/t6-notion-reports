@@ -1,6 +1,6 @@
 import pytest
 
-from t6_psr_brief.gateway import GatewayClient, GatewayError
+from t6_notion_reports.gateway import GatewayClient, GatewayError
 
 
 class FakeTransport:

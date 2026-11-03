@@ -3,11 +3,11 @@ from datetime import date, datetime, timezone
 import pytest
 
 from html_check import assert_valid_html
-from t6_psr_brief.brief_job import coordinators_in
-from t6_psr_brief.briefing import NO_CHANGES, Settings, build_briefing
-from t6_psr_brief.contacts import Contact
-from t6_psr_brief.diff import diff_snapshots
-from t6_psr_brief.snapshots import ProjectRecord, connect, load_snapshot, take_snapshot
+from t6_notion_reports.brief_job import coordinators_in
+from t6_notion_reports.briefing import NO_CHANGES, Settings, build_briefing
+from t6_notion_reports.contacts import Contact
+from t6_notion_reports.diff import diff_snapshots
+from t6_notion_reports.snapshots import ProjectRecord, connect, load_snapshot, take_snapshot
 
 TODAY = date(2026, 11, 15)
 PIO, ANA, ANGEL, CYRIL = "c-pio", "c-ana", "c-angel", "c-cyril"
@@ -65,7 +65,7 @@ AFTER = [
 def test_each_coordinator_gets_one_dm_with_only_their_changed_projects():
     msgs = by_recipient(run(BEFORE, AFTER))
     [pio] = msgs["Pio"]
-    assert (pio.to, pio.topic, pio.key) == (111, None, "psr-brief-2026-11-15-c-pio")
+    assert (pio.to, pio.topic, pio.key) == (111, None, "notion-reports-2026-11-15-c-pio")
     assert "PAS · Show PAS" in pio.text and "RIA" not in pio.text and "DW" not in pio.text
     assert "Stage: Offline → Online" in pio.text and "🔴 Critical" in pio.text
     assert "https://www.notion.so/p1" in pio.text
@@ -102,7 +102,7 @@ def test_project_without_coordinator_only_reaches_the_digest():
 def test_no_telegram_id_falls_back_to_group_topic_with_mention_and_digest_notes_it():
     msgs = by_recipient(run(BEFORE, AFTER))
     [angel] = msgs["Angel Gaas"]
-    assert (angel.to, angel.topic, angel.key) == (-1003, 7, "psr-brief-2026-11-15-c-angel")
+    assert (angel.to, angel.topic, angel.key) == (-1003, 7, "notion-reports-2026-11-15-c-angel")
     assert angel.text.startswith("@heygelica:\n") and "DW" in angel.text
     assert "Angel Gaas has no Telegram id" in msgs["Cyril"][0].text
 
@@ -136,7 +136,7 @@ def test_long_briefing_splits_with_unique_keys_and_valid_parts():
     msgs = run(many, after)
     pio = by_recipient(msgs)["Pio"]
     assert len(pio) > 1
-    assert [m.key for m in pio] == ["psr-brief-2026-11-15-c-pio"] + [f"psr-brief-2026-11-15-c-pio-{n}" for n in range(2, len(pio) + 1)]
+    assert [m.key for m in pio] == ["notion-reports-2026-11-15-c-pio"] + [f"notion-reports-2026-11-15-c-pio-{n}" for n in range(2, len(pio) + 1)]
     for m in msgs:
         assert len(m.text) <= 4096
         assert_valid_html(m.text)

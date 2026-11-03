@@ -6,10 +6,10 @@ import pytest
 from fake_notion import (CONTACTS, JOB_ORDERS, PROJECTS, FakeNotion, contact, date, job_order, project,
                          relation, rich, select, status, formula)
 from html_check import assert_valid_html
-from t6_psr_brief import cli
-from t6_psr_brief.jo_snapshot_job import run_jo_snapshot
-from t6_psr_brief.jo_snapshots import connect
-from t6_psr_brief.shift_job import run_shift_report
+from t6_notion_reports import cli
+from t6_notion_reports.jo_snapshot_job import run_jo_snapshot
+from t6_notion_reports.jo_snapshots import connect
+from t6_notion_reports.shift_job import run_shift_report
 
 MNL = timezone(timedelta(hours=8))
 PREV_1800 = datetime(2026, 11, 2, 18, tzinfo=MNL)
@@ -237,7 +237,7 @@ def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     # Nothing but Notion reads is possible here: no gateway client exists on this path.
-    monkeypatch.setattr("t6_psr_brief.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
     assert cli.main(["shift-report", "--slot", "1800", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     captured = capsys.readouterr()
     assert "TOC tonight" in captured.out and "JO #48" in captured.out

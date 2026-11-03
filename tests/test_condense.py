@@ -1,7 +1,7 @@
 from datetime import date
 
-from t6_psr_brief.condense import (Condensed, check_grounding, condense_bullets, extract_facts)
-from t6_psr_brief.llm import LlmError
+from t6_notion_reports.condense import (Condensed, check_grounding, condense_bullets, extract_facts)
+from t6_notion_reports.llm import LlmError
 
 MEET = date(2026, 10, 26)
 OLD = "As of Oct 5,\n  • QCinema submission on Nov 6\n  • Ang tagal ng grading"
@@ -90,9 +90,9 @@ import sqlite3
 from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, MEETING, PROJECTS, FakeNotion, project, rich
-from t6_psr_brief.mom_job import run_draft_mom
-from t6_psr_brief.snapshot_job import run_snapshot
-from t6_psr_brief.snapshots import SCHEMA
+from t6_notion_reports.mom_job import run_draft_mom
+from t6_notion_reports.snapshot_job import run_snapshot
+from t6_notion_reports.snapshots import SCHEMA
 
 FRI = datetime(2026, 10, 23, 10, tzinfo=timezone.utc)
 MON = datetime(2026, 10, 26, 3, tzinfo=timezone.utc)

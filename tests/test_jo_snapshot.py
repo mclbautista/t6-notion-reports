@@ -4,9 +4,9 @@ import pytest
 
 from fake_notion import (CONTACTS, JOB_ORDERS, PROJECTS, FakeNotion, contact, date, formula,
                          job_order, project, relation, rich, select, status)
-from t6_psr_brief import cli
-from t6_psr_brief.jo_snapshot_job import run_jo_snapshot
-from t6_psr_brief.jo_snapshots import (TRACKED_FIELDS, connect, load_bounding, load_latest,
+from t6_notion_reports import cli
+from t6_notion_reports.jo_snapshot_job import run_jo_snapshot
+from t6_notion_reports.jo_snapshots import (TRACKED_FIELDS, connect, load_bounding, load_latest,
                                        load_snapshot)
 
 T1 = datetime(2026, 11, 3, 5, tzinfo=timezone(timedelta(hours=8)))
@@ -43,7 +43,7 @@ def test_round_trips_every_field_with_ids_and_names():
 
 def test_projects_tables_are_untouched():
     conn = connect()
-    from t6_psr_brief.snapshots import connect as projects_connect
+    from t6_notion_reports.snapshots import connect as projects_connect
     # The two stores share one file; the JO store never creates or writes the Projects tables.
     snap(conn, notion(job_order("j1")))
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

@@ -78,7 +78,7 @@ def build_briefing(
         if not projects:
             quiet.append(name)
         blocks: list[Block] = [line(NO_CHANGES)] if not projects else _dm_blocks(projects, stamp, owed)
-        key = f"psr-brief-{today.isoformat()}-{contact_id}"
+        key = f"notion-reports-{today.isoformat()}-{contact_id}"
         if chat is not None:
             messages += _parts(chat, None, blocks, banner, key, name)
         else:

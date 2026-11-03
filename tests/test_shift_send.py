@@ -8,12 +8,12 @@ from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
 from html_check import assert_valid_html
 from test_schedule import FakeClock, manila
 from test_shift_report import JO_ID, PEOPLE, PROJS, RoutedNotion, at, jo, prior, world
-from t6_psr_brief import cli
-from t6_psr_brief.config import ConfigError, load_config
-from t6_psr_brief.gateway import GatewayClient, GatewayError
-from t6_psr_brief.jo_snapshots import connect
-from t6_psr_brief.schedule import SHIFT_SLOTS, SLOTS, Scheduler
-from t6_psr_brief.shift_job import ShiftTarget, run_shift_report
+from t6_notion_reports import cli
+from t6_notion_reports.config import ConfigError, load_config
+from t6_notion_reports.gateway import GatewayClient, GatewayError
+from t6_notion_reports.jo_snapshots import connect
+from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
+from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 
 MNL = timezone(timedelta(hours=8))
 PM = datetime(2026, 11, 3, 18, tzinfo=MNL)
@@ -244,7 +244,7 @@ def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, cap
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     t = FakeTransport()
-    monkeypatch.setattr("t6_psr_brief.cli.GatewayClient",
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, t, sleep=lambda _: None))
     assert cli.main(["shift-report", "--slot", "1800", "--config", path], notion=fake, now=PM) == 0
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
@@ -259,7 +259,7 @@ def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp
     assert cli.main(["shift-report", "--slot", "1800", "--config", write(tmp_path, **SHIFT)]) == 2
     assert "SHIFT_SECRET" in capsys.readouterr().err
     monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
-    monkeypatch.setattr("t6_psr_brief.cli.GatewayClient",
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, FakeTransport(fail=True), sleep=lambda _: None))
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[])
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from t6_psr_brief.diff import diff_snapshots, group_by_coordinator
-from t6_psr_brief.snapshots import (
+from t6_notion_reports.diff import diff_snapshots, group_by_coordinator
+from t6_notion_reports.snapshots import (
     ProjectRecord, connect, latest_snapshot_ids, load_snapshot, take_snapshot as _take,
 )
 

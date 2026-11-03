@@ -1,4 +1,4 @@
-# psr-brief production image. Build on the Intel Mac mini: linux/amd64.
+# notion-reports production image. Build on the Intel Mac mini: linux/amd64.
 FROM --platform=linux/amd64 python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -22,6 +22,6 @@ RUN pip install . \
 
 USER psr
 
-# `docker compose run --rm psr-brief snapshot --config /app/config.yaml` runs one by hand.
-ENTRYPOINT ["python", "-m", "t6_psr_brief"]
+# `docker compose run --rm notion-reports snapshot --config /app/config.yaml` runs one by hand.
+ENTRYPOINT ["python", "-m", "t6_notion_reports"]
 CMD ["serve", "--config", "/app/config.yaml"]

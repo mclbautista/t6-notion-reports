@@ -6,11 +6,11 @@ import pytest
 import yaml
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, project, relation, rich, select, title
-from t6_psr_brief.brief_job import BriefFailed, run_brief
-from t6_psr_brief.cli import main
-from t6_psr_brief.config import BriefSettings
-from t6_psr_brief.gateway import GatewayClient
-from t6_psr_brief.snapshot_job import run_snapshot
+from t6_notion_reports.brief_job import BriefFailed, run_brief
+from t6_notion_reports.cli import main
+from t6_notion_reports.config import BriefSettings
+from t6_notion_reports.gateway import GatewayClient
+from t6_notion_reports.snapshot_job import run_snapshot
 
 CYRIL_ID = "c-cyril"
 BRIEF = BriefSettings("http://gw:8780", -1003, 7, CYRIL_ID, False, "s3cret")
@@ -39,7 +39,7 @@ def pages(stage):
 @pytest.fixture
 def conn():
     c = sqlite3.connect(":memory:")
-    from t6_psr_brief.snapshots import SCHEMA
+    from t6_notion_reports.snapshots import SCHEMA
     c.executescript(SCHEMA)
     notion = FakeNotion(pages("Offline"), contacts())
     run_snapshot(c, notion, PROJECTS, CONTACTS, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
@@ -58,7 +58,7 @@ class FakeGateway:
         self.sent, self.fail_for = [], set(fail_for)
 
     def notify(self, to, text, key, topic=None):
-        from t6_psr_brief.gateway import GatewayError
+        from t6_notion_reports.gateway import GatewayError
         if to in self.fail_for:
             raise GatewayError("down")
         self.sent.append((to, topic, key, text))
@@ -70,8 +70,8 @@ def test_sends_one_dm_per_coordinator_plus_digest_through_the_gateway(conn):
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert res.sent == 3 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
-        (111, None, "psr-brief-2026-11-15-c-pio"),
-        (-1003, 7, "psr-brief-2026-11-15-c-angel"),
+        (111, None, "notion-reports-2026-11-15-c-pio"),
+        (-1003, 7, "notion-reports-2026-11-15-c-angel"),
         (999, None, "psr-digest-2026-11-15"),
     }
 
@@ -94,7 +94,7 @@ def test_a_failed_send_does_not_stop_the_others_and_then_raises(conn):
 
 def test_no_friday_snapshot_yet_sends_nothing():
     c = sqlite3.connect(":memory:")
-    from t6_psr_brief.snapshots import SCHEMA
+    from t6_notion_reports.snapshots import SCHEMA
     c.executescript(SCHEMA)
     gw, printed = FakeGateway(), []
     res = run_brief(c, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, out=printed.append, log=lambda _: None)
@@ -138,7 +138,7 @@ class AnyContacts(FakeNotion):
 
 
 def seeded_db(tmp_path):
-    from t6_psr_brief.snapshots import connect
+    from t6_notion_reports.snapshots import connect
     db = tmp_path / "psr.db"
     c = connect(str(db))
     run_snapshot(c, FakeNotion(pages("Offline"), contacts()), PROJECTS, CONTACTS, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
@@ -174,8 +174,8 @@ def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.setenv("PSR_SECRET", "s3cret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    monkeypatch.setattr("t6_psr_brief.cli.OpenRouterClient", lambda key, model: NoOwedLlm())
-    monkeypatch.setattr("t6_psr_brief.cli.GatewayClient",
+    monkeypatch.setattr("t6_notion_reports.cli.OpenRouterClient", lambda key, model: NoOwedLlm())
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret: GatewayClient(url, secret, lambda *a: (500, None), sleep=lambda _: None))
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     assert main(["brief", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=SUNDAY) == 1
@@ -197,7 +197,7 @@ class FakeLlm:
         self.users, self.fail_for = [], set(fail_for)
 
     def complete(self, system, user, schema):
-        from t6_psr_brief.llm import LlmError
+        from t6_notion_reports.llm import LlmError
         data = json.loads(user)
         self.users.append(data)
         if data["project"] in self.fail_for:
@@ -214,7 +214,7 @@ def test_brief_job_adds_owed_items_and_includes_unchanged_projects(conn):
     gw, llm = FakeGateway(), FakeLlm()
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, llm=llm, log=lambda _: None)
     texts = {key: text for _, _, key, text in gw.sent}
-    angel = texts["psr-brief-2026-11-15-c-angel"]
+    angel = texts["notion-reports-2026-11-15-c-angel"]
     assert "DW" in angel and "No deadline" in angel and "No changes on your projects" not in angel
     assert "No deadline" in texts["psr-digest-2026-11-15"]
     assert res.owed_failed == 0 and len(llm.users) == 2
@@ -226,7 +226,7 @@ def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn):
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
                     llm=FakeLlm(fail_for={"Show"}), log=logs.append)
     texts = {key: text for _, _, key, text in gw.sent}
-    assert "Owed items unavailable this week" in texts["psr-brief-2026-11-15-c-pio"]
+    assert "Owed items unavailable this week" in texts["notion-reports-2026-11-15-c-pio"]
     assert "Owed items unavailable this week: PAS" in texts["psr-digest-2026-11-15"]
     assert res.sent == 3 and res.owed_failed == 1
     assert any("owed items unavailable" in line for line in logs)

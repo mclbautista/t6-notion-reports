@@ -1,6 +1,6 @@
 from datetime import date
 
-from t6_psr_brief.diff import diff_snapshots, format_diff, group_by_coordinator
+from t6_notion_reports.diff import diff_snapshots, format_diff, group_by_coordinator
 
 D1, D2 = date(2026, 10, 26), date(2026, 10, 30)  # Monday baseline, Friday
 
@@ -121,7 +121,7 @@ def test_plain_text_diff_reports_removed_lines_and_ignores_reorder():
 
 
 def test_header_tail_is_not_duplicated_and_mid_block_as_of_bullet_stays_a_bullet():
-    from t6_psr_brief.pm_notes import parse_pm_notes
+    from t6_notion_reports.pm_notes import parse_pm_notes
     b = parse_pm_notes("As of Oct 26: delay\n- two", D1).blocks[0]
     assert b.text.count("delay") == 1
     notes = parse_pm_notes("As of Oct 26\n- as of Nov 5 VBM files\n- x", D1)

@@ -2,9 +2,9 @@ import json
 from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, project
-from t6_psr_brief import cli
-from t6_psr_brief.notion import NotionClient
-from t6_psr_brief.snapshots import connect, latest_snapshot_ids, snapshot_info
+from t6_notion_reports import cli
+from t6_notion_reports.notion import NotionClient
+from t6_notion_reports.snapshots import connect, latest_snapshot_ids, snapshot_info
 
 
 def test_client_paginates_and_sends_auth():

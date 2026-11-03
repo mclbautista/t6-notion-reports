@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fake_notion import FakeNotion
 from html_check import assert_valid_html
 from test_shift_report import PEOPLE, PROJS, at, jo, prior, run, world
-from t6_psr_brief.jo_snapshots import connect
+from t6_notion_reports.jo_snapshots import connect
 from fake_notion import relation
 
 MNL = timezone(timedelta(hours=8))

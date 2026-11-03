@@ -4,10 +4,10 @@ import pytest
 
 from fake_notion import (CONTACTS, PROJECTS, FakeNotion, contact, date, project, relation,
                          rich, select)
-from t6_psr_brief.diff import diff_snapshots
-from t6_psr_brief.snapshots import (TRACKED_FIELDS, connect, latest_snapshot_ids,
+from t6_notion_reports.diff import diff_snapshots
+from t6_notion_reports.snapshots import (TRACKED_FIELDS, connect, latest_snapshot_ids,
                                     load_snapshot, snapshot_info)
-from t6_psr_brief.snapshot_job import run_snapshot
+from t6_notion_reports.snapshot_job import run_snapshot
 
 T1 = datetime(2026, 11, 9, 11, tzinfo=timezone.utc)
 T2 = datetime(2026, 11, 13, 18, tzinfo=timezone.utc)
