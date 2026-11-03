@@ -65,7 +65,7 @@ def diff_snapshots(
 ) -> list[ProjectChange]:
     new_date = new_date or date.today()
     old_date = old_date or new_date
-    names = _display_names(old, new)
+    names = display_names(old, new)
     results: list[ProjectChange] = []
     for page_id in set(old) | set(new):
         o, n = old.get(page_id), new.get(page_id)
@@ -169,7 +169,7 @@ def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChan
     return NotesChange(blocks) if blocks else None
 
 
-def _display_names(old, new) -> dict[str, str]:
+def display_names(old, new) -> dict[str, str]:
     states: dict[str, dict[str, object]] = {**old, **new}
     codes = Counter(squash(str(s["Project Code"])) for s in states.values() if s.get("Project Code"))
     out = {}

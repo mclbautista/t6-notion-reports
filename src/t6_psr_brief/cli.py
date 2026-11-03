@@ -5,7 +5,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
 from .notion import NotionClient
@@ -13,6 +13,7 @@ from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
+from .mom_job import MomAlreadySent, run_draft_mom
 from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
@@ -36,6 +37,10 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     brief.add_argument("--config", default="config.yaml")
     brief.add_argument("--db", help="default: database_path from --config")
     brief.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")
+    mom = sub.add_parser("draft-mom", help="draft the PSR minutes in Notion (re-run by hand)")
+    mom.add_argument("--config", default="config.yaml")
+    mom.add_argument("--db", help="default: database_path from --config")
+    mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
     args = parser.parse_args(argv)
 
     if args.command == "diff":
@@ -43,6 +48,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
 
     if args.command == "brief":
         return _brief(args, notion, now)
+
+    if args.command == "draft-mom":
+        return _draft_mom(args, notion, now)
 
     if args.command == "serve":
         cfg = _load(args.config)
@@ -56,18 +64,11 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         conn = connect(cfg.database_path)
         gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
 
-        def job(kind: str) -> None:
-            moment = datetime.now(timezone.utc)
-            if kind == "brief":
-                run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway,
-                          log=lambda text: print(text, flush=True))
-            else:
-                _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
-
         print(f"serving db={cfg.database_path} brief={cfg.brief is not None}", flush=True)
+        clock = lambda: datetime.now(timezone.utc)
         Scheduler(
-            job,
-            clock=lambda: datetime.now(timezone.utc),
+            make_job(conn, notion, cfg, gateway, clock),
+            clock=clock,
             sleep=time.sleep,
             log=lambda line: print(line, flush=True),
             slots=SLOTS + [BRIEF_SLOT] if cfg.brief else SLOTS,
@@ -118,6 +119,50 @@ def _brief(args, notion, now) -> int:
         return 1
     finally:
         conn.close()
+    return 0
+
+
+def make_job(conn, notion, cfg, gateway, clock):
+    """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
+    def job(kind: str) -> None:
+        moment = clock()
+        if kind == "brief":
+            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway,
+                      log=lambda text: print(text, flush=True))
+            return
+        _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
+        if kind == "monday" and cfg.meeting_notes_data_source:
+            run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
+                          cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
+                          log=lambda text: print(text, flush=True))
+    return job
+
+
+def _draft_mom(args, notion, now) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if not cfg.meeting_notes_data_source:
+        print("config error: missing config key: meeting_notes_data_source", file=sys.stderr)
+        return 2
+    db = args.db or cfg.database_path
+    if not os.path.exists(db):
+        print(f"no database at {db}", file=sys.stderr)
+        return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
+    conn = connect(db)
+    try:
+        result = run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
+                               cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True))
+    except MomAlreadySent as exc:
+        print(f"draft-mom refused: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    if result.page_id is None:
+        print("no minutes drafted: need a Monday snapshot with an earlier Friday one", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -7,6 +7,10 @@ projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projec
 contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
 database_path: /app/data/psr.db
 
+# Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
+# Meeting Notes, and `draft-mom` works. Meeting Notes: collection://e77662de-dbca-47c3-80ac-355716f6fe43
+# meeting_notes_data_source: "e77662de-dbca-47c3-80ac-355716f6fe43"
+
 # Sunday briefing (optional; leave all of these out to run snapshots only).
 # When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
 # The secret PSR_SECRET goes in .env. Briefings fire Sunday 16:00 Asia/Manila.
