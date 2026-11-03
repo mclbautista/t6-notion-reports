@@ -35,3 +35,20 @@ def test_cli_snapshot_writes_db_and_logs_counts_only(tmp_path, capsys):
     assert (info.kind, info.is_baseline) == ("monday", True)
     out = capsys.readouterr().out
     assert "baseline" in out and "Secret Show" not in out
+
+
+def test_client_writes_use_data_source_parent_and_methods():
+    calls = []
+
+    def transport(url, headers, body, method="POST"):
+        calls.append((method, url, body))
+        return {"id": "pg"}
+
+    c = NotionClient("tok", transport)
+    c.create_page("ds1", {"Name": {}}, [{"x": 1}])
+    c.update_page("pg", {"in_trash": True})
+    c.append_children("pg", [{"y": 2}])
+    c.retrieve_data_source("ds1")
+    assert calls[0][0] == "POST" and calls[0][2]["parent"] == {"type": "data_source_id", "data_source_id": "ds1"}
+    assert [(m, u.rsplit("/v1", 1)[1]) for m, u, _ in calls[1:]] == [
+        ("PATCH", "/pages/pg"), ("PATCH", "/blocks/pg/children"), ("GET", "/data_sources/ds1")]

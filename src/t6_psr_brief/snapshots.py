@@ -13,7 +13,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 KINDS = ("monday", "friday", "manual")
 
@@ -210,3 +210,19 @@ def default_diff_pair(conn: sqlite3.Connection) -> tuple[int, int] | None:
         "SELECT snapshot_id FROM snapshots WHERE kind = 'monday' AND snapshot_id < ? "
         "ORDER BY snapshot_id DESC LIMIT 1", (friday[0],)).fetchone()
     return (monday[0], friday[0]) if monday else None
+
+
+def mom_diff_pair(conn: sqlite3.Connection, on_or_before: date) -> tuple[int, int] | None:
+    """(old, new) for the minutes: the newest Monday snapshot taken (Manila date) on or before
+    ``on_or_before``, and the Friday snapshot before it. None when either does not exist yet."""
+    from .schedule import MANILA  # local import: schedule does not depend on snapshots
+
+    monday = next((sid for sid, taken_at in conn.execute(
+        "SELECT snapshot_id, taken_at FROM snapshots WHERE kind = 'monday' ORDER BY snapshot_id DESC")
+        if datetime.fromisoformat(taken_at).astimezone(MANILA).date() <= on_or_before), None)
+    if monday is None:
+        return None
+    friday = conn.execute(
+        "SELECT snapshot_id FROM snapshots WHERE kind = 'friday' AND snapshot_id < ? "
+        "ORDER BY snapshot_id DESC LIMIT 1", (monday,)).fetchone()
+    return (friday[0], monday) if friday else None

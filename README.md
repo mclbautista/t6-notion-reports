@@ -5,7 +5,7 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila), and the Sunday 16:00
-briefing (changes only, no LLM) sends through the gateway. Not done: owed items, minutes draft.
+briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). Not done: owed items, LLM condensing, sending the minutes.
 
     pip install -e '.[dev]' && pytest
 
@@ -72,3 +72,20 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
 
 `--dry-print` still reads Contacts from Notion but needs no `PSR_SECRET`. **Do not run `brief`
 without `--dry-print` before Cyril's go-ahead:** it messages the real coordinators.
+
+## Minutes draft
+
+With `meeting_notes_data_source` in `config.yaml`, the Monday 11:00 job takes its snapshot and then
+drafts a page named `PSR MOM <YYYY-MM-DD>` in Meeting Notes: `Meeting Date`, a `Project` relation to
+every project on the page, and `Team Attendees` copied from the previous `PSR MOM` page. The diff is
+that Monday's snapshot against the Friday one before it. Groups, order and rules are in
+`src/t6_psr_brief/mom.py` (spec section 8); bullets are the raw new PM Notes blocks. In-Progress and
+Archiving projects always appear; everything else without changes goes under "Unchanged" at the
+bottom (Notion only). ⚫️ Others lists the lines of the Projects database description's "Upcoming
+Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.
+
+    docker compose run --rm psr-brief draft-mom --config /app/config.yaml --date 2026-11-17
+
+`draft-mom` re-drafts by hand (default date: today, Manila). It trashes an earlier **unsent** page for
+that date and makes a new one, and exits 1 without touching a page whose `Sent at` is set. The
+`Sent at` (date) property must exist on Meeting Notes (spec 3.3); it is only read here.
