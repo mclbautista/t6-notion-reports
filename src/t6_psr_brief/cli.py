@@ -11,7 +11,10 @@ from .config import ConfigError, load_config
 from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
-from .schedule import MANILA, Scheduler
+from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
+from .brief_job import BriefFailed, run_brief
+from .briefing import BriefingError
+from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
 
@@ -30,25 +33,45 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     dif.add_argument("--new", type=int, help="snapshot id; default: latest Friday")
     serve = sub.add_parser("serve", help="run the scheduler (Mon 11:00 and Fri 18:00 Manila)")
     serve.add_argument("--config", default="config.yaml")
+    brief = sub.add_parser("brief", help="send the Sunday briefing now")
+    brief.add_argument("--config", default="config.yaml")
+    brief.add_argument("--db", help="default: database_path from --config")
+    brief.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")
     args = parser.parse_args(argv)
 
     if args.command == "diff":
         return _diff(args)
 
+    if args.command == "brief":
+        return _brief(args, notion, now)
+
     if args.command == "serve":
         cfg = _load(args.config)
         if cfg is None:
             return 2
+        if cfg.brief and not cfg.brief.psr_secret:
+            print("config error: missing environment variable: PSR_SECRET", file=sys.stderr)
+            return 2
         notion = notion or NotionClient(cfg.notion_token)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
-        print(f"serving db={cfg.database_path}", flush=True)
+        gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
+
+        def job(kind: str) -> None:
+            moment = datetime.now(timezone.utc)
+            if kind == "brief":
+                run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway,
+                          log=lambda text: print(text, flush=True))
+            else:
+                _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
+
+        print(f"serving db={cfg.database_path} brief={cfg.brief is not None}", flush=True)
         Scheduler(
-            lambda kind: _snapshot(conn, notion, cfg.projects_data_source,
-                                   cfg.contacts_data_source, kind, datetime.now(timezone.utc)),
+            job,
             clock=lambda: datetime.now(timezone.utc),
             sleep=time.sleep,
             log=lambda line: print(line, flush=True),
+            slots=SLOTS + [BRIEF_SLOT] if cfg.brief else SLOTS,
         ).run()
         return 0
 
@@ -67,6 +90,35 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     notion = notion or NotionClient(os.environ["NOTION_TOKEN"])
     _ensure_dir(db)
     _snapshot(connect(db), notion, projects_ds, contacts_ds, args.kind, now or datetime.now(timezone.utc))
+    return 0
+
+
+def _brief(args, notion, now) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    if cfg.brief is None:
+        print("config error: missing config key: gateway_url (briefing settings)", file=sys.stderr)
+        return 2
+    if not args.dry_print and not cfg.brief.psr_secret:
+        print("config error: missing environment variable: PSR_SECRET", file=sys.stderr)
+        return 2
+    db = args.db or cfg.database_path
+    if not os.path.exists(db):
+        print(f"no database at {db}", file=sys.stderr)
+        return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
+    conn = connect(db)
+    try:
+        run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
+                  gateway=gateway, dry_print=args.dry_print,
+                  log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
+    except (BriefFailed, BriefingError) as exc:
+        print(f"brief failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
     return 0
 
 

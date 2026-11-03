@@ -4,8 +4,8 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 (per-coordinator diffs) and the meeting minutes. Sends nothing itself: delivery goes through the
 Telegram gateway's `POST /notify`.
 
-Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila). Not done: briefing
-text, minutes draft, gateway client.
+Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila), and the Sunday 16:00
+briefing (changes only, no LLM) sends through the gateway. Not done: owed items, minutes draft.
 
     pip install -e '.[dev]' && pytest
 
@@ -51,3 +51,24 @@ running image; without that tag there is nothing to roll back to:
 
 `--kind` is `monday`, `friday` or `manual`. The first snapshot ever taken is flagged as the
 baseline (planned: Mon 2026-11-09 11:00, after Cyril's go-ahead).
+
+## Sunday briefing
+
+Every Sunday 16:00 Asia/Manila each T6 Post Coordinator gets a DM built from the latest Friday
+snapshot against the Monday before it, and Cyril gets one digest of every project. Everything goes
+through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when the
+briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
+
+- A coordinator with no `TelegramUserID` in Contacts gets their briefing in the PSR group topic,
+  prefixed with their @handle, and the digest says so.
+- Idempotency keys are `psr-brief-<date>-<contact id>` and `psr-digest-<date>`, so a same-day rerun
+  queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
+- A gateway error is retried 3 times with backoff; then the run carries on with the other messages
+  and exits non-zero.
+- `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
+
+    docker compose run --rm psr-brief brief --config /app/config.yaml --dry-print   # print, send nothing
+    docker compose run --rm psr-brief brief --config /app/config.yaml               # send now
+
+`--dry-print` still reads Contacts from Notion but needs no `PSR_SECRET`. **Do not run `brief`
+without `--dry-print` before Cyril's go-ahead:** it messages the real coordinators.

@@ -47,6 +47,8 @@ class ProjectChange:
     health: str | None = None
     notes: NotesChange | None = None
     last_updated: date | None = None
+    code: str | None = None
+    title: str | None = None
 
 
 @dataclass
@@ -139,6 +141,7 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         page_id, names[page_id], kind, changes, _coords(state),
         health=state.get("Health") or None, notes=notes,
         last_updated=last_updated(state.get("PM Notes"), snap_date),
+        code=state.get("Project Code") or None, title=state.get("Name") or None,
     )
 
 
