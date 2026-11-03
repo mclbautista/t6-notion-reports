@@ -245,7 +245,7 @@ def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     assert not (fake.created or fake.appended or fake.trashed or fake.sent_marked)
 
 
-def test_cli_refuses_without_dry_print_and_rejects_unknown_slots(tmp_path, monkeypatch, capsys):
+def test_cli_send_needs_shift_enabled_and_rejects_unknown_slots(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
     assert cli.main(["shift-report", "--slot", "1800", "--config", str(cfg)]) == 2
     with pytest.raises(SystemExit):

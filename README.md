@@ -113,3 +113,34 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
     docker compose run --rm psr-brief send-ready-mom --config /app/config.yaml               # check once now
 
 `test_banner` adds the 🧪 TEST banner here too.
+
+## JO shift reports
+
+Three Job Orders reports go to one group topic every day (weekends and holidays included), Asia/Manila:
+05:00 night end of shift, 12:00 day midshift, 18:00 day end of shift. At each slot the scheduler takes a
+Job Orders snapshot (kind `0500`, `1200` or `1800`) and then sends that slot's report. On Friday 18:00 the
+Projects snapshot runs first. Turn it on in `config.yaml`:
+
+    jo_data_source: "…"
+    gateway_url: "http://192.168.88.151:8780"
+    shift_reports_enabled: true
+    shift_chat_id: -1000000000000    # required
+    shift_topic_id: 1                # optional
+    ops_chat_id: 274983989           # optional; the ops alert (a later ticket) will use it
+    test_banner: true                # 🧪 TEST on every part
+
+`SHIFT_SECRET` goes in `.env`. The shift reports authenticate to the gateway as the `shift` module with that
+secret, never `PSR_SECRET`, so the gateway needs `modules: shift: { secret_env: SHIFT_SECRET }`. A bad or
+missing shift key stops boot with a message naming the key. With `shift_reports_enabled` false or absent,
+nothing about the shift reports is scheduled and the other jobs behave as before.
+
+Idempotency keys are `shift-<YYYY-MM-DD>-<slot>` for part 1, then `-2`, `-3`…, with the date in Asia/Manila,
+so a rerun of the same slot and day queues nothing new. If the gateway fails after the client's retries, the
+slot logs `job failed kind=shift<slot> error=GatewayError` and the scheduler carries on; a missed slot is not
+made up. Each run logs one line with counts only (slot, snapshot, baseline, unfinished, received, processed,
+accomplished, parts).
+
+    docker compose run --rm psr-brief shift-report --slot 1800 --config /app/config.yaml --dry-print   # print, send nothing
+    docker compose run --rm psr-brief shift-report --slot 1800 --config /app/config.yaml               # send one slot now
+
+Do not send by hand before the dry-run go-ahead: it posts to `shift_chat_id`.

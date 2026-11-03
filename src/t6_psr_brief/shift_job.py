@@ -41,6 +41,19 @@ def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
     return (moment - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
 
 
+class ShiftTarget:
+    """Where a slot's report goes: a gateway client authenticated with SHIFT_SECRET, a chat and a topic."""
+
+    def __init__(self, gateway, chat_id: int, topic_id: int | None):
+        self.gateway, self.chat_id, self.topic_id = gateway, chat_id, topic_id
+
+
+def shift_keys(now: datetime, slot: str, parts: int) -> list[str]:
+    """``shift-<date>-<slot>`` for part 1, then ``-2``, ``-3``... The date is Asia/Manila."""
+    base = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}"
+    return [base] + [f"{base}-{n}" for n in range(2, parts + 1)]
+
+
 def run_shift_report(
     conn: sqlite3.Connection,
     notion: Notion,
@@ -52,26 +65,37 @@ def run_shift_report(
     banner: bool = False,
     out: Callable[[str], None] = print,
     log: Callable[[str], None] = print,
+    target: ShiftTarget | None = None,
 ) -> EndOfShiftReport | MidshiftReport:
-    """Snapshot Job Orders (kind = slot), build that slot's report and print it. Sends nothing."""
+    """Snapshot Job Orders (kind = slot), build that slot's report, then print it or send it.
+
+    With a ``target`` the parts go through the gateway, in order, and nothing is printed. A gateway
+    failure (after the client's own retries) raises ``GatewayError``; parts already accepted are not
+    queued again by a rerun, because the keys are the same.
+    """
     run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
     current = load_latest(conn)
     if slot == MIDSHIFT_SLOT:
-        mid = build_midshift(current, banner)
-        for number, text in enumerate(mid.messages, 1):
-            out(f"--- part {number}/{len(mid.messages)} ---\n{text}\n")
-        log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
-            f"unfinished={mid.active} received=0 processed=0 accomplished=0 parts={len(mid.messages)}")
-        return mid
-    older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
-    report = build_end_of_shift(
-        slot, current, older, compared_with, banner,
-        window_start=nominal_window_start(slot, current))
-    total = report.counts
-    for number, text in enumerate(report.messages, 1):
-        out(f"--- part {number}/{len(report.messages)} ---\n{text}\n")
+        report = build_midshift(current, banner)
+        received = processed = accomplished = 0
+        unfinished = report.active
+    else:
+        older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
+        report = build_end_of_shift(
+            slot, current, older, compared_with, banner,
+            window_start=nominal_window_start(slot, current))
+        received, processed, accomplished = (
+            report.counts.received, report.counts.processed, report.counts.accomplished)
+        unfinished = report.unfinished
+    parts = len(report.messages)
     # One line per run: counts only, never message text or secrets.
     log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
-        f"unfinished={report.unfinished} received={total.received} processed={total.processed} "
-        f"accomplished={total.accomplished} parts={len(report.messages)}")
+        f"unfinished={unfinished} received={received} processed={processed} "
+        f"accomplished={accomplished} parts={parts}")
+    if target is None:
+        for number, text in enumerate(report.messages, 1):
+            out(f"--- part {number}/{parts} ---\n{text}\n")
+        return report
+    for key, text in zip(shift_keys(now, slot, parts), report.messages):
+        target.gateway.notify(target.chat_id, text, key, target.topic_id)
     return report

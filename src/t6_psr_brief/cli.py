@@ -12,15 +12,15 @@ from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
-from .shift_job import MIDSHIFT_SLOT, run_shift_report
+from .shift_job import MIDSHIFT_SLOT, ShiftTarget, run_shift_report
 from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
-from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SLOTS, Scheduler
+from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
 from .llm import OpenRouterClient, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
-from .gateway import GatewayClient
+from .gateway import GatewayClient, GatewayError
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
 
@@ -83,7 +83,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         cfg = _load(args.config)
         if cfg is None:
             return 2
-        for name, value in _brief_secrets(cfg):
+        for name, value in _brief_secrets(cfg) + _shift_secrets(cfg):
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
@@ -92,7 +92,8 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         conn = connect(cfg.database_path)
         gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
 
-        print(f"serving db={cfg.database_path} brief={cfg.brief is not None}", flush=True)
+        print(f"serving db={cfg.database_path} brief={cfg.brief is not None} shift={cfg.shift is not None}",
+              flush=True)
         clock = lambda: datetime.now(timezone.utc)
         Scheduler(
             make_job(conn, notion, cfg, gateway, clock),
@@ -145,27 +146,52 @@ def _jo_snapshot(args, notion, now) -> int:
 
 
 def _shift_report(args, notion, now) -> int:
-    if not args.dry_print:
-        print("shift-report can only --dry-print for now: sending is not built yet", file=sys.stderr)
-        return 2
     cfg = _load(args.config)
     if cfg is None:
         return 2
     if not cfg.jo_data_source:
         print("config error: missing config key: jo_data_source", file=sys.stderr)
         return 2
+    target = None
+    if not args.dry_print:
+        if cfg.shift is None:
+            print("config error: shift_reports_enabled is not true; use --dry-print or enable it", file=sys.stderr)
+            return 2
+        for name, value in _shift_secrets(cfg):
+            if not value:
+                print(f"config error: missing environment variable: {name}", file=sys.stderr)
+                return 2
+        target = _shift_target(cfg)
     notion = notion or NotionClient(cfg.notion_token)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
     try:
         run_shift_report(conn, notion, cfg.jo_data_source, cfg.contacts_data_source, cfg.projects_data_source,
-                         args.slot, now or datetime.now(timezone.utc),
-                         banner=bool(cfg.brief and cfg.brief.test_banner),
-                         log=lambda text: print(text, file=sys.stderr, flush=True))
+                         args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
+                         log=lambda text: print(text, file=sys.stderr, flush=True), target=target)
+    except GatewayError as exc:
+        print(f"shift-report failed: {exc}", file=sys.stderr)
+        return 1
     finally:
         conn.close()
     return 0
+
+
+def _shift_banner(cfg) -> bool:
+    return cfg.shift.test_banner if cfg.shift else bool(cfg.brief and cfg.brief.test_banner)
+
+
+def _shift_secrets(cfg):
+    if cfg.shift is None:
+        return []
+    return [("SHIFT_SECRET", cfg.shift.shift_secret)]
+
+
+def _shift_target(cfg) -> ShiftTarget:
+    """A gateway client authenticated with SHIFT_SECRET, never PSR_SECRET."""
+    shift = cfg.shift
+    return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.chat_id, shift.topic_id)
 
 
 def _brief(args, notion, now) -> int:
@@ -203,6 +229,8 @@ def _slots(cfg):
     slots = SLOTS + [BRIEF_SLOT] if cfg.brief else list(SLOTS)
     if cfg.brief and cfg.meeting_notes_data_source:
         slots.append(SEND_MOM_SLOT)
+    if cfg.shift:
+        slots += SHIFT_JOB_SLOTS
     return slots
 
 
@@ -221,10 +249,20 @@ def _llm(cfg, dry_print=False):
     return None if dry_print else UnavailableLlm()
 
 
-def make_job(conn, notion, cfg, gateway, clock):
+def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
     """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
     def job(kind: str) -> None:
         moment = clock()
+        if kind.startswith("shift"):
+            conn_jo = jo_snapshots.connect(cfg.database_path)
+            try:
+                run_shift_report(conn_jo, notion, cfg.jo_data_source, cfg.contacts_data_source,
+                                 cfg.projects_data_source, kind[len("shift"):], moment,
+                                 banner=cfg.shift.test_banner, log=lambda text: print(text, flush=True),
+                                 target=_shift_target(cfg) if shift_target is None else shift_target)
+            finally:
+                conn_jo.close()
+            return
         if kind == "send_mom":
             run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
                                cfg.brief.group_topic_id, moment, banner=cfg.brief.test_banner,
