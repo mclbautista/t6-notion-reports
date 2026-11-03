@@ -249,4 +249,4 @@ def test_cli_refuses_without_dry_print_and_rejects_unknown_slots(tmp_path, monke
     cfg = cli_config(tmp_path, monkeypatch)
     assert cli.main(["shift-report", "--slot", "1800", "--config", str(cfg)]) == 2
     with pytest.raises(SystemExit):
-        cli.main(["shift-report", "--slot", "1200", "--dry-print", "--config", str(cfg)])
+        cli.main(["shift-report", "--slot", "0900", "--dry-print", "--config", str(cfg)])
