@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs live in https://github.com/mclbautista/t6-psr-brief/issues.
+Issues and specs live in https://github.com/mclbautista/t6-notion-reports/issues.
 Use the `gh` CLI from this clone; it infers the repository from `origin`.
 
 ## Conventions
@@ -31,9 +31,9 @@ GitHub shares issue and PR numbers. Resolve ambiguous references with
   use a task list in the map and `Part of #<map>` in each child.
   Use `wayfinder:<type>` labels: research, prototype, grilling, task.
 - Blocking: use native issue dependencies:
-  `gh api --method POST repos/mclbautista/t6-psr-brief/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`.
+  `gh api --method POST repos/mclbautista/t6-notion-reports/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`.
   Obtain the numeric database ID with
-  `gh api repos/mclbautista/t6-psr-brief/issues/<number> --jq .id`.
+  `gh api repos/mclbautista/t6-notion-reports/issues/<number> --jq .id`.
   If unavailable, record `Blocked by: #<number>` in the child.
 - Frontier: open children in map order with no open blockers or assignee.
   Native `issue_dependencies_summary.blocked_by` counts open blockers.

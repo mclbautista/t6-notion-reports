@@ -1,4 +1,4 @@
-# t6-psr-brief
+# t6-notion-reports
 
 Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR briefings
 (per-coordinator diffs) and the meeting minutes. Sends nothing itself: delivery goes through the
@@ -25,7 +25,7 @@ its value. The SQLite file lives in `./data`, which the non-root container user 
 
 ### Deploy
 
-    git clone https://github.com/mclbautista/t6-psr-brief && cd t6-psr-brief   # first time only
+    git clone https://github.com/mclbautista/t6-notion-reports && cd t6-notion-reports   # first time only
     cp config.example.yaml config.yaml && cp .env.example .env                 # fill both in
     mkdir -p data && sudo chown 1001:1001 data && chmod 0700 data
     git pull && docker compose up -d --build
