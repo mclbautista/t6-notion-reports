@@ -49,6 +49,13 @@ def _json(raw: bytes) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+class UnavailableLlm:
+    """Stands in when no OpenRouter key is set: every call fails, so briefings say "unavailable"."""
+
+    def complete(self, system: str, user: str, schema: type[T]) -> T:
+        raise LlmError("OPENROUTER_API_KEY is not set")
+
+
 class OpenRouterClient:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, transport: Transport = _urllib_transport):
         self._headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}

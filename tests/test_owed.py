@@ -169,9 +169,21 @@ def test_more_than_fifteen_shows_plus_n_more():
 
 def test_failure_shows_the_unavailable_line_and_digest_notes_it():
     msgs = brief({"p1": OwedOutcome(failed=True)}, failed=["MAU"], changes=[])
-    # A failed project with no changes is not shown, but the digest says so.
-    assert not any(OWED_UNAVAILABLE in m.text for m in msgs if m.recipient == "Pio")
+    assert "No changes on your projects" in next(m for m in msgs if m.recipient == "Pio").text
     assert f"{OWED_UNAVAILABLE}: MAU" in next(m for m in msgs if m.recipient == "Cyril").text
+
+
+def test_failed_project_without_changes_still_gets_the_unavailable_line():
+    from t6_psr_brief.diff import display_names, unchanged_project
+    names = display_names({}, {"p1": STATE})
+    shown = [unchanged_project("p1", names, STATE, date(2026, 11, 13))]
+    msgs = brief({"p1": OwedOutcome(failed=True)}, ["MAU"], shown)
+    assert OWED_UNAVAILABLE in next(m for m in msgs if m.recipient == "Pio").text
+
+
+def test_property_citation_only_for_date_and_role_kinds():
+    out = find_owed(FakeLlm([item("open_item", "x", empty_property="Deadline")]), STATE)
+    assert out.items == ()
 
 
 def test_failure_on_a_changed_project_keeps_raw_changes_and_adds_the_line():

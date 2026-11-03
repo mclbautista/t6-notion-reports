@@ -13,7 +13,7 @@ from .snapshot_job import run_snapshot
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient
+from .llm import OpenRouterClient, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .gateway import GatewayClient
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
@@ -116,7 +116,7 @@ def _brief(args, notion, now) -> int:
     conn = connect(db)
     try:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
-                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg),
+                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -129,12 +129,16 @@ def _brief(args, notion, now) -> int:
 def _brief_secrets(cfg):
     if cfg.brief is None:
         return []
-    return [("PSR_SECRET", cfg.brief.psr_secret), ("OPENROUTER_API_KEY", cfg.brief.openrouter_api_key)]
+    return [("PSR_SECRET", cfg.brief.psr_secret)]
 
 
-def _llm(cfg):
-    key = cfg.brief.openrouter_api_key if cfg.brief else None
-    return OpenRouterClient(key, cfg.brief.llm_model) if key else None
+def _llm(cfg, dry_print=False):
+    """No key: a dry print leaves owed items out; a real send says "unavailable" (spec 7.3)."""
+    if cfg.brief is None:
+        return None
+    if cfg.brief.openrouter_api_key:
+        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
+    return None if dry_print else UnavailableLlm()
 
 
 def make_job(conn, notion, cfg, gateway, clock):

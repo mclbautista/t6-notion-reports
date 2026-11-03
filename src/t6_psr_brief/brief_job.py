@@ -68,13 +68,14 @@ def run_brief(
         owed = {page_id: find_owed(llm, state) for page_id, state in new_state.items()}
         names = display_names(old_state, new_state)
         owed_failed = sorted(names[p] for p, o in owed.items() if o.failed)
+        failed_ids = sorted(p for p, o in owed.items() if o.failed)
         shown = {c.page_id for c in changes}
         new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
         changes = sort_projects(changes + [
             unchanged_project(p, names, new_state[p], new_day)
-            for p, o in owed.items() if o.items and p not in shown
+            for p, o in owed.items() if (o.items or o.failed) and p not in shown
         ])
-        for page_id in owed_failed_ids(owed):
+        for page_id in failed_ids:
             log(f"brief owed items unavailable project={page_id}")
     contacts = load_contacts(notion, contacts_ds)
     cyril = contacts.get(brief.cyril_contact_id) or Contact(brief.cyril_contact_id, "Cyril")
@@ -107,10 +108,6 @@ def run_brief(
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, owed_failed=len(owed_failed))
-
-
-def owed_failed_ids(owed: dict[str, OwedOutcome]) -> list[str]:
-    return sorted(p for p, o in owed.items() if o.failed)
 
 
 def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:

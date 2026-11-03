@@ -91,7 +91,7 @@ def build_briefing(
 
     if digest_missing(settings):
         return messages
-    digest = _digest_blocks(groups, stamp, quiet, fallbacks, any(c.kind != "unchanged" for c in changes), owed, owed_failed or [])
+    digest = _digest_blocks(groups, stamp, quiet, fallbacks, bool(changes), owed, owed_failed or [])
     messages += _parts(settings.cyril.telegram_id, None, digest, banner, f"psr-digest-{today.isoformat()}", settings.cyril.name)
     return messages
 

@@ -15,7 +15,7 @@ from .llm import LlmClient, LlmError
 from .snapshots import squash
 
 MAX_ITEMS = 15
-KINDS = ("missing_date", "missing_role", "open_item", "stale_field")
+PROPERTY_KINDS = ("missing_date", "missing_role")  # the kinds that may cite an empty property
 # What the LLM reads (spec 7.2), by stored field name, and so what an item may call "empty".
 INPUT_FIELDS = (
     "Stage", "Status", "Health", "Deadline",
@@ -84,7 +84,7 @@ def _citation_holds(item: OwedItem, state: dict[str, object]) -> bool:
     if item.notes_line is not None and not _line_in_notes(item.notes_line, state.get("PM Notes")):
         return False
     if item.empty_property is not None:
-        if item.empty_property not in INPUT_FIELDS or not is_empty(state.get(item.empty_property)):
+        if item.kind not in PROPERTY_KINDS or item.empty_property not in INPUT_FIELDS or not is_empty(state.get(item.empty_property)):
             return False
     return True
 

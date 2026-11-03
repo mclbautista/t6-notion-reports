@@ -71,8 +71,8 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   sends `provider.zdr: true` and is never retried without it. An item must cite an exact PM Notes line
   or an empty property; code drops the rest. A project with no changes but owed items still appears.
   If the call fails for a project, its briefing says "Owed items unavailable this week", the failure
-  is logged (project id only) and the digest names it. `--dry-print` without the key leaves owed
-  items out; a real send needs it.
+  is logged (project id only) and the digest names it. Without the key a real send
+  treats every project as failed ("unavailable"); `--dry-print` without it leaves owed items out.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
 
     docker compose run --rm psr-brief brief --config /app/config.yaml --dry-print   # print, send nothing
