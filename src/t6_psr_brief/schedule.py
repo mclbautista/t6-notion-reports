@@ -26,26 +26,53 @@ class Every:
 SEND_MOM_SLOT = Every(5, "send_mom")
 
 
-def next_run(after: datetime, slots=SLOTS) -> tuple[datetime, str]:
-    """The first slot strictly after ``after`` (an aware datetime), and its kind."""
+@dataclass(frozen=True)
+class Daily:
+    """A slot that fires every day (weekends and holidays included) at a fixed Manila time."""
+
+    at: time
+    kind: str
+
+
+def next_batch(after: datetime, slots=SLOTS) -> tuple[datetime, list[str]]:
+    """The first minute strictly after ``after`` with a slot, and every kind due then.
+
+    Kinds come in declared order. An ``Every`` slot yields to weekly and daily slots on the same
+    minute, as it always has.
+    """
     local = after.astimezone(MANILA)
-    best: tuple[datetime, str] | None = None
-    for day in range(8):
-        date = (local + timedelta(days=day)).date()
-        for weekday, at, kind in (s for s in slots if not isinstance(s, Every)):
-            if date.weekday() != weekday:
-                continue
-            slot = datetime.combine(date, at, tzinfo=MANILA)
-            if slot > after and (best is None or slot < best[0]):
-                best = (slot, kind)
-    for slot in slots:
+    fixed: list[tuple[datetime, int, str]] = []
+    for index, slot in enumerate(slots):
+        if isinstance(slot, Every):
+            continue
+        for day in range(8):
+            date = (local + timedelta(days=day)).date()
+            if isinstance(slot, Daily):
+                at, kind = slot.at, slot.kind
+            else:
+                weekday, at, kind = slot
+                if date.weekday() != weekday:
+                    continue
+            when = datetime.combine(date, at, tzinfo=MANILA)
+            if when > after:
+                fixed.append((when, index, kind))
+                break
+    candidates = list(fixed)
+    for index, slot in enumerate(slots):
         if isinstance(slot, Every):
             base = local.replace(second=0, microsecond=0)
             base += timedelta(minutes=slot.minutes - base.minute % slot.minutes)
-            if best is None or base < best[0]:
-                best = (base, slot.kind)
-    assert best is not None
-    return best
+            candidates.append((base, index, slot.kind))
+    assert candidates
+    when = min(c[0] for c in candidates)
+    pool = fixed if any(c[0] == when for c in fixed) else candidates
+    return when, [kind for w, _, kind in sorted(pool, key=lambda c: c[1]) if w == when]
+
+
+def next_run(after: datetime, slots=SLOTS) -> tuple[datetime, str]:
+    """The first slot strictly after ``after`` (an aware datetime), and its kind."""
+    when, kinds = next_batch(after, slots)
+    return when, kinds[0]
 
 
 class Scheduler:
@@ -60,16 +87,17 @@ class Scheduler:
 
     def run(self, stop: Callable[[], bool] = lambda: False) -> None:
         while not stop():
-            when, kind = next_run(self._clock(), self._slots)
-            self._log(f"scheduler next={when.isoformat()} kind={kind}")
+            when, kinds = next_batch(self._clock(), self._slots)
+            self._log(f"scheduler next={when.isoformat()} kind={'+'.join(kinds)}")
             while not stop() and self._clock() < when:
                 self._sleep(min(self._max_sleep, (when - self._clock()).total_seconds()))
             if stop():
                 return
-            try:
-                self._job(kind)
-            except Exception as exc:  # keep the loop alive; type only, messages may hold data
-                self._log(f"job failed kind={kind} error={type(exc).__name__}")
+            for kind in kinds:  # a failure must not stop the next job at the same minute
+                try:
+                    self._job(kind)
+                except Exception as exc:  # keep the loop alive; type only, messages may hold data
+                    self._log(f"job failed kind={kind} error={type(exc).__name__}")
             # A job that returns before the slot ends must not fire it again.
             while self._clock() <= when:
                 self._sleep(1)
