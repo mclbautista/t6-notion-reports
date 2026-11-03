@@ -178,6 +178,13 @@ def test_disabled_shift_reports_change_nothing(tmp_path):
     assert load_config(write(tmp_path), {"NOTION_TOKEN": "tok"}).shift is None  # no SHIFT_SECRET needed
 
 
+def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tmp_path):
+    cfg = load_config(write(tmp_path, shift_reports_enabled=False, shift_chat_id="junk"), ENV)
+    assert cfg.shift is None
+    with pytest.raises(ConfigError, match="psr_group_chat_id"):  # gateway_url alone still means "briefing"
+        load_config(write(tmp_path, shift_reports_enabled=False, gateway_url="http://gw:8780"), ENV)
+
+
 def test_serve_needs_shift_secret_when_enabled(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)

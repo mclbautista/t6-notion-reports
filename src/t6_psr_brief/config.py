@@ -97,7 +97,7 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
 
 def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
     present = BRIEF_KEYS & set(raw)
-    if SHIFT_KEYS & set(raw):  # the shift reports share these two keys without the briefing
+    if raw.get("shift_reports_enabled", False) is not False:  # the shift reports share these two keys without the briefing
         present -= {"gateway_url", "test_banner"}
     if not present:
         return None
@@ -137,11 +137,11 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
     enabled = raw.get("shift_reports_enabled", False)
     if not isinstance(enabled, bool):
         raise ConfigError("invalid config key: shift_reports_enabled (expected true or false)")
+    if not enabled:  # nothing else about the shift reports is read, so existing configs behave as before
+        return None
     chat = _integer(raw, "shift_chat_id") if "shift_chat_id" in raw else None
     topic = _integer(raw, "shift_topic_id") if "shift_topic_id" in raw else None
     ops = _integer(raw, "ops_chat_id") if "ops_chat_id" in raw else None
-    if not enabled:
-        return None
     for key in ("jo_data_source", "shift_chat_id"):
         if key not in raw:
             raise ConfigError(f"missing config key: {key} (needed when shift_reports_enabled is true)")
