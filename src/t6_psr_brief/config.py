@@ -49,7 +49,7 @@ class ShiftSettings:
     gateway_url: str
     chat_id: int
     topic_id: int | None
-    ops_chat_id: int | None  # for the ops alert (a later ticket); unset until Cyril gives the id
+    ops_chat_id: int | None  # where the Notion-outage alert goes; unset: it goes to the shift group
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
 

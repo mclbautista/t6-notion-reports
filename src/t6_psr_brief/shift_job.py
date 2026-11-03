@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from .jo_snapshot_job import Notion, run_jo_snapshot
@@ -11,6 +12,14 @@ from .midshift_report import MidshiftReport, build_midshift
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
 
 MIDSHIFT_SLOT = "1200"
+# Notion unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
+# are at least six hours apart, so a retrying slot is always done before the next one is due.
+RETRY_FOR = timedelta(minutes=30)
+RETRY_EVERY = timedelta(minutes=1)
+
+
+class NotionUnavailable(Exception):
+    """Notion could not be read for the whole retry window; the slot was skipped after one alert."""
 
 
 def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tuple[JoSnapshot | None, str | None]:
@@ -44,8 +53,8 @@ def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
 class ShiftTarget:
     """Where a slot's report goes: a gateway client authenticated with SHIFT_SECRET, a chat and a topic."""
 
-    def __init__(self, gateway, chat_id: int, topic_id: int | None):
-        self.gateway, self.chat_id, self.topic_id = gateway, chat_id, topic_id
+    def __init__(self, gateway, chat_id: int, topic_id: int | None, ops_chat_id: int | None = None):
+        self.gateway, self.chat_id, self.topic_id, self.ops_chat_id = gateway, chat_id, topic_id, ops_chat_id
 
 
 def shift_keys(now: datetime, slot: str, parts: int) -> list[str]:
@@ -66,14 +75,23 @@ def run_shift_report(
     out: Callable[[str], None] = print,
     log: Callable[[str], None] = print,
     target: ShiftTarget | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    sleep: Callable[[float], None] = time.sleep,
 ) -> EndOfShiftReport | MidshiftReport:
     """Snapshot Job Orders (kind = slot), build that slot's report, then print it or send it.
 
     With a ``target`` the parts go through the gateway, in order, and nothing is printed. A gateway
     failure (after the client's own retries) raises ``GatewayError``; parts already accepted are not
     queued again by a rerun, because the keys are the same.
+
+    When sending, a Notion that cannot be read is retried for ``RETRY_FOR``; if it stays down one
+    alert is queued and ``NotionUnavailable`` is raised. Nothing is stored and nothing is caught up
+    later. A dry print fails at once, as it always has.
     """
-    run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
+    if target is None:
+        run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
+    else:
+        _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now, target, log, clock, sleep)
     current = load_latest(conn)
     if slot == MIDSHIFT_SLOT:
         report = build_midshift(current, banner)
@@ -99,3 +117,36 @@ def run_shift_report(
     for key, text in zip(shift_keys(now, slot, parts), report.messages):
         target.gateway.notify(target.chat_id, text, key, target.topic_id)
     return report
+
+
+def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now, target, log, clock, sleep) -> None:
+    """Read Notion until it answers or ``RETRY_FOR`` is up. Only transport errors count as an outage."""
+    give_up = clock() + RETRY_FOR
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
+            return
+        except OSError as exc:  # URLError, HTTPError and timeouts; type only, messages may hold data
+            error = type(exc).__name__
+            if clock() + RETRY_EVERY > give_up:
+                break
+            sleep(RETRY_EVERY.total_seconds())
+    log(f"shift slot={slot} notion unavailable attempts={attempts} error={error}; skipping the slot")
+    _send_alert(target, slot, now, error)
+    raise NotionUnavailable(f"slot {slot} skipped after {attempts} attempts ({error})")
+
+
+def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> None:
+    """One ops alert per slot (key ``shift-<date>-<slot>-alert``). Names the slot and the error type only.
+
+    Without ``ops_chat_id`` it goes to the shift group instead, marked as an alert, so it is not lost.
+    """
+    minutes = int(RETRY_FOR.total_seconds() // 60)
+    text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
+    key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-alert"
+    if target.ops_chat_id is not None:
+        target.gateway.notify(target.ops_chat_id, text, key)
+    else:
+        target.gateway.notify(target.chat_id, text, key, target.topic_id)
