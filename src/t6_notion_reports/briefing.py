@@ -60,6 +60,7 @@ def build_briefing(
     active: set[str] | None = None,
     first: bool = False,
     limit: int = LIMIT,
+    notes: list[str] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
@@ -74,6 +75,8 @@ def build_briefing(
     A coordinator with nothing to show in the DM gets no message at all (no DM, no group fallback).
     Their name goes on the digest's "No changes" line only if their id is in ``active``; ``None``
     means no filtering. ``first`` marks the first brief, which has no earlier snapshot to compare with.
+
+    ``notes`` are extra warning lines for the digest only (unmatched leave names, leaves unavailable).
 
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
@@ -127,6 +130,7 @@ def build_briefing(
         tail.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
     if llm_failed:
         tail.append(line("⚠️ LLM unavailable: " + ", ".join(llm_failed)))
+    tail += [line(note) for note in notes or ()]
     texts = _pack(head, units, tail, banner, limit)
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
     multi = len(recipients) > 1

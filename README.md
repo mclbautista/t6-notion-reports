@@ -80,6 +80,14 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",
   the failure is logged (project id only) and the digest names it; its open Concerns carry over. Without the key
   a real send marks every project "(LLM unavailable)"; `--dry-print` without it leaves the LLM out.
+- Leave clashes: once per run, one more LLM call parses the Projects database's "Upcoming Holidays and Leaves"
+  lines (it gets those lines and today's date, nothing about projects) into entries with exact quotes; an entry
+  with a quote that is not a line, or invalid dates, is dropped. Each leave's name is matched to Contacts
+  (Aliases, then guarded fuzzy; onboarded Contacts first). A leave by someone in the project's team relations
+  within `leave_clash_days` (default 14) of its Playdate, Submission Deadline or Archival Deadline becomes one
+  Concern, aged through the Concern store. Holidays and office closures never clash. Names nobody matched are
+  listed in Cyril's digest only. If the call fails there are no clash Concerns that run, and the digest says
+  leaves were unavailable.
 - `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
   what would leave the machine first.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).

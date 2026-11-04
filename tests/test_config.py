@@ -152,3 +152,15 @@ def test_concern_chronic_weeks_defaults_to_4_and_is_read_from_config(tmp_path):
 def test_pm_notes_weeks_defaults_to_52_and_is_read_from_config(tmp_path):
     assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.pm_notes_weeks == 52
     assert load_config(write(tmp_path, BRIEF_YAML + "\npm_notes_weeks: 8\n"), ENV).brief.pm_notes_weeks == 8
+
+
+def test_leave_clash_days_defaults_to_14_and_is_read_from_config(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.leave_clash_days == 14
+    assert load_config(write(tmp_path, BRIEF_YAML + "\nleave_clash_days: 7\n"), ENV).brief.leave_clash_days == 7
+
+
+@pytest.mark.parametrize("bad", ["hunter2", "0", "-3", "true", "2.5"])
+def test_bad_leave_clash_days_fails_boot_naming_key_not_value(tmp_path, bad):
+    with pytest.raises(ConfigError) as err:
+        load_config(write(tmp_path, BRIEF_YAML + f"\nleave_clash_days: {bad}\n"), ENV)
+    assert "leave_clash_days" in str(err.value) and "hunter2" not in str(err.value)
