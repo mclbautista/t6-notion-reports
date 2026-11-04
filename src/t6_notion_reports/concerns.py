@@ -8,8 +8,9 @@ listed and the last brief date it appeared in. Each brief run does three things:
   line, for the rest of that day's reruns;
 * a Concern resolved on an earlier day is deleted.
 
-Each Concern also records its source: ``flags`` (code, recomputed every run), ``llm`` (the project's
-consolidation call) or ``leave`` (the leave parse). When a source could not be read this run (the
+Each Concern also records its source: ``flags`` (code, recomputed every run from stored properties),
+``flags_notes`` (code, but resting on a date the project's LLM call read from the PM Notes), ``llm``
+(the project's consolidation call) or ``leave`` (the leave parse). When a source could not be read this run (the
 project's call failed, the leaves were unavailable), its open Concerns are neither re-listed from
 stale text nor resolved: they stay open with their age, because nothing says they went away.
 
@@ -41,6 +42,7 @@ def concern_key(text: str) -> str:
 
 
 FLAGS, LLM, LEAVE = "flags", "llm", "leave"
+FLAGS_NOTES = "flags_notes"  # a code-made Concern that rests on a date the LLM read from the PM Notes
 
 
 def ensure_source_column(conn: sqlite3.Connection) -> None:

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import FLAGS, LEAVE, LLM, AgedConcerns, update_concerns
+from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
@@ -142,10 +142,11 @@ def run_brief(
         # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
         if o is None or o.failed:
             unavailable.add((p, LLM))
+            unavailable.add((p, FLAGS_NOTES))  # the dates from the notes are unknown, not gone
         if not leaves.available:
             unavailable.add((p, LEAVE))
         current[p] = (
-            *((t, FLAGS) for t in f.concerns),
+            *((t, FLAGS_NOTES if t in f.from_notes else FLAGS) for t in f.concerns),
             *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )

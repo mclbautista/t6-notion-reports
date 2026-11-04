@@ -39,6 +39,7 @@ _AIRING = "Airing"
 class ProjectFlags:
     lines: tuple[str, ...] = ()  # overdue first, then missing dates, Lead warnings and the roles line
     concerns: tuple[str, ...] = ()  # date sanity problems, one line each
+    from_notes: tuple[str, ...] = ()  # those concerns that rest on a date only the PM Notes gave
 
     def __bool__(self) -> bool:
         return bool(self.lines or self.concerns)
@@ -90,7 +91,9 @@ def project_flags(
     if not squash(str(state.get("Project Health") or "")):
         other.append(MISSING_HEALTH)  # every gated Status: the project also sorts last in its section
     # Sanity uses the effective precise dates: a fuzzy one from the notes is None here.
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
+    concerns = _sanity(dates)
+    stored = _sanity({n: d if stored_day(state.get(n)) is not None else None for n, d in dates.items()})
+    return ProjectFlags(tuple(overdue + other), tuple(concerns), tuple(c for c in concerns if c not in stored))
 
 
 def relevant_dates(status: object) -> tuple[str, ...]:

@@ -176,3 +176,53 @@ def test_a_store_made_before_the_source_column_is_upgraded_in_place():
                  " first_on TEXT NOT NULL, last_on TEXT NOT NULL, resolved_on TEXT, PRIMARY KEY (page_id, key))")
     assert concern_lines(dm(run(conn, 0)))
     assert "source" in {r[1] for r in conn.execute("PRAGMA table_info(concerns)")}
+
+
+# ---- a Concern that rests on a date from the PM Notes (#62 item 2) ---------------------------
+
+NOTE_DATE_NOTES = "As of Nov 9\n• Submission is Dec 1, waiting on the client"
+
+
+def note_date_setup():
+    from fake_notion import rich
+    page = proj("p1", "ONE", IN_PROGRESS, **staffed(**LISTED, Playdate=date("2026-12-20"), **{"Submission Deadline": date(None)}),
+                **{"PM Notes": rich(NOTE_DATE_NOTES)})
+    return make_db([page], [page])
+
+
+def note_date_llm():
+    from test_consolidation import Llm, line_id, reply_with
+    quote = "• Submission is Dec 1, waiting on the client"
+    dates = lambda p: [{"property": "submission_deadline", "iso_date": "2026-12-01",
+                        "line_id": line_id(p, "waiting on the client"), "quote": quote}]
+    return Llm(reply_with(dates_from_notes=dates))
+
+
+def test_a_notes_dependent_ordering_concern_stays_open_with_its_age_when_extraction_fails():
+    conn = note_date_setup()
+    first = dm(run(conn, 0, llm=note_date_llm()))
+    assert len(concern_lines(first)) == 1
+    for week in (1, 2):
+        text = dm(run(conn, week, llm=FailingLlm()))
+        (line,) = concern_lines(text)
+        assert f"since Nov 14 ({week} wk" in line
+        assert "Resolved" not in text
+    recovered = dm(run(conn, 3, llm=note_date_llm()))
+    assert "since Nov 14 (3 wks)" in concern_lines(recovered)[0]
+    assert "Resolved" not in recovered
+
+
+def test_a_notes_dependent_ordering_concern_stays_open_when_inference_is_skipped():
+    conn = note_date_setup()
+    run(conn, 0, llm=note_date_llm())
+    text = dm(run(conn, 1))  # no LLM at all
+    assert "since Nov 14 (1 wk)" in concern_lines(text)[0] and "Resolved" not in text
+
+
+def test_a_notes_dependent_ordering_concern_resolves_when_the_notes_date_moves_after_a_good_run():
+    from fake_notion import rich
+    from test_consolidation import Llm, reply_with
+    conn = note_date_setup()
+    run(conn, 0, llm=note_date_llm())
+    text = dm(run(conn, 1, llm=Llm(reply_with())))  # extraction worked and found no date
+    assert concern_lines(text) == [] and len(resolved_lines(text)) == 1
