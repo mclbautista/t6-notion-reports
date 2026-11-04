@@ -1,6 +1,7 @@
 """The Saturday briefing job: diff Friday against Monday, build the messages, send them."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,9 +15,12 @@ from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .flags import project_flags
 from .gateway import GatewayError
+from .holidays import leave_lines
+from .leaves import UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
 from .llm import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
+from .people_match import MatchSettings
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
@@ -51,12 +55,18 @@ def run_brief(
     log: Callable[[str], None] = print,
     meeting_notes_ds: str | None = None,
     show_llm_input: bool = False,
+    projects_ds: str | None = None,
+    matching: MatchSettings = MatchSettings(),
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
     With ``llm``, each gated project gets one consolidation call: its changes, Concerns and last update.
     Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
     in full and makes no call at all, so what would leave the machine can be read first.
+
+    With ``llm`` and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
+    Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
+    Names nobody matched, and a failed parse, are noted in Cyril's digest only.
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     pair = default_diff_pair(conn)
@@ -104,6 +114,13 @@ def run_brief(
                 out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+    digest_notes: tuple[str, ...] = ()
+    clashes: dict[str, tuple[str, ...]] = {}
+    if (llm is not None or show_llm_input) and projects_ds:
+        clashes, digest_notes = leave_concerns(
+            notion, projects_ds, llm, today, new_state, load_contacts(notion, contacts_ds),
+            brief.leave_clash_days, matching, show_llm_input, out, log,
+        )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
     flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
@@ -118,7 +135,7 @@ def run_brief(
         o = outcomes.get(p)
         # A failed call says nothing about the LLM's Concerns, so the open ones carry over instead of resolving.
         extra = open_concern_texts(conn, p) if o and o.failed else (o.concerns if o else ())
-        current[p] = tuple(dict.fromkeys((*f.concerns, *extra)))
+        current[p] = tuple(dict.fromkeys((*f.concerns, *extra, *clashes.get(p, ()))))
     aged = update_concerns(conn, current, today, brief.concern_chronic_weeks)
     # A dry run shows the ages and the resolved line but leaves the store as it was.
     if dry_print or gateway is None:
@@ -137,7 +154,7 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first,
+        llm_failed, active_coordinators_in(new_state), first=first, notes=list(digest_notes),
     )
     no_digest = digest_missing(settings)
 
@@ -163,6 +180,33 @@ def run_brief(
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
+
+
+def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log):
+    """(Leave clash Concerns by project id, the notes only Cyril's digest shows).
+
+    No leave lines means no call. A failed call (or an unreadable description) gives no clash Concerns
+    this run, and the digest says leaves were unavailable.
+    """
+    try:
+        description = "".join(t.get("plain_text", "") for t in notion.retrieve_data_source(projects_ds).get("description") or [])
+    except Exception as exc:  # type only: never the response
+        log(f"brief leaves unavailable error={type(exc).__name__}")
+        if not show_input:
+            return {}, (UNAVAILABLE_NOTE,)
+        return {}, ()
+    lines = leave_lines(description)
+    if not lines:
+        return {}, ()
+    if show_input:
+        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
+        return {}, ()
+    result = parse_leaves(llm, lines, today)
+    if result.failed:
+        log("brief leaves unavailable")
+        return {}, (UNAVAILABLE_NOTE,)
+    found = leave_clashes(result.entries, contacts.values(), states, today, clash_days, matching)
+    return found.concerns, ((UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ())
 
 
 def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:

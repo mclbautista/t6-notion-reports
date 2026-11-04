@@ -38,6 +38,20 @@ def upcoming_entries(description: str, today: date, days: int = 14) -> list[str]
     return kept
 
 
+def leave_lines(description: str) -> list[str]:
+    """Every non-empty line of the "Upcoming Holidays and Leaves" list, bullet marks dropped.
+
+    Lines under the heading are used (the whole text when there is no heading). Unlike
+    ``upcoming_entries`` this keeps lines without a readable date: the leave parser reads them.
+    """
+    lines = [ln.strip() for ln in description.splitlines()]
+    for i, ln in enumerate(lines):
+        if HEADING in ln.lower():
+            lines = lines[i + 1:]
+            break
+    return [text for ln in lines if (text := _BULLET.sub("", ln).strip())]
+
+
 def _month(word: str | None) -> int | None:
     word = (word or "").lower()
     if len(word) < 3:

@@ -222,6 +222,7 @@ def _brief(args, notion, now) -> int:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
+                  projects_ds=cfg.projects_data_source, matching=cfg.matching,
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -276,7 +277,8 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
             return
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
-                      meeting_notes_ds=cfg.meeting_notes_data_source, log=lambda text: print(text, flush=True))
+                      meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
+                      matching=cfg.matching, log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:
