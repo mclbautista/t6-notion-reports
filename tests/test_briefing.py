@@ -171,3 +171,38 @@ def test_active_coordinators_are_those_with_in_progress_or_archiving_projects():
         "d": {"Status": None, "T6 Post Coordinator": []},
     }
     assert active_coordinators_in(state) == {PIO, ANA}
+
+
+# ---- splitting a project too long for one message (#60) -------------------------------------
+
+def _plain(text):
+    import re
+    return re.sub(r"<[^>]+>", "", text)
+
+
+def test_a_project_too_long_for_one_message_goes_on_under_its_own_name_marked_cont():
+    notes = "As of Nov 12,\n" + "\n".join(f"  • note line {i} " + "x" * 60 for i in range(120))
+    after = [rec("p1", "BIG", **{"PM Notes": notes}), rec("p2", "SMALL", Stage="Online")]
+    msgs = [m for m in run([rec("p1", "BIG"), rec("p2", "SMALL")], after) if m.recipient == "Pio"]
+    assert len(msgs) > 2
+    for m in msgs:
+        assert_valid_html(m.text) and len(m.text) <= 4096
+    for m in msgs[1:]:
+        head = _plain(m.text).splitlines()[:2]
+        if "SMALL" in m.text and "note line" not in m.text:
+            continue
+        assert head == ["In-Progress (cont.)", "BIG · Show BIG (cont.)"], head
+    body = "\n".join(_plain(m.text) for m in msgs)
+    assert all(f"note line {i} " in body for i in range(120))  # nothing dropped
+    assert body.count("SMALL · Show SMALL") == 1
+
+
+def test_a_digest_tail_that_does_not_fit_starts_a_part_with_the_digest_title():
+    from t6_notion_reports.briefing import build_briefing as build
+    notes = [f"⚠️ warning {i} " + "y" * 80 for i in range(60)]
+    conn_changes = []
+    msgs = build(conn_changes, {}, CONTACTS, SETTINGS, TODAY, notes=notes)
+    digest = [m for m in msgs if m.recipient == "Cyril"]
+    assert len(digest) > 1
+    for m in digest[1:]:
+        assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"

@@ -12,7 +12,7 @@ from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
 from .telegram_html import (
-    LIMIT, Block, Line, Span, bold, line, mention_handle, quote, render_messages,
+    LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_messages,
 )
 
 BANNER = "🧪 TEST"
@@ -151,6 +151,7 @@ class _Unit:
     first_in_coord: bool
     first_in_section: bool
     blocks: list[Block]
+    title: str = ""  # the project's name, repeated when the project itself continues in the next part
 
     def lead(self) -> list[Block]:
         out: list[Block] = []
@@ -165,6 +166,11 @@ class _Unit:
         heading = self.section if self.first_in_section else f"{self.section} (cont.)"
         return [*([self.coord] if self.coord else []), line(bold(heading))]
 
+    def resume(self) -> list[Block]:
+        """What a part starts with when this one project goes on from the previous part."""
+        return [*([self.coord] if self.coord else []), line(bold(f"{self.section} (cont.)")),
+                line(bold(self.title), " (cont.)")]
+
 
 def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
     units: list[_Unit] = []
@@ -177,14 +183,20 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
             for n, ch in enumerate(members):
                 units.append(_Unit(
                     coord, SECTION_TITLES[group], first_in_coord, n == 0,
-                    project_blocks(ch, today),
+                    project_blocks(ch, today), project_title(ch),
                 ))
                 first_in_coord = False
     return units
 
 
 def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[str]:
-    """Render the head, the projects and the tail into messages, splitting only between projects."""
+    """Render the head, the projects and the tail into messages, splitting between projects.
+
+    A part that is full starts the next one with the section heading "(cont.)". A project too long for
+    a message of its own goes on in the next part under the section and its own name, both marked
+    "(cont.)", so no part has lines without the project they belong to; nothing is dropped. A tail
+    that no longer fits starts a part headed by the message title "(cont.)", never a bare warning.
+    """
     def fits(blocks: list[Block]) -> bool:
         return len(render_messages(blocks, prefix=banner, limit=limit)) <= 1
 
@@ -194,12 +206,42 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
     for unit in units:
         if placed and not fits(current + unit.lead() + unit.blocks):
             parts.append(current)
-            current = unit.restart() + unit.blocks
+            current = unit.restart()
         else:
-            current = current + unit.lead() + unit.blocks
+            current = current + unit.lead()
         placed = True
-    parts.append(current + tail)
+        if fits(current + unit.blocks):
+            current = current + unit.blocks
+            continue
+        for atom in _atoms(unit.blocks):  # oversized: fill this part, then resume the project
+            if not fits(current + [atom]) and len(current) > len(unit.resume()):
+                parts.append(current)
+                current = unit.resume()
+            current = _join(current, atom)
+    title = head[0] if head and isinstance(head[0], Line) else line()
+    restart = [Line(title.spans + (Span(" (cont.)"),))] if title.spans else []
+    for atom in tail:  # line by line, so even a tail longer than a message keeps its title
+        if not fits(current + [atom]) and len(current) > len(restart):
+            parts.append(current)
+            current = list(restart)
+        current = current + [atom]
+    parts.append(current)
     return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
+
+
+def _atoms(blocks: list[Block]) -> list[Block]:
+    """The pieces a project may be split into: each line, and each line of a quote as a one-line quote."""
+    out: list[Block] = []
+    for block in blocks:
+        out += [quote(ln) for ln in block.lines] if isinstance(block, Quote) else [block]
+    return out
+
+
+def _join(blocks: list[Block], atom: Block) -> list[Block]:
+    """Append ``atom``, merging a quote line into a quote that ends the part, so a quote stays one quote."""
+    if isinstance(atom, Quote) and blocks and isinstance(blocks[-1], Quote):
+        return [*blocks[:-1], Quote(blocks[-1].lines + atom.lines)]
+    return [*blocks, atom]
 
 
 def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[OutboundMessage]:
@@ -218,7 +260,7 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     nor Project Health (the sort order says it), and has no link. The changes are the LLM's consolidated
     list; when its call failed they are the raw field changes and new PM Notes, marked "(LLM unavailable)".
     """
-    title = f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
+    title = project_title(ch)
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
     extras = [x for x in (ch.stage, *ch.dates, updated_text(ch.llm_update or ch.edited, today)) if x]
     blocks: list[Block] = [line(bold(title), "".join([tag, *(f" · {x}" for x in extras)]))]
@@ -245,6 +287,10 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
         blocks.append(quote(*lines))
     blocks.append(line())
     return blocks
+
+
+def project_title(ch: ProjectChange) -> str:
+    return f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
 
 
 def updated_text(edited: date | None, today: date | None) -> str:
