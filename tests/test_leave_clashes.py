@@ -250,3 +250,26 @@ def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
               projects_ds=PROJECTS, show_llm_input=True)
     assert llm.payloads == []
     assert any("llm input: leaves" in text and "Lea - leave Nov 20-22" in text for text in out)
+
+
+def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_it():
+    conn, notion = build([team_project()])
+    brief(conn, notion, LeaveLlm(STANDARD))
+    gw, _ = brief(conn, notion, LeaveLlm(fail=True))
+    text = dm(gw)
+    assert "Lea Santos is on leave Nov 20–22" in text and "Resolved last week" not in text
+    assert "Leaves unavailable" in digest(gw)
+
+
+def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipients():
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-jam", "Jam")]
+    people[-1]["properties"].update(tg("jam_h", 777))
+    conn, _ = build([team_project()])
+    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    settings = replace(BRIEF, digest_recipients=("c-cyril", "c-jam"))
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
+    by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
+    assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
+    assert by(777) and "Zed" not in by(777)
+    assert "Zed" not in by(111)

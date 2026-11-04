@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import AgedConcerns, open_concern_texts, update_concerns
+from .concerns import FLAGS, LEAVE, LLM, AgedConcerns, update_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
@@ -114,10 +114,9 @@ def run_brief(
                 out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
-    digest_notes: tuple[str, ...] = ()
-    clashes: dict[str, tuple[str, ...]] = {}
+    leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
     if (llm is not None or show_llm_input) and projects_ds:
-        clashes, digest_notes = leave_concerns(
+        leaves = leave_concerns(
             notion, projects_ds, llm, today, new_state, load_contacts(notion, contacts_ds),
             brief.leave_clash_days, matching, show_llm_input, out, log,
         )
@@ -131,12 +130,21 @@ def run_brief(
         log(f"brief llm unavailable project={page_id}")
     conn.commit()
     current = {}
+    unavailable: set[tuple[str, str]] = set()
     for p, f in flagged.items():
         o = outcomes.get(p)
-        # A failed call says nothing about the LLM's Concerns, so the open ones carry over instead of resolving.
-        extra = open_concern_texts(conn, p) if o and o.failed else (o.concerns if o else ())
-        current[p] = tuple(dict.fromkeys((*f.concerns, *extra, *clashes.get(p, ()))))
-    aged = update_concerns(conn, current, today, brief.concern_chronic_weeks)
+        # Code-made Concerns are recomputed every run. A source that could not be read (a failed or
+        # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
+        if o is None or o.failed:
+            unavailable.add((p, LLM))
+        if not leaves.available:
+            unavailable.add((p, LEAVE))
+        current[p] = (
+            *((t, FLAGS) for t in f.concerns),
+            *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
+            *((t, LEAVE) for t in leaves.concerns.get(p, ())),
+        )
+    aged = update_concerns(conn, current, today, brief.concern_chronic_weeks, unavailable)
     # A dry run shows the ages and the resolved line but leaves the store as it was.
     if dry_print or gateway is None:
         conn.rollback()
@@ -154,7 +162,8 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first, notes=list(digest_notes),
+        llm_failed, active_coordinators_in(new_state), first=first, notes=list(leaves.notes),
+        cyril_notes=list(leaves.cyril_notes),
     )
     no_digest = digest_missing(settings)
 
@@ -182,34 +191,45 @@ def run_brief(
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
 
 
-def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log):
-    """(Leave clash Concerns by project id, the notes only Cyril's digest shows).
+@dataclass(frozen=True)
+class Leaves:
+    """What the leave step gives the brief. ``available``: the leaves were read, so a leave Concern
+    missing this run really went away."""
 
-    No leave lines means no call. A failed call (or an unreadable description) gives no clash Concerns
-    this run, and the digest says leaves were unavailable.
+    concerns: dict[str, tuple[str, ...]] = field(default_factory=dict)  # project id -> clash Concerns
+    notes: tuple[str, ...] = ()  # warnings for every digest recipient
+    cyril_notes: tuple[str, ...] = ()  # for Cyril's digest only: names nobody matched
+    available: bool = True
+
+
+def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log) -> Leaves:
+    """Leave clash Concerns by project, and the digest notes.
+
+    No leave lines under the heading means no call and nothing to clash. A failed call, an unreadable
+    description or a missing heading gives no clash Concerns this run, says leaves were unavailable,
+    and leaves the stored leave Concerns open.
     """
     try:
         description = notion.retrieve_data_source(projects_ds).get("description") or []
     except Exception as exc:  # type only: never the response
         log(f"brief leaves unavailable error={type(exc).__name__}")
-        if not show_input:
-            return {}, (UNAVAILABLE_NOTE,)
-        return {}, ()
+        return Leaves(notes=() if show_input else (UNAVAILABLE_NOTE,), available=False)
     lines = leave_lines(description)
     if lines is None:  # the heading was renamed or removed: say so rather than read unrelated text
         log("brief leaves unavailable no heading")
-        return {}, (() if show_input else (NO_HEADING_NOTE,))
+        return Leaves(notes=() if show_input else (NO_HEADING_NOTE,), available=False)
     if not lines:
-        return {}, ()
+        return Leaves()
     if show_input:
         out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
-        return {}, ()
+        return Leaves(available=False)
     result = parse_leaves(llm, lines, today)
     if result.failed:
         log("brief leaves unavailable")
-        return {}, (UNAVAILABLE_NOTE,)
+        return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
     found = leave_clashes(result.entries, contacts.values(), states, today, clash_days, matching)
-    return found.concerns, ((UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ())
+    unmatched = (UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ()
+    return Leaves(found.concerns, cyril_notes=unmatched)
 
 
 def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:

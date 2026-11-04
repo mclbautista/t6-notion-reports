@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS concerns (
     first_on    TEXT NOT NULL,
     last_on     TEXT NOT NULL,
     resolved_on TEXT,
+    source      TEXT NOT NULL DEFAULT 'llm',  -- flags | llm | leave: what produced it (concerns.py)
     PRIMARY KEY (page_id, key)
 );
 """

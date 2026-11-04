@@ -8,6 +8,11 @@ listed and the last brief date it appeared in. Each brief run does three things:
   line, for the rest of that day's reruns;
 * a Concern resolved on an earlier day is deleted.
 
+Each Concern also records its source: ``flags`` (code, recomputed every run), ``llm`` (the project's
+consolidation call) or ``leave`` (the leave parse). When a source could not be read this run (the
+project's call failed, the leaves were unavailable), its open Concerns are neither re-listed from
+stale text nor resolved: they stay open with their age, because nothing says they went away.
+
 Running the same brief again on the same day changes no stored date.
 """
 from __future__ import annotations
@@ -35,10 +40,13 @@ def concern_key(text: str) -> str:
     return squash(text).casefold()
 
 
-def open_concern_texts(conn: sqlite3.Connection, page_id: str) -> tuple[str, ...]:
-    """The Concerns still open for a project, as stored. Used to carry them over when the LLM call failed."""
-    return tuple(r[0] for r in conn.execute(
-        "SELECT text FROM concerns WHERE page_id = ? AND resolved_on IS NULL ORDER BY first_on, key", (page_id,)))
+FLAGS, LLM, LEAVE = "flags", "llm", "leave"
+
+
+def ensure_source_column(conn: sqlite3.Connection) -> None:
+    """Add the ``source`` column to a store made before it existed; its rows count as LLM Concerns."""
+    if "source" not in {r[1] for r in conn.execute("PRAGMA table_info(concerns)")}:
+        conn.execute("ALTER TABLE concerns ADD COLUMN source TEXT NOT NULL DEFAULT 'llm'")
 
 
 def age_text(first_on: date, today: date, chronic_weeks: int) -> str:
@@ -52,24 +60,37 @@ def age_text(first_on: date, today: date, chronic_weeks: int) -> str:
 
 def update_concerns(
     conn: sqlite3.Connection,
-    current: dict[str, tuple[str, ...]],
+    current: dict[str, tuple[tuple[str, str], ...]],
     today: date,
     chronic_weeks: int,
+    unavailable: set[tuple[str, str]] | None = None,
 ) -> dict[str, AgedConcerns]:
-    """Record this run's Concerns (project id → texts) and return what each project shows.
+    """Record this run's Concerns (project id → (text, source) pairs) and return what each project shows.
 
-    Writes inside the connection's open transaction; the caller commits, or rolls back for a dry run.
+    ``unavailable`` holds (project id, source) pairs whose source could not be read this run: their
+    open Concerns stay open and shown, unchanged. Writes inside the connection's open transaction; the
+    caller commits, or rolls back for a dry run.
     """
+    ensure_source_column(conn)
+    unavailable = unavailable or set()
     day = today.isoformat()
     rows = {
         (r[0], r[1]): r for r in conn.execute(
-            "SELECT page_id, key, text, first_on, last_on, resolved_on FROM concerns"
+            "SELECT page_id, key, text, first_on, last_on, resolved_on, source FROM concerns"
         )
     }
+    # Open Concerns of a source that could not be read: kept as they are, in the order they were stored.
+    kept = sorted(
+        (r for r in rows.values() if r[5] is None and (r[0], r[6]) in unavailable),
+        key=lambda r: (r[3], r[1]),
+    )
+    current = {p: list(items) for p, items in current.items()}
+    for page_id, key, text, *_ , source in kept:
+        current.setdefault(page_id, []).append((text, source))
     shown: dict[str, list[str]] = {}
     seen: set[tuple[str, str]] = set()
-    for page_id, texts in current.items():
-        for text in texts:
+    for page_id, items in current.items():
+        for text, source in items:
             key = concern_key(text)
             if (page_id, key) in seen:
                 continue
@@ -77,22 +98,25 @@ def update_concerns(
             row = rows.get((page_id, key))
             if row is None:
                 first = day
-                conn.execute("INSERT INTO concerns VALUES (?, ?, ?, ?, ?, NULL)", (page_id, key, text, day, day))
+                conn.execute(
+                    "INSERT INTO concerns (page_id, key, text, first_on, last_on, resolved_on, source)"
+                    " VALUES (?, ?, ?, ?, ?, NULL, ?)", (page_id, key, text, day, day, source),
+                )
             else:
-                _, _, _, first, _, resolved = row
+                _, _, _, first, _, resolved, _ = row
                 if resolved is not None and resolved < day:
                     first = day  # gone for a brief, back now: ages from today
                 conn.execute(
-                    "UPDATE concerns SET text = ?, first_on = ?, last_on = ?, resolved_on = NULL"
+                    "UPDATE concerns SET text = ?, first_on = ?, last_on = ?, resolved_on = NULL, source = ?"
                     " WHERE page_id = ? AND key = ?",
-                    (text, first, day, page_id, key),
+                    (text, first, day, source, page_id, key),
                 )
             shown.setdefault(page_id, []).append(
                 f"{text} · {age_text(date.fromisoformat(first), today, chronic_weeks)}"
             )
 
     resolved_now: dict[str, list[str]] = {}
-    for (page_id, key), (_, _, text, _, _, resolved) in sorted(rows.items()):
+    for (page_id, key), (_, _, text, _, _, resolved, _) in sorted(rows.items()):
         if (page_id, key) in seen:
             continue
         if resolved is None:

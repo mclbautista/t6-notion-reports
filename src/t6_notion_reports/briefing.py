@@ -59,6 +59,7 @@ def build_briefing(
     first: bool = False,
     limit: int = LIMIT,
     notes: list[str] | None = None,
+    cyril_notes: list[str] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
@@ -74,7 +75,8 @@ def build_briefing(
     Their name goes on the digest's "No changes" line only if their id is in ``active``; ``None``
     means no filtering. ``first`` marks the first brief, which has no earlier snapshot to compare with.
 
-    ``notes`` are extra warning lines for the digest only (unmatched leave names, leaves unavailable).
+    ``notes`` are extra warning lines for every digest recipient (leaves unavailable); ``cyril_notes``
+    go in Cyril's digest alone (unmatched leave names), so with several recipients the digests differ.
 
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
@@ -129,13 +131,14 @@ def build_briefing(
     if llm_failed:
         tail.append(line("⚠️ LLM unavailable: " + ", ".join(llm_failed)))
     tail += [line(note) for note in notes or ()]
-    texts = _pack(head, units, tail, banner, limit)
+    private = [line(note) for note in cyril_notes or ()]
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
     multi = len(recipients) > 1
     for contact in recipients:
         if contact.telegram_id is not None:
             key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
-            messages += _send(contact.telegram_id, None, texts, key, contact.name)
+            own = tail + private if contact.page_id == settings.cyril.page_id else tail
+            messages += _send(contact.telegram_id, None, _pack(head, units, own, banner, limit), key, contact.name)
     return messages
 
 
