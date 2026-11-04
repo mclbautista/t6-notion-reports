@@ -102,9 +102,7 @@ def build_draft(
 
 def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_date: date) -> Entry:
     group = group_of(state)
-    code = str(state.get("Project Code") or "")
-    if code and label.startswith(code):
-        label = code.upper() + label[len(code):]
+    label = entry_label(label, state.get("Project Code"))
     entry = Entry(page_id, label, group)
     if group == "on_track" and not str(state.get("Project Health") or "").strip():
         entry.flag = HEALTH_NOT_SET
@@ -115,6 +113,14 @@ def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_d
         if change.notes:
             entry.source = list(entry.bullets)
     return entry
+
+
+def entry_label(display_name: str, code: object) -> str:
+    """The label a project has on the minutes page: its code in capitals, "CODE (Name)" when a code is shared."""
+    code = str(code or "")
+    if code and display_name.startswith(code):
+        return code.upper() + display_name[len(code):]
+    return display_name
 
 
 def condense_draft(draft: Draft, llm: LlmClient, new: dict[str, dict[str, object]]) -> tuple[int, int]:

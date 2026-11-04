@@ -5,7 +5,7 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
-briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
+briefing sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing consolidates each project's week with an LLM. Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
 
     pip install -e '.[dev]' && pytest
 
@@ -65,14 +65,23 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
-- **What you owe**: with `OPENROUTER_API_KEY` in `.env`, an LLM (OpenRouter, `llm_model` in config,
-  default Claude Haiku) reads each project's PM Notes, Stage, Status, Project Health, the three dates and team and
-  returns up to 15 items (`missing_date`, `missing_role`, `open_item`, `stale_field`). Every request
-  sends `provider.zdr: true` and is never retried without it. An item must cite an exact PM Notes line
-  or an empty property; code drops the rest. A project with no changes but owed items still appears.
-  If the call fails for a project, its briefing says "Owed items unavailable this week", the failure
-  is logged (project id only) and the digest names it. Without the key a real send
-  treats every project as failed ("unavailable"); `--dry-print` without it leaves owed items out.
+- **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
+  (OpenRouter, `llm_model` in config, ZDR on every request, temperature 0, never retried). The payload is that
+  project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
+  relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
+  date, the property changes since the last brief and since the PSR, and the project's lines from the latest
+  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at). Never other projects,
+  team or contact names, Telegram ids or Notion ids. The reply is structured: `last_update`, `changes` and
+  `concerns`. Code checks each item on its own: the quote must be the cited line (ignoring bullet marks and
+  whitespace) and every date, number, episode and capitalised word must be in the payload; a failing item is
+  dropped. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
+  the Concern store. A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
+  update; otherwise Notion's last-edited time does.
+  If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",
+  the failure is logged (project id only) and the digest names it; its open Concerns carry over. Without the key
+  a real send marks every project "(LLM unavailable)"; `--dry-print` without it leaves the LLM out.
+- `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
+  what would leave the machine first.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
 
     docker compose run --rm notion-reports brief --config /app/config.yaml --dry-print   # print, send nothing

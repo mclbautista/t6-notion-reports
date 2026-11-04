@@ -45,7 +45,7 @@ class Person:
 class ProjectChange:
     page_id: str
     name: str  # display name: code, or name, or "CODE (Name)" when a code is shared
-    kind: str  # "added" | "removed" | "changed" | "unchanged" (briefing only, for owed items)
+    kind: str  # "added" | "removed" | "changed" | "unchanged" (briefing only, for flags, Concerns and the LLM)
     changes: list[FieldChange]
     coordinators: list[Person]
     health: str | None = None
@@ -59,6 +59,10 @@ class ProjectChange:
     flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
     concerns: tuple[str, ...] = ()  # open Concerns, each with its age (concerns.py)
     resolved: tuple[str, ...] = ()  # Concerns that no longer appear, shown once
+    consolidated: bool = False  # the LLM's changes (``summary``) replace the raw ``changes`` and ``notes``
+    summary: tuple[str, ...] = ()  # consolidated change lines, validated
+    llm_failed: bool = False  # the LLM call failed: the raw changes are shown, marked "(LLM unavailable)"
+    llm_update: date | None = None  # the "As of" date the LLM judged to be the last real update
 
 
 @dataclass
@@ -165,7 +169,7 @@ def _edited_day(value: object) -> date | None:
 
 
 def unchanged_project(page_id: str, names: dict[str, str], state: dict[str, object], snap_date: date) -> ProjectChange:
-    """A project with no changes, for the briefing when it has owed items."""
+    """A project with no changes, for the briefing when it has flags, Concerns or consolidated changes."""
     return _project(page_id, names, "unchanged", [], state, None, snap_date)
 
 

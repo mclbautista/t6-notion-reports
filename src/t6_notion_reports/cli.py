@@ -52,6 +52,8 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     brief.add_argument("--config", default="config.yaml")
     brief.add_argument("--db", help="default: database_path from --config")
     brief.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")
+    brief.add_argument("--show-llm-input", action="store_true",
+                       help="with --dry-print: print each project's full LLM payload and call no LLM")
     mom = sub.add_parser("draft-mom", help="draft the PSR minutes in Notion (re-run by hand)")
     mom.add_argument("--config", default="config.yaml")
     mom.add_argument("--db", help="default: database_path from --config")
@@ -201,6 +203,9 @@ def _brief(args, notion, now) -> int:
     if cfg.brief is None:
         print("config error: missing config key: gateway_url (briefing settings)", file=sys.stderr)
         return 2
+    if args.show_llm_input and not args.dry_print:
+        print("config error: --show-llm-input needs --dry-print", file=sys.stderr)
+        return 2
     if not args.dry_print:
         for name, value in _brief_secrets(cfg):
             if not value:
@@ -216,6 +221,7 @@ def _brief(args, notion, now) -> int:
     try:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
+                  meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -241,7 +247,7 @@ def _brief_secrets(cfg):
 
 
 def _llm(cfg, dry_print=False):
-    """No key: a dry print leaves owed items out; a real send says "unavailable" (spec 7.3)."""
+    """No key: a dry print leaves the LLM out (raw changes); a real send marks every project "(LLM unavailable)"."""
     if cfg.brief is None:
         return None
     if cfg.brief.openrouter_api_key:
@@ -270,7 +276,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
             return
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
-                      log=lambda text: print(text, flush=True))
+                      meeting_notes_ds=cfg.meeting_notes_data_source, log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:

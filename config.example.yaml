@@ -22,7 +22,8 @@ database_path: /app/data/psr.db
 # psr_group_chat_id: -1003261335368       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 3124                 # PSR topic: Minutes go here
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
-# llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for owed items (default shown)
+# llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for the per-project consolidation (default shown)
+# pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
 # concern_chronic_weeks: 4               # a Concern open longer than this many weeks gets a chronic marker
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)

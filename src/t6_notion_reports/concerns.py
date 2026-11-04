@@ -35,6 +35,12 @@ def concern_key(text: str) -> str:
     return squash(text).casefold()
 
 
+def open_concern_texts(conn: sqlite3.Connection, page_id: str) -> tuple[str, ...]:
+    """The Concerns still open for a project, as stored. Used to carry them over when the LLM call failed."""
+    return tuple(r[0] for r in conn.execute(
+        "SELECT text FROM concerns WHERE page_id = ? AND resolved_on IS NULL ORDER BY first_on, key", (page_id,)))
+
+
 def age_text(first_on: date, today: date, chronic_weeks: int) -> str:
     """"since Oct 26 (2 wks)", plus a marker when open for more than ``chronic_weeks`` weeks."""
     weeks = max(0, (today - first_on).days) // 7

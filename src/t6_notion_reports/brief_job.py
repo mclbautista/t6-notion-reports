@@ -6,17 +6,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
-from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import AgedConcerns, update_concerns
+from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
+from .concerns import AgedConcerns, open_concern_texts, update_concerns
 from .config import BriefSettings
+from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .flags import project_flags
 from .gateway import GatewayError
 from .llm import LlmClient
-from .owed import OwedOutcome, find_owed
+from .mom import entry_label
+from .mom_lines import Minutes, load_minutes
 from .schedule import MANILA
-from .snapshots import default_diff_pair, latest_snapshot_ids, load_snapshot, snapshot_info
+from .snapshots import (
+    RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
+)
 from .status_gate import gate, is_archiving, looks_like_in_progress
 
 
@@ -31,7 +35,7 @@ class BriefResult:
     sent: int = 0
     failed: int = 0
     changed: int = 0
-    owed_failed: int = 0
+    llm_failed: int = 0
 
 
 def run_brief(
@@ -45,11 +49,16 @@ def run_brief(
     dry_print: bool = False,
     out: Callable[[str], None] = print,
     log: Callable[[str], None] = print,
+    meeting_notes_ds: str | None = None,
+    show_llm_input: bool = False,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
-    With ``llm``, each project also gets its owed items; without one the owed section is left out.
+    With ``llm``, each gated project gets one consolidation call: its changes, Concerns and last update.
+    Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
+    in full and makes no call at all, so what would leave the machine can be read first.
     """
+    dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     pair = default_diff_pair(conn)
     first = False
     if pair is None:
@@ -77,27 +86,44 @@ def run_brief(
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
     flagged = {p: project_flags(s, today, brief.lead_warning_days) for p, s in new_state.items()}
+    outcomes: dict[str, Outcome] = {}
+    if llm is not None or show_llm_input:
+        windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
+        minutes = None
+        if meeting_notes_ds:
+            try:
+                minutes = load_minutes(notion, meeting_notes_ds, today)
+            except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
+                log(f"brief minutes unavailable error={type(exc).__name__}")
+        payloads = {
+            p: build_payload(
+                s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
+            ) for p, s in new_state.items()
+        }
+        for page_id in sorted(payloads, key=lambda p: (names[p].lower(), p)):
+            if show_llm_input:
+                out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
+            elif llm is not None:
+                outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+    failed_ids = sorted(p for p, o in outcomes.items() if o.failed)
+    llm_failed = sorted(names[p] for p in failed_ids)
+    for page_id in failed_ids:
+        log(f"brief llm unavailable project={page_id}")
     conn.commit()
-    aged = update_concerns(conn, {p: f.concerns for p, f in flagged.items()}, today, brief.concern_chronic_weeks)
+    current = {}
+    for p, f in flagged.items():
+        o = outcomes.get(p)
+        # A failed call says nothing about the LLM's Concerns, so the open ones carry over instead of resolving.
+        extra = open_concern_texts(conn, p) if o and o.failed else (o.concerns if o else ())
+        current[p] = tuple(dict.fromkeys((*f.concerns, *extra)))
+    aged = update_concerns(conn, current, today, brief.concern_chronic_weeks)
     # A dry run shows the ages and the resolved line but leaves the store as it was.
     if dry_print or gateway is None:
         conn.rollback()
     else:
         conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day)
-    owed: dict[str, OwedOutcome] | None = None
-    owed_failed: list[str] = []
-    if llm is not None:
-        owed = {page_id: find_owed(llm, state) for page_id, state in new_state.items()}
-        owed_failed = sorted(names[p] for p, o in owed.items() if o.failed)
-        failed_ids = sorted(p for p, o in owed.items() if o.failed)
-        shown = {c.page_id for c in changes}
-        changes = sort_projects(changes + [
-            unchanged_project(p, names, new_state[p], new_day)
-            for p, o in owed.items() if (o.items or o.failed) and p not in shown
-        ])
-        for page_id in failed_ids:
-            log(f"brief owed items unavailable project={page_id}")
+    changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     contacts = load_contacts(notion, contacts_ds)
     cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
     cyril = contacts.get(cyril_id) or Contact(cyril_id, "Cyril")
@@ -108,17 +134,17 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        owed, owed_failed, active_coordinators_in(new_state), first=first,
+        llm_failed, active_coordinators_in(new_state), first=first,
     )
     no_digest = digest_missing(settings)
 
     if dry_print or gateway is None:
         for m in messages:
             out(f"--- to={m.to} topic={m.topic} key={m.key} ({m.recipient}) ---\n{m.text}\n")
-        log(f"brief dry_print=True messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
+        log(f"brief dry_print=True messages={len(messages)} changed={changed} llm_failed={len(llm_failed)}")
         if no_digest:
             raise BriefFailed("No digest recipient has a TelegramUserID: digest not built")
-        return BriefResult(messages=tuple(messages), changed=changed, owed_failed=len(owed_failed))
+        return BriefResult(messages=tuple(messages), changed=changed, llm_failed=len(llm_failed))
 
     sent = failed = 0
     for m in messages:
@@ -128,12 +154,80 @@ def run_brief(
         except GatewayError as exc:
             failed += 1
             log(f"brief send failed key={m.key} error={exc}")
-    log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} owed_failed={len(owed_failed)}")
+    log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} llm_failed={len(llm_failed)}")
     if no_digest:
         raise BriefFailed("No digest recipient has a TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
-    return BriefResult(messages=tuple(messages), sent=sent, changed=changed, owed_failed=len(owed_failed))
+    return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
+
+
+def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:
+    """Each gated project's property changes for the two windows: since the last brief and since the PSR.
+
+    ``since_last_brief`` runs from the previous Friday snapshot to this one, ``since_psr`` from the
+    Monday one. A window with no earlier snapshot to compare with is left out. Team relations are left
+    out: the LLM never gets the names in them.
+    """
+    if first:
+        return {}
+    new_at = datetime.fromisoformat(snapshot_info(conn, new_id).taken_at)
+    spans = [("since_psr", old_id, {c.page_id: c for c in since_psr})]
+    last = previous_friday(conn, new_id)
+    if last is not None:
+        prev = {p: s for p, s in load_snapshot(conn, last).items() if p in new_state}
+        prev_at = datetime.fromisoformat(snapshot_info(conn, last).taken_at)
+        diffs = diff_snapshots(prev, new_state, prev_at.astimezone(MANILA).date(), new_at.astimezone(MANILA).date())
+        spans.insert(0, ("since_last_brief", last, {c.page_id: c for c in diffs}))
+    out: dict[str, list[Window]] = {p: [] for p in new_state}
+    for name, start_id, diffs in spans:
+        start = datetime.fromisoformat(snapshot_info(conn, start_id).taken_at)
+        for page_id in new_state:
+            change = diffs.get(page_id)
+            fields = tuple(fc for fc in change.changes if fc.field not in RELATION_FIELDS) if change else ()
+            out[page_id].append(Window(name, start, new_at, fields))
+    return out
+
+
+def minutes_for(minutes: Minutes | None, display_name: str, state: dict[str, object]):
+    """The (lines, meta) arguments of ``build_payload`` for one project; empty when the minutes say nothing of it."""
+    if minutes is None:
+        return (), None
+    lines = minutes.lines_for(entry_label(display_name, state.get("Project Code")))
+    return lines, {
+        "page_date": minutes.page_date.isoformat(), "last_edited": minutes.last_edited, "sent_at": minutes.sent_at,
+    }
+
+
+def with_consolidation(changes, outcomes, names, state, snap_day, first):
+    """Show each project's consolidated changes instead of its raw ones; mark a failed call.
+
+    A project the LLM added changes for is listed even with no snapshot change; a project with a raw
+    change but nothing consolidated, no flags and no Concerns drops out. A failed project keeps its raw
+    changes and is listed so the failure is seen. The first brief has no earlier snapshot, so shows no changes.
+    """
+    if not outcomes:
+        return changes
+    shown = {c.page_id for c in changes}
+    extra = [
+        unchanged_project(p, names, state[p], snap_day) for p, o in outcomes.items()
+        if p not in shown and (o.failed or (o.changes and not first))
+    ]
+    kept = []
+    for ch in changes + extra:
+        o = outcomes.get(ch.page_id)
+        if o is None:
+            kept.append(ch)
+            continue
+        ch.llm_failed, ch.llm_update = o.failed, o.last_update
+        if not o.failed:
+            ch.consolidated = True
+            ch.summary = () if first else tuple(
+                f"{c.text} ({AFTER_PSR})" if c.after_psr else c.text for c in o.changes
+            )
+        if ch.kind in ("added", "removed") or ch.llm_failed or ch.summary or ch.flags or ch.concerns or ch.resolved:
+            kept.append(ch)
+    return sort_projects(kept)
 
 
 def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:

@@ -100,19 +100,20 @@ def check_grounding(bullets: list[str], notes: str, source: list[str], meeting: 
     if len(older) > 1:
         return "more than one date from an older block"
     for d in older:
-        if not _upcoming(d, meeting):
+        if not upcoming(d, meeting):
             return f"older date {d[0]}/{d[1]} is not upcoming"
     return None
 
 
-def _upcoming(md: tuple[int, int], meeting: date) -> bool:
+def upcoming(md: tuple[int, int], meeting: date, horizon_days: int = 183) -> bool:
+    """True when the month/day falls on or after ``meeting``, within ``horizon_days`` (about six months)."""
     for year in (meeting.year, meeting.year + 1):
         try:
             when = date(year, md[0], md[1])
         except ValueError:
             return False
         if when >= meeting:
-            return (when - meeting).days <= 183
+            return (when - meeting).days <= horizon_days
     return False
 
 
@@ -127,3 +128,21 @@ def condense_bullets(llm: LlmClient, label: str, notes: str, source: list[str], 
     if check_grounding(bullets, notes, source, meeting) is not None:
         return Condensed(list(source), True)
     return Condensed(bullets, False)
+
+
+def ungrounded(text: str, sources: str) -> str | None:
+    """None when every date, number, episode and capitalised word in ``text`` is in ``sources``, else the first reason.
+
+    The same facts ``check_grounding`` looks for, without its rules about older blocks.
+    """
+    out, have, words = extract_facts(text), extract_facts(sources), _word_set(sources)
+    for d in sorted(out.dates - have.dates):
+        return f"date {d[0]}/{d[1]} is not in the sources"
+    for n in sorted(out.numbers - have.numbers):
+        return f"number {n} is not in the sources"
+    for e in sorted(out.episodes - have.episodes):
+        return f"episode {e} is not in the sources"
+    for name in sorted(out.names - STRUCTURE_WORDS):
+        if name not in words:
+            return f"{name.title()} is not in the sources"
+    return None

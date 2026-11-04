@@ -1,4 +1,4 @@
-"""Build the Saturday briefing messages from a diff (spec section 7, without owed items).
+"""Build the Saturday briefing messages from a diff (spec section 7).
 
 Pure: no network, no clock. ``build_briefing`` returns the messages to send, in order: one DM per
 coordinator, then Cyril's digest.
@@ -11,7 +11,6 @@ from datetime import date
 from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
-from .owed import OwedOutcome
 from .snapshots import squash
 from .telegram_html import (
     LIMIT, Block, Line, Span, bold, line, mention_handle, quote, render_messages,
@@ -24,11 +23,8 @@ SECTION_TITLES = {"on_hold": "On-Hold", "in_progress": "In-Progress", "leads": "
 DM_SECTIONS = ("on_hold", "in_progress")
 DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
-OWED_UNAVAILABLE = "Owed items unavailable this week"
-KIND_LABEL = {
-    "missing_date": "Missing date", "missing_role": "Missing role",
-    "open_item": "Open", "stale_field": "Check field",
-}
+LLM_UNAVAILABLE = "(LLM unavailable)"
+AFTER_PSR = "after PSR"
 
 
 @dataclass(frozen=True)
@@ -60,18 +56,16 @@ def build_briefing(
     contacts: dict[str, Contact],
     settings: Settings,
     today: date,
-    owed: dict[str, OwedOutcome] | None = None,
-    owed_failed: list[str] | None = None,
+    llm_failed: list[str] | None = None,
     active: set[str] | None = None,
     first: bool = False,
     limit: int = LIMIT,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
-    ``changes`` holds the changed projects plus any unchanged project that has owed items. A project
-    outside the status gate (``group`` is None) is left out. ``owed`` maps page id → its owed items
-    (``None``: no LLM, so no owed section); ``owed_failed`` names the projects whose owed-items call
-    failed, for Cyril's digest.
+    ``changes`` holds the changed projects plus any unchanged project with flags, Concerns or
+    consolidated changes. A project outside the status gate (``group`` is None) is left out.
+    ``llm_failed`` names the projects whose LLM call failed, for Cyril's digest.
 
     The DM has On-Hold then In-Progress sections. The digest groups by coordinator, alphabetically,
     each with On-Hold, In-Progress, then Leads. Empty sections are left out, and a section is sorted by
@@ -104,7 +98,7 @@ def build_briefing(
             continue
         head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
-        units = _units([(None, projects)], DM_SECTIONS, owed, today)
+        units = _units([(None, projects)], DM_SECTIONS, today)
         if chat is not None:
             messages += _send(chat, None, _pack(head, units, [], banner, limit), key, name)
         else:
@@ -125,14 +119,14 @@ def build_briefing(
     people = sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower())
     if groups.no_coordinator:
         people.append(("No coordinator", groups.no_coordinator))
-    units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, owed, today)
+    units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
     tail: list[Block] = []
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:
         tail.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
-    if owed_failed:
-        tail.append(line(f"⚠️ {OWED_UNAVAILABLE}: " + ", ".join(owed_failed)))
+    if llm_failed:
+        tail.append(line("⚠️ LLM unavailable: " + ", ".join(llm_failed)))
     texts = _pack(head, units, tail, banner, limit)
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
     multi = len(recipients) > 1
@@ -167,7 +161,7 @@ class _Unit:
         return [*([self.coord] if self.coord else []), line(bold(heading))]
 
 
-def _units(people, sections: tuple[str, ...], owed, today: date) -> list[_Unit]:
+def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
     units: list[_Unit] = []
     for coord, projects in people:
         first_in_coord = True
@@ -178,7 +172,7 @@ def _units(people, sections: tuple[str, ...], owed, today: date) -> list[_Unit]:
             for n, ch in enumerate(members):
                 units.append(_Unit(
                     coord, SECTION_TITLES[group], first_in_coord, n == 0,
-                    project_blocks(ch, (owed or {}).get(ch.page_id), today),
+                    project_blocks(ch, today),
                 ))
                 first_in_coord = False
     return units
@@ -211,16 +205,20 @@ def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[Outboun
     ]
 
 
-def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: date | None = None) -> list[Block]:
-    """Heading, flags, Concerns, field changes, raw new PM Notes and owed items for one project, then a blank line.
+def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
+    """Heading, flags, Concerns and the week's changes for one project, then a blank line.
 
-    The heading has the name and Stage and the weeks since the Notion page was last edited. It shows
-    neither Status (the section says it) nor Project Health (the sort order says it), and has no link.
+    The heading has the name and Stage and the weeks since the project's last update: the "As of" date
+    the LLM judged real, else Notion's last-edited time. It shows neither Status (the section says it)
+    nor Project Health (the sort order says it), and has no link. The changes are the LLM's consolidated
+    list; when its call failed they are the raw field changes and new PM Notes, marked "(LLM unavailable)".
     """
     title = f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
-    extras = [x for x in (ch.stage, updated_text(ch.edited, today)) if x]
+    extras = [x for x in (ch.stage, updated_text(ch.llm_update or ch.edited, today)) if x]
     blocks: list[Block] = [line(bold(title), "".join([tag, *(f" · {x}" for x in extras)]))]
+    if ch.llm_failed:
+        blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
     if not squash(ch.health or ""):
         blocks.append(line(MISSING_HEALTH))
@@ -229,9 +227,10 @@ def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: da
         blocks += [line(f"• {text}") for text in ch.concerns]
     if ch.resolved:
         blocks.append(line(f"{RESOLVED_LABEL}: " + "; ".join(ch.resolved)))
-    for fc in ch.changes:
+    blocks += [line(f"• {text}") for text in ch.summary]
+    for fc in () if ch.consolidated else ch.changes:
         blocks.append(line(f"• {fc.field}: {format_value(fc.old)} → {format_value(fc.new)}"))
-    if ch.notes and (ch.notes.blocks or ch.notes.text_diff):
+    if not ch.consolidated and ch.notes and (ch.notes.blocks or ch.notes.text_diff):
         blocks.append(line(f"📝 PM Notes · last updated {last_updated_text(ch.last_updated)}"))
         lines: list[Line] = []
         for bc in ch.notes.blocks:
@@ -240,8 +239,6 @@ def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: da
             lines += [line(text) for text in bc.block.text.splitlines()]
         lines += [line(text) for text in ch.notes.text_diff or []]
         blocks.append(quote(*lines))
-    if owed is not None:
-        blocks += owed_blocks(owed)
     blocks.append(line())
     return blocks
 
@@ -254,18 +251,6 @@ def updated_text(edited: date | None, today: date | None) -> str:
     if weeks == 0:
         return "updated this week"
     return f"updated {weeks} wk{'s' if weeks > 1 else ''} ago"
-
-
-def owed_blocks(owed: OwedOutcome) -> list[Block]:
-    if owed.failed:
-        return [line(f"⚠️ {OWED_UNAVAILABLE}")]
-    if not owed.items:
-        return []
-    blocks: list[Block] = [line(bold("What you owe"))]
-    blocks += [line(f"• {KIND_LABEL[item.kind]}: {item.text.strip()}") for item in owed.items]
-    if owed.more:
-        blocks.append(line(f"+{owed.more} more"))
-    return blocks
 
 
 def format_value(value: object) -> str:
