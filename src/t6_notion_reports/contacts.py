@@ -11,6 +11,7 @@ class Contact:
     name: str
     handle: str | None = None  # without the leading @
     telegram_id: int | None = None
+    aliases: str = ""  # raw comma-separated Contacts ``Aliases``; split by people_match
 
 
 class Notion(Protocol):
@@ -24,7 +25,7 @@ def load_contacts(notion: Notion, contacts_ds: str) -> dict[str, Contact]:
         handle = (_plain(props.get("TelegramHandle")) or "").lstrip("@").strip() or None
         out[page["id"]] = Contact(
             page["id"], _plain(props.get("Name")) or page["id"], handle,
-            _int(_plain(props.get("TelegramUserID"))),
+            _int(_plain(props.get("TelegramUserID"))), _plain(props.get("Aliases")) or "",
         )
     return out
 

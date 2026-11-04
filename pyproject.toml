@@ -3,7 +3,7 @@ name = "t6-notion-reports"
 version = "0.0.1"
 description = "Snapshot Notion Projects and Job Orders into SQLite, draft weekly PSR briefings/minutes, and generate daily shift status reports."
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6", "pydantic>=2", "tzdata"]
+dependencies = ["PyYAML>=6", "pydantic>=2", "tzdata", "rapidfuzz>=3.9"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
