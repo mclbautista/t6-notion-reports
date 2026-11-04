@@ -21,9 +21,10 @@ RELATION_FIELDS = (
     "T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe",
 )
 
-# Spec section 3.1. Stored names; "Deadline" is Notion's "Deadline (Playdate/Submission)".
+# Spec section 3.1. Stored names match the Notion property names.
 TRACKED_FIELDS = (
-    "Name", "Project Code", "Stage", "Status", "Health", "PM Notes", "Deadline",
+    "Name", "Project Code", "Stage", "Status", "Project Health", "PM Notes",
+    "Playdate", "Submission Deadline", "Archival Deadline",
 ) + RELATION_FIELDS
 
 SCHEMA = """

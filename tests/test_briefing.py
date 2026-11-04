@@ -26,7 +26,7 @@ def person(cid):
 
 def rec(page_id, code, coordinators=("c-pio",), **fields):
     base = {"Name": f"Show {code}", "Project Code": code, "Stage": "Offline", "Status": "In-Progress",
-            "Health": "On Track", "PM Notes": "", "T6 Post Coordinator": [person(c) for c in coordinators]}
+            "Project Health": "On Track", "PM Notes": "", "T6 Post Coordinator": [person(c) for c in coordinators]}
     base.update(fields)
     return ProjectRecord(page_id, base)
 
@@ -55,7 +55,7 @@ BEFORE = [
     rec("p4", "ORF", ()),
 ]
 AFTER = [
-    rec("p1", "PAS", ("c-pio",), Stage="Online", Health="Critical",
+    rec("p1", "PAS", ("c-pio",), Stage="Online", **{"Project Health": "Critical"},
         **{"PM Notes": "As of Nov 12,\n  • Delay in <Mixing> & QC"}),
     rec("p2", "RIA", ("c-ana",)),
     rec("p3", "DW", ("c-angel",), Status="Standby"),

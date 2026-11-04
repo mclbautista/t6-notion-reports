@@ -30,7 +30,7 @@ RAW_TOGGLE = "Raw source"
 
 ARCHIVING_STAGES = {"archiving", "for drives turnover", "waiting for payment"}
 INCOMING_STATUSES = {"leads", "lead", "negotiations", "proposal made"}
-CHANGE_FIELDS = {"Health", "Stage", "Status"}
+CHANGE_FIELDS = {"Project Health", "Stage", "Status"}
 _HEALTH_GROUP = {"critical": "critical", "at risk": "at_risk", "on track": "on_track"}
 
 
@@ -45,7 +45,7 @@ def group_of(state: dict[str, object]) -> str:
         return "archiving"
     if norm(state.get("Status")) in INCOMING_STATUSES:
         return "incoming"
-    return _HEALTH_GROUP.get(norm(state.get("Health")), "on_track")
+    return _HEALTH_GROUP.get(norm(state.get("Project Health")), "on_track")
 
 
 @dataclass
@@ -106,7 +106,7 @@ def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_d
     if code and label.startswith(code):
         label = code.upper() + label[len(code):]
     entry = Entry(page_id, label, group)
-    if group == "on_track" and not str(state.get("Health") or "").strip():
+    if group == "on_track" and not str(state.get("Project Health") or "").strip():
         entry.flag = HEALTH_NOT_SET
     when = last_updated(state.get("PM Notes"), snap_date)
     entry.last_updated_line = f"last updated {last_updated_text(when)}" if when else last_updated_text(None)

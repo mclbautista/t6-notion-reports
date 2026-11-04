@@ -18,12 +18,12 @@ MAX_ITEMS = 15
 PROPERTY_KINDS = ("missing_date", "missing_role")  # the kinds that may cite an empty property
 # What the LLM reads (spec 7.2), by stored field name, and so what an item may call "empty".
 INPUT_FIELDS = (
-    "Stage", "Status", "Health", "Deadline",
+    "Stage", "Status", "Project Health", "Playdate", "Submission Deadline", "Archival Deadline",
     "Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe", "T6 Post Coordinator",
 )
 
 SYSTEM = f"""You help a post-production coordinator see what they still owe on one project before the weekly status meeting.
-You are given the project's PM Notes (a dated log, newest "As of" block last) and its Stage, Status, Health, Deadline and team.
+You are given the project's PM Notes (a dated log, newest "As of" block last) and its Stage, Status, Project Health, Playdate, Submission Deadline, Archival Deadline and team.
 Return the items the coordinator can act on, of exactly these kinds:
 - missing_date: the next deadline or milestone has no date (for example "TLR piclock TBC").
 - missing_role: offline, online, color, sound or VFX has nobody named, in the properties or in the notes.

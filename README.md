@@ -66,7 +66,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
 - **What you owe**: with `OPENROUTER_API_KEY` in `.env`, an LLM (OpenRouter, `llm_model` in config,
-  default Claude Haiku) reads each project's PM Notes, Stage, Status, Health, Deadline and team and
+  default Claude Haiku) reads each project's PM Notes, Stage, Status, Project Health, the three dates and team and
   returns up to 15 items (`missing_date`, `missing_role`, `open_item`, `stale_field`). Every request
   sends `provider.zdr: true` and is never retried without it. An item must cite an exact PM Notes line
   or an empty property; code drops the rest. A project with no changes but owed items still appears.

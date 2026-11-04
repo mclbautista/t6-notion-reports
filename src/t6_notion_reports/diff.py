@@ -139,7 +139,7 @@ def _show(value: object) -> str:
 def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectChange:
     return ProjectChange(
         page_id, names[page_id], kind, changes, _coords(state),
-        health=state.get("Health") or None, notes=notes,
+        health=state.get("Project Health") or None, notes=notes,
         last_updated=last_updated(state.get("PM Notes"), snap_date),
         code=state.get("Project Code") or None, title=state.get("Name") or None,
     )
