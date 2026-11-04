@@ -220,6 +220,7 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     if ch.llm_failed:
         blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
+    blocks += [line(f"📅 {text}") for text in ch.note_dates]
     if not squash(ch.health or ""):
         blocks.append(line(MISSING_HEALTH))
     if ch.concerns:

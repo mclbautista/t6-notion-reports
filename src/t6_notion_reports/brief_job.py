@@ -85,7 +85,6 @@ def run_brief(
     names = display_names(old_state, new_state)
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
-    flagged = {p: project_flags(s, today, brief.lead_warning_days) for p, s in new_state.items()}
     outcomes: dict[str, Outcome] = {}
     if llm is not None or show_llm_input:
         windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
@@ -105,6 +104,10 @@ def run_brief(
                 out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+    # Dates the notes state count as given, so they are known before the flags are worked out.
+    stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
+    flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
+    note_dates = {p: note_date_lines(o) for p, o in outcomes.items() if o.dates}
     failed_ids = sorted(p for p, o in outcomes.items() if o.failed)
     llm_failed = sorted(names[p] for p in failed_ids)
     for page_id in failed_ids:
@@ -122,7 +125,7 @@ def run_brief(
         conn.rollback()
     else:
         conn.commit()
-    changes = with_flags(changes, flagged, aged, names, new_state, new_day)
+    changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     contacts = load_contacts(notion, contacts_ds)
     cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
@@ -225,7 +228,7 @@ def with_consolidation(changes, outcomes, names, state, snap_day, first):
             ch.summary = () if first else tuple(
                 f"{c.text} ({AFTER_PSR})" if c.after_psr else c.text for c in o.changes
             )
-        if ch.kind in ("added", "removed") or ch.llm_failed or ch.summary or ch.flags or ch.concerns or ch.resolved:
+        if ch.kind in ("added", "removed") or ch.llm_failed or ch.summary or ch.flags or ch.note_dates or ch.concerns or ch.resolved:
             kept.append(ch)
     return sort_projects(kept)
 
@@ -242,25 +245,38 @@ def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:
 
 
 
-def with_flags(changes, flagged, aged, names, state, snap_day):
+def note_date_lines(outcome: Outcome) -> tuple[str, ...]:
+    """"Submission Deadline (from PM Notes): Dec 1, 2026 · not in property", or the fuzzy wording as stated."""
+    return tuple(
+        f"{d.property} (from PM Notes): {d.fuzzy}" if d.day is None
+        else f"{d.property} (from PM Notes): {d.day:%b} {d.day.day}, {d.day.year} · not in property"
+        for d in outcome.dates
+    )
+
+
+def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
     """Attach each project's flags, aged Concerns and resolved Concerns; a project with flags or Concerns is listed too.
 
     Flags and open Concerns count as activity, so a project with no changes but one of them still
     reaches its coordinator. A resolved Concern also lists its project, so the "Resolved last week"
     line is seen once rather than dropped unread. A removed project has no current state to flag.
+    A date the notes state, precise or fuzzy, counts as activity too, so it is always shown.
     """
+    note_dates = note_dates or {}
     shown = set()
     for ch in changes:
         if ch.kind != "removed" and ch.page_id in flagged:
             a = aged.get(ch.page_id, AgedConcerns())
             ch.flags, ch.concerns, ch.resolved = flagged[ch.page_id].lines, a.open, a.resolved
+            ch.note_dates = note_dates.get(ch.page_id, ())
         shown.add(ch.page_id)
     extra = []
     for page_id, f in flagged.items():
         a = aged.get(page_id, AgedConcerns())
-        if page_id not in shown and (f.lines or a.open or a.resolved):
+        notes = note_dates.get(page_id, ())
+        if page_id not in shown and (f.lines or a.open or a.resolved or notes):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
-            ch.flags, ch.concerns, ch.resolved = f.lines, a.open, a.resolved
+            ch.flags, ch.concerns, ch.resolved, ch.note_dates = f.lines, a.open, a.resolved, notes
             extra.append(ch)
     return sort_projects(changes + extra) if extra else changes
 

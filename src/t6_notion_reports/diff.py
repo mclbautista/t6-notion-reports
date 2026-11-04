@@ -57,6 +57,7 @@ class ProjectChange:
     group: str | None = None  # status gate: on_hold | in_progress | leads
     edited: date | None = None  # Notion last-edited day (Manila)
     flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
+    note_dates: tuple[str, ...] = ()  # blank dates the PM Notes state, with a "not in property" hint when precise
     concerns: tuple[str, ...] = ()  # open Concerns, each with its age (concerns.py)
     resolved: tuple[str, ...] = ()  # Concerns that no longer appear, shown once
     consolidated: bool = False  # the LLM's changes (``summary``) replace the raw ``changes`` and ``notes``
