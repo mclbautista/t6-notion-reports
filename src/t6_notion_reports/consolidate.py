@@ -14,7 +14,8 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel
 
-from .condense import extract_facts, ungrounded, upcoming
+from .condense import ungrounded
+from .dates import has_future_date, is_period, mentions
 from .diff import FieldChange
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, relevant_dates, stored_day
 from .llm import LlmClient, LlmError
@@ -210,7 +211,9 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
         out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": None, "text": text})
     cutoff = today - timedelta(weeks=weeks)
     for block in parsed.blocks:
-        if block.header_date and block.header_date < cutoff and not _has_future_date("\n".join(block.bullets), today):
+        if block.header_date and block.header_date < cutoff and not has_future_date(
+            "\n".join(block.bullets), block.header_date, today,
+        ):
             continue
         out.append({"line_id": build.add(SourceLine("pm_notes", block.header, True, block.header_date)),
                     "block": block.header, "text": block.header})
@@ -218,10 +221,6 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
             text = f"• {bullet}"
             out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": block.header, "text": text})
     return out
-
-
-def _has_future_date(text: str, today: date) -> bool:
-    return any(upcoming(md, today) for md in extract_facts(text).dates)
 
 
 def _plain(value: object) -> object:
@@ -308,7 +307,8 @@ def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate,
                 continue
             if _day_grounded(day, line.text, date.fromisoformat(payload.data["today"])):
                 found[name] = NoteDate(name, day=day)
-        elif item.fuzzy_text and squash(item.fuzzy_text).casefold() in squash(line.text).casefold():
+        elif (item.fuzzy_text and is_period(item.fuzzy_text)
+              and squash(item.fuzzy_text).casefold() in squash(line.text).casefold()):
             found[name] = NoteDate(name, fuzzy=squash(item.fuzzy_text))
     return tuple(found.values())
 
@@ -328,11 +328,14 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:
-    """The line holds the day's month and day, any year it writes is this one, and it is within a year of today."""
-    if (day.month, day.day) not in extract_facts(line).dates:
-        return False
-    years = {int(y) for y in re.findall(r"\b(20\d\d)\b", line)}
-    return abs((day - today).days) <= 366 and (not years or day.year in years)
+    """The line writes this day. A written year must match exactly, however far off; a day written
+    without a year must be within a year of today, so the model cannot pick an arbitrary year."""
+    for m in mentions(line, today):
+        if not m.precise or (m.first.month, m.first.day) != (day.month, day.day):
+            continue
+        if m.first == day if m.year_written else abs((day - today).days) <= 366:
+            return True
+    return False
 
 
 def _last_update(cited: LastUpdate | None, payload: Payload, today: date) -> date | None:

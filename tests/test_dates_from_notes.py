@@ -135,3 +135,28 @@ def test_a_past_fuzzy_value_is_never_overdue():
                                               "line_id": line_id(p, "Q1 2025"), "quote": "• Playdate was Q1 2025"}]
     text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
     assert "Playdate (from PM Notes): Q1 2025" in text and "overdue" not in text and "No Playdate" not in text
+
+
+def test_an_iso_date_or_a_far_date_with_its_year_written_is_accepted():
+    for notes, iso in (("As of Nov 9\n• Submission 2026-12-01, waiting on the client", "2026-12-01"),
+                       ("As of Nov 9\n• Submission Dec 1, 2028, waiting on the client", "2028-12-01"),
+                       ("As of Nov 9\n• Submission 12/1/2026, waiting on the client", "2026-12-01")):
+        quote = notes.splitlines()[1]
+        text = text_of(reply={"dates_from_notes": submission(iso, quote)}, notes=notes, Playdate=date("2026-12-20"))
+        assert "Submission Deadline (from PM Notes)" in text and "not in property" in text, notes
+        assert "No Submission Deadline" not in text
+
+
+def test_a_placeholder_is_not_a_fuzzy_date_and_the_missing_flag_stays():
+    for wording in ("Playdate TBC", "TBA", "pending client", "Playdate"):
+        notes = f"As of Nov 9\n• {wording} for now, Q2 2027 maybe"
+        reply = {"dates_from_notes": lambda p, w=wording, n=notes: [
+            {"property": "playdate", "fuzzy_text": w, "line_id": line_id(p, "for now"), "quote": n.splitlines()[1]}]}
+        text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
+        assert "from PM Notes" not in text and "No Playdate" in text, wording
+    for wording in ("Q2 2027", "early 2027", "mid-December", "end of March", "H1 2027"):
+        notes = f"As of Nov 9\n• Playdate {wording}"
+        reply = {"dates_from_notes": lambda p, w=wording, n=notes: [
+            {"property": "playdate", "fuzzy_text": w, "line_id": line_id(p, "Playdate"), "quote": n.splitlines()[1]}]}
+        text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
+        assert f"Playdate (from PM Notes): {wording}" in text, wording

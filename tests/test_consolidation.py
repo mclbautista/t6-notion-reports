@@ -361,3 +361,36 @@ def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
 def test_the_owed_items_section_is_gone():
     gw, _ = run(conn_one(), Llm())
     assert not any("What you owe" in t for *_, t in gw.sent)
+
+
+# ---- PM Notes years (#60) -------------------------------------------------------------------
+
+OLD_2024 = "As of Nov 1, 2024\n• Offline locked in 2024"
+
+
+def test_a_header_with_an_old_year_is_outside_the_window_and_can_be_cited_as_the_last_update():
+    llm = Llm()
+    run(conn_one(OLD_2024 + "\n" + NOTES), llm)
+    texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
+    assert "As of Nov 1, 2024" not in texts and "• Offline locked in 2024" not in texts
+    notes = OLD_2024  # only the old block: the LLM cites it as the real last update
+    llm = Llm(reply_with(last_update=lambda p: {"line_id": 1, "as_of_date": "2024-11-01"}))
+    gw, _ = run(conn_one(notes), llm, brief=replace(BRIEF, pm_notes_weeks=200))
+    assert llm.payloads[0]["pm_notes"][0]["text"] == "As of Nov 1, 2024"
+    assert weeks_text(gw) == "updated 106 wks ago"  # Nov 1, 2024 to Sat Nov 14, 2026: 743 days
+
+
+def test_an_old_block_is_kept_for_a_far_or_iso_future_date_and_dropped_for_a_past_year():
+    cases = {
+        "As of Aug 3\n• Launch in July 2027": True,
+        "As of Aug 3\n• Delivery 2027-07-01": True,
+        "As of Aug 3\n• Festival Q1 2027": True,
+        "As of Aug 3, 2024\n• Screening Dec 2, 2024": False,
+        "As of Aug 3, 2024\n• Screening Dec 2": False,  # no year: read near its 2024 block
+        "As of Aug 3, 2024\n• Premiere December 2024": False,
+    }
+    for old, kept in cases.items():
+        llm = Llm()
+        run(conn_one(NOTES + "\n" + old), llm, brief=replace(BRIEF, pm_notes_weeks=4))
+        texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
+        assert (old.splitlines()[1] in texts) is kept, old
