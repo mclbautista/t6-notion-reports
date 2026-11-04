@@ -26,6 +26,7 @@ DEFAULT_PM_NOTES_WEEKS = 52
 CONCERN_KINDS = ("open_item", "health_vs_evidence", "stale_milestone", "source_conflict")
 SOURCES = {"pm_notes", "minutes"}
 DATE_KEYS = {PLAYDATE: "playdate", SUBMISSION: "submission_deadline", ARCHIVAL: "archival_deadline"}
+_PROPERTY_BY_KEY = {key: name for name, key in DATE_KEYS.items()}
 
 SYSTEM = """You help a post-production coordinator prepare for the weekly PSR meeting on one project. You are given the project, its dated PM Notes lines (each with an id), what changed since the last brief and since the last PSR, and the project's lines from the latest PSR Minutes. Today's date is given.
 Use only what is in the payload. Never invent a fact, a date or a name. Every date, number, episode and capitalised word you write in a "text" must already appear in the payload, so start a sentence with a word from the payload.
@@ -38,6 +39,7 @@ Use only what is in the payload. Never invent a fact, a date or a name. Every da
    - stale_milestone: a dated milestone in the notes is already past and no later line mentions it.
    - source_conflict: two sources disagree and you cannot tell which is newer.
    Every concern needs a source (pm_notes or minutes), a line_id and an exact quote.
+4. dates_from_notes: for each property in blank_date_properties, look for its date in the PM Notes. Give iso_date (YYYY-MM-DD) when the line states a precise day, otherwise fuzzy_text copied exactly from the line (for example "Q2 2027"). Cite the line_id and an exact quote. Return nothing for a property the notes do not state, and never for a property that is not in blank_date_properties.
 
 When sources disagree, prefer the newest by its timestamp (minutes.last_edited, the end of a snapshot window, the PM Notes "As of" date). Raise source_conflict only when you cannot tell which source is newer.
 For a change, source is pm_notes, minutes or snapshot; for pm_notes and minutes give the line_id and an exact quote, for snapshot leave both null.
@@ -66,12 +68,21 @@ class Concern(BaseModel):
     quote: str | None = None
 
 
+class DateFromNotes(BaseModel):
+    property: str = ""
+    iso_date: str | None = None
+    fuzzy_text: str | None = None
+    line_id: int | None = None
+    quote: str | None = None
+
+
 class Consolidation(BaseModel):
     """The reply. Kinds and sources are plain text here so one odd item cannot void the whole reply."""
 
     last_update: LastUpdate | None = None
     changes: list[Change] = []
     concerns: list[Concern] = []
+    dates_from_notes: list[DateFromNotes] = []
 
 
 @dataclass(frozen=True)
@@ -111,12 +122,22 @@ class ChangeLine:
 
 
 @dataclass(frozen=True)
+class NoteDate:
+    """A blank date property whose value the PM Notes state: a precise ``day`` or a ``fuzzy`` wording."""
+
+    property: str  # the Notion property name, e.g. "Submission Deadline"
+    day: date | None = None
+    fuzzy: str | None = None
+
+
+@dataclass(frozen=True)
 class Outcome:
     """What one project shows from the LLM. ``failed``: the call or its JSON failed, so code-only output."""
 
     last_update: date | None = None
     changes: tuple[ChangeLine, ...] = ()
     concerns: tuple[str, ...] = ()
+    dates: tuple[NoteDate, ...] = ()
     failed: bool = False
 
 
@@ -263,7 +284,33 @@ def validate(reply: Consolidation, payload: Payload, today: date) -> Outcome:
             continue
         if _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=False):
             concerns.append(squash(item.text))
-    return Outcome(_last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)))
+    return Outcome(
+        _last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)),
+        _note_dates(reply.dates_from_notes, payload),
+    )
+
+
+def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate, ...]:
+    """The dates that check out: a blank, relevant property, an exact quote, and a value the quoted line holds."""
+    blank = set(payload.data["blank_date_properties"])
+    found: dict[str, NoteDate] = {}
+    for item in items:
+        name = _PROPERTY_BY_KEY.get(item.property)
+        if name is None or item.property not in blank or name in found:
+            continue
+        line = payload.lines.get(item.line_id) if item.line_id is not None else None
+        if line is None or line.origin != "pm_notes" or not item.quote or _bare(item.quote) != _bare(line.text):
+            continue
+        if item.iso_date:
+            try:
+                day = date.fromisoformat(item.iso_date)
+            except ValueError:
+                continue
+            if _day_grounded(day, line.text, date.fromisoformat(payload.data["today"])):
+                found[name] = NoteDate(name, day=day)
+        elif item.fuzzy_text and squash(item.fuzzy_text).casefold() in squash(line.text).casefold():
+            found[name] = NoteDate(name, fuzzy=squash(item.fuzzy_text))
+    return tuple(found.values())
 
 
 def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quote: str | None, snapshot_ok: bool) -> bool:
@@ -278,6 +325,14 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     else:
         return False
     return ungrounded(text, payload.facts) is None
+
+
+def _day_grounded(day: date, line: str, today: date) -> bool:
+    """The line holds the day's month and day, any year it writes is this one, and it is within a year of today."""
+    if (day.month, day.day) not in extract_facts(line).dates:
+        return False
+    years = {int(y) for y in re.findall(r"\b(20\d\d)\b", line)}
+    return abs((day - today).days) <= 366 and (not years or day.year in years)
 
 
 def _last_update(cited: LastUpdate | None, payload: Payload, today: date) -> date | None:

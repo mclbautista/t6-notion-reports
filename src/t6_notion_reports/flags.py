@@ -43,17 +43,28 @@ class ProjectFlags:
 
 def project_flags(
     state: dict[str, object], today: date, lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS,
+    stated: dict[str, date | None] | None = None,
 ) -> ProjectFlags:
-    """Flags and date-sanity Concerns for a project's snapshot state, as of ``today`` (Manila)."""
+    """Flags and date-sanity Concerns for a project's snapshot state, as of ``today`` (Manila).
+
+    ``stated`` holds dates the PM Notes give for blank properties (property name -> day, or None for a
+    fuzzy value). A stated date is not missing; a precise one is judged like the property's own, a fuzzy
+    one never overdue. Date sanity looks at the properties only.
+    """
     status = squash(str(state.get("Status") or ""))
     dates = {name: stored_day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
+    own = dict(dates)  # the properties as stored, for the date sanity checks
+    stated = stated or {}
+    for name, day in stated.items():
+        if dates.get(name) is None:
+            dates[name] = day
     overdue: list[str] = []
     other: list[str] = []
 
     def check(name: str, *, blank: bool, late: bool) -> None:
         when = dates[name]
         if when is None:
-            if blank:
+            if blank and name not in stated:
                 other.append(f"⚠️ No {name}")
         elif late and when < today:
             days = (today - when).days
@@ -75,7 +86,7 @@ def project_flags(
             if 0 <= ahead < lead_warning_days:
                 other.append("⚠️ Playdate today: check with the client" if ahead == 0 else
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
+    return ProjectFlags(tuple(overdue + other), tuple(_sanity(own)))
 
 
 def relevant_dates(status: object) -> tuple[str, ...]:
