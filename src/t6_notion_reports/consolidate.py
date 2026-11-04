@@ -79,6 +79,7 @@ class SourceLine:
     origin: str  # pm_notes | minutes
     text: str
     header: bool = False  # an "As of" header line
+    header_date: date | None = None  # what the header says, when code can read it
 
 
 @dataclass(frozen=True)
@@ -188,9 +189,9 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
         out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": None, "text": text})
     cutoff = today - timedelta(weeks=weeks)
     for block in parsed.blocks:
-        if block.header_date and block.header_date < cutoff and not _has_future_date(block.text, today):
+        if block.header_date and block.header_date < cutoff and not _has_future_date("\n".join(block.bullets), today):
             continue
-        out.append({"line_id": build.add(SourceLine("pm_notes", block.header, header=True)),
+        out.append({"line_id": build.add(SourceLine("pm_notes", block.header, True, block.header_date)),
                     "block": block.header, "text": block.header})
         for bullet in block.bullets:
             text = f"• {bullet}"
@@ -290,7 +291,9 @@ def _last_update(cited: LastUpdate | None, payload: Payload, today: date) -> dat
         when = date.fromisoformat(cited.as_of_date)
     except ValueError:
         return None
-    return when if when <= today else None
+    if when > today or (line.header_date and line.header_date != when):
+        return None  # the LLM may fix a typo in a header, but not move a readable one
+    return when
 
 
 def _bare(text: str) -> str:

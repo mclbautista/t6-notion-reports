@@ -105,15 +105,15 @@ def check_grounding(bullets: list[str], notes: str, source: list[str], meeting: 
     return None
 
 
-def upcoming(md: tuple[int, int], meeting: date) -> bool:
-    """True when the month/day falls on or after ``meeting``, within about six months."""
+def upcoming(md: tuple[int, int], meeting: date, horizon_days: int = 183) -> bool:
+    """True when the month/day falls on or after ``meeting``, within ``horizon_days`` (about six months)."""
     for year in (meeting.year, meeting.year + 1):
         try:
             when = date(year, md[0], md[1])
         except ValueError:
             return False
         if when >= meeting:
-            return (when - meeting).days <= 183
+            return (when - meeting).days <= horizon_days
     return False
 
 

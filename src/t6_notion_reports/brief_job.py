@@ -58,6 +58,7 @@ def run_brief(
     Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
     in full and makes no call at all, so what would leave the machine can be read first.
     """
+    dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     pair = default_diff_pair(conn)
     first = False
     if pair is None:

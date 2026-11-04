@@ -126,7 +126,7 @@ def build_briefing(
     for name in fallbacks:
         tail.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
     if llm_failed:
-        tail.append(line(f"⚠️ LLM unavailable: " + ", ".join(llm_failed)))
+        tail.append(line("⚠️ LLM unavailable: " + ", ".join(llm_failed)))
     texts = _pack(head, units, tail, banner, limit)
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
     multi = len(recipients) > 1

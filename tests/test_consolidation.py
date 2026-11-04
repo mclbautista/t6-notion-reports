@@ -270,6 +270,7 @@ def test_an_invalid_or_future_last_update_falls_back_to_last_edited_time():
         lambda p: {"line_id": line_id(p, "QC on Nov 20"), "as_of_date": "2026-11-02"},  # not a header
         lambda p: {"line_id": 99, "as_of_date": "2026-11-02"},  # no such line
         lambda p: {"line_id": line_id(p, "As of Nov 2"), "as_of_date": "second of November"},  # not a date
+        lambda p: {"line_id": line_id(p, "As of Nov 2"), "as_of_date": "2026-10-01"},  # not the readable header's date
     ]
     for case in cases:
         gw, _ = run(conn_one(), Llm(reply_with(last_update=case)))
