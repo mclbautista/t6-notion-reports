@@ -14,7 +14,7 @@ _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _HEADER = re.compile(r"^\s*as\s*of\b[\s.,:;-]*(?P<rest>.*)$", re.IGNORECASE)
 _BULLET = re.compile(r"^\s*[•\-*·–]+\s*")
 _DATE = re.compile(
-    r"^(?P<month>[A-Za-z]{3,})\.?\s*(?P<day>\d{1,2})\b(?:[\s.,]*(?P<year>20\d\d)\b)?[\s.,:;-]*(?P<tail>.*)$"
+    r"^(?P<month>[A-Za-z]{3,})\.?\s*(?P<day>\d{1,2})(?:st|nd|rd|th)?\b(?:[\s.,]*(?P<year>20\d\d)\b)?[\s.,:;-]*(?P<tail>.*)$"
 )
 _ISO = re.compile(r"^(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})\b[\s.,:;-]*(?P<tail>.*)$")
 

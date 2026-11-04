@@ -148,13 +148,15 @@ def test_an_iso_date_or_a_far_date_with_its_year_written_is_accepted():
 
 
 def test_a_placeholder_is_not_a_fuzzy_date_and_the_missing_flag_stays():
-    for wording in ("Playdate TBC", "TBA", "pending client", "Playdate"):
+    for wording in ("Playdate TBC", "TBA", "pending client", "Playdate",
+                    "pending this year", "TBC next month", "no date this year", "not yet, maybe next year"):
         notes = f"As of Nov 9\n• {wording} for now, Q2 2027 maybe"
         reply = {"dates_from_notes": lambda p, w=wording, n=notes: [
             {"property": "playdate", "fuzzy_text": w, "line_id": line_id(p, "for now"), "quote": n.splitlines()[1]}]}
         text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
         assert "from PM Notes" not in text and "No Playdate" in text, wording
-    for wording in ("Q2 2027", "early 2027", "mid-December", "end of March", "H1 2027"):
+    for wording in ("Q2 2027", "early 2027", "mid-December", "end of March", "H1 2027", "summer 2027",
+                    "next month", "Q2 2027 TBC"):
         notes = f"As of Nov 9\n• Playdate {wording}"
         reply = {"dates_from_notes": lambda p, w=wording, n=notes: [
             {"property": "playdate", "fuzzy_text": w, "line_id": line_id(p, "Playdate"), "quote": n.splitlines()[1]}]}

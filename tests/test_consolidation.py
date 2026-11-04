@@ -398,6 +398,14 @@ def test_an_old_block_is_kept_for_a_far_or_iso_future_date_and_dropped_for_a_pas
         "As of Aug 3, 2024\n• Screening Dec 2, 2024": False,
         "As of Aug 3, 2024\n• Screening Dec 2": False,  # no year: read near its 2024 block
         "As of Aug 3, 2024\n• Premiere December 2024": False,
+        "As of Aug 3\n• Launch H1 2027": True,  # #62: every period the notes-date path accepts is kept
+        "As of Aug 3\n• Launch 2027 H2": True,
+        "As of Aug 3\n• Launch early 2027": True,
+        "As of Aug 3\n• Launch summer 2027": True,
+        "As of Aug 3\n• Launch end of 2027": True,
+        "As of Aug 3, 2024\n• Launch H1 2025": False,
+        "As of Aug 3, 2024\n• Launch summer 2024": False,
+        "As of Nov 1st, 2024\n• Offline locked": False,  # an ordinal header is read
     }
     for old, kept in cases.items():
         llm = Llm()
@@ -592,3 +600,18 @@ def test_an_ordinary_word_name_or_code_is_hidden_only_as_written_capitalised():
     texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
     assert texts[1].startswith("• [person 1] plans it, we will wait")
     assert "Tan" not in json.dumps(llm.payloads[0])
+
+
+def test_a_block_whose_header_has_no_date_is_kept_only_among_the_latest_blocks():
+    old = "As of sometime\n• Offline locked"
+    llm = Llm()
+    run(conn_one(old + "\n" + NOTES), llm, brief=replace(BRIEF, pm_notes_weeks=4))
+    assert "• Offline locked" in [r["text"] for r in llm.payloads[0]["pm_notes"]]  # one of the last three blocks
+    filler = "\n".join(f"As of Nov {d}\n• update {d}" for d in (2, 3, 4, 5))
+    llm = Llm()
+    run(conn_one(old + "\n" + filler), llm, brief=replace(BRIEF, pm_notes_weeks=4))
+    assert "• Offline locked" not in [r["text"] for r in llm.payloads[0]["pm_notes"]]
+    held = "As of sometime\n• Launch H1 2027\n" + filler  # a future date keeps it whatever its place
+    llm = Llm()
+    run(conn_one(held), llm, brief=replace(BRIEF, pm_notes_weeks=4))
+    assert "• Launch H1 2027" in [r["text"] for r in llm.payloads[0]["pm_notes"]]
