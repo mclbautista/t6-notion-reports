@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 from .pm_notes import Block, last_updated, parse_pm_notes
-from .snapshots import squash
+from .schedule import MANILA
+from .snapshots import LAST_EDITED, squash
+from .status_gate import gate
 
-HEALTH_ORDER = {"Critical": 0, "At Risk": 1, "On Track": 2}
+# Project Health order inside a section; a blank one sorts last.
+HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
+HEALTH_BLANK = 9
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,9 @@ class ProjectChange:
     last_updated: date | None = None
     code: str | None = None
     title: str | None = None
+    stage: str | None = None
+    group: str | None = None  # status gate: on_hold | in_progress | leads
+    edited: date | None = None  # Notion last-edited day (Manila)
 
 
 @dataclass
@@ -78,7 +85,7 @@ def diff_snapshots(
             changes = [
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
-                if f != "PM Notes" and _cmp(o.get(f)) != _cmp(n.get(f))
+                if f not in ("PM Notes", LAST_EDITED) and _cmp(o.get(f)) != _cmp(n.get(f))
             ]
             notes = _diff_notes(o.get("PM Notes"), n.get("PM Notes"), old_date, new_date)
             if changes or notes:
@@ -142,7 +149,16 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         health=state.get("Project Health") or None, notes=notes,
         last_updated=last_updated(state.get("PM Notes"), snap_date),
         code=state.get("Project Code") or None, title=state.get("Name") or None,
+        stage=squash(str(state["Stage"])) if state.get("Stage") else None,
+        group=gate(state.get("Status")), edited=_edited_day(state.get(LAST_EDITED)),
     )
+
+
+def _edited_day(value: object) -> date | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(MANILA).date()
+    except ValueError:
+        return None
 
 
 def unchanged_project(page_id: str, names: dict[str, str], state: dict[str, object], snap_date: date) -> ProjectChange:
@@ -155,7 +171,15 @@ def sort_projects(items: list[ProjectChange]) -> list[ProjectChange]:
 
 
 def _sort_key(ch: ProjectChange):
-    return (HEALTH_ORDER.get(ch.health or "", 3), ch.name.lower(), ch.page_id)
+    return (health_rank(ch.health), ch.name.lower(), ch.page_id)
+
+
+def health_rank(health: str | None) -> int:
+    """CRITICAL, AT RISK, ON TRACK, INCOMING, then any other value, then blank."""
+    key = squash(health or "").casefold()
+    if not key:
+        return HEALTH_BLANK
+    return HEALTH_ORDER.get(key, HEALTH_BLANK - 1)
 
 
 def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChange | None:

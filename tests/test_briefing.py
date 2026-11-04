@@ -25,7 +25,7 @@ def person(cid):
 
 
 def rec(page_id, code, coordinators=("c-pio",), **fields):
-    base = {"Name": f"Show {code}", "Project Code": code, "Stage": "Offline", "Status": "In-Progress",
+    base = {"Name": f"Show {code}", "Project Code": code, "Stage": "Offline", "Status": "🚨 In-Progress",
             "Project Health": "On Track", "PM Notes": "", "T6 Post Coordinator": [person(c) for c in coordinators]}
     base.update(fields)
     return ProjectRecord(page_id, base)
@@ -58,7 +58,7 @@ AFTER = [
     rec("p1", "PAS", ("c-pio",), Stage="Online", **{"Project Health": "Critical"},
         **{"PM Notes": "As of Nov 12,\n  • Delay in <Mixing> & QC"}),
     rec("p2", "RIA", ("c-ana",)),
-    rec("p3", "DW", ("c-angel",), Status="Standby"),
+    rec("p3", "DW", ("c-angel",), Status="🏋️ Standby"),
     rec("p4", "ORF", (), Stage="Online"),
 ]
 
@@ -68,8 +68,8 @@ def test_each_coordinator_gets_one_dm_with_only_their_changed_projects():
     [pio] = msgs["Pio"]
     assert (pio.to, pio.topic, pio.key) == (111, None, "notion-reports-2026-11-15-c-pio")
     assert "PAS · Show PAS" in pio.text and "RIA" not in pio.text and "DW" not in pio.text
-    assert "Stage: Offline → Online" in pio.text and "🔴 Critical" in pio.text
-    assert "https://www.notion.so/p1" in pio.text
+    assert "Stage: Offline → Online" in pio.text and "Project Health: On Track → Critical" in pio.text
+    assert "href" not in pio.text and "notion.so" not in pio.text
     assert_valid_html(pio.text)
 
 
@@ -92,8 +92,8 @@ def test_quiet_coordinator_without_telegram_id_triggers_no_group_fallback():
 
 
 def test_digest_no_changes_line_lists_only_active_coordinators():
-    before = BEFORE + [rec("p5", "SBY", ("c-angel",), Status="Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
-    after = AFTER + [rec("p5", "SBY", ("c-angel",), Status="Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
+    before = BEFORE + [rec("p5", "SBY", ("c-angel",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
+    after = AFTER + [rec("p5", "SBY", ("c-angel",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
     msgs = run(before, after, filter_active=True)
     [digest] = by_recipient(msgs)["Cyril"]
     quiet_line = next(l for l in digest.text.splitlines() if l.startswith("No changes:"))
@@ -167,7 +167,7 @@ def test_active_coordinators_are_those_with_in_progress_or_archiving_projects():
     state = {
         "a": {"Status": "🚨  In-Progress ", "T6 Post Coordinator": [person(PIO)]},
         "b": {"Status": "📦 Archiving", "T6 Post Coordinator": [person(ANA)]},
-        "c": {"Status": "⏸ Standby", "T6 Post Coordinator": [person(ANGEL)]},
+        "c": {"Status": "🏋️ Standby", "T6 Post Coordinator": [person(ANGEL)]},
         "d": {"Status": None, "T6 Post Coordinator": []},
     }
     assert active_coordinators_in(state) == {PIO, ANA}

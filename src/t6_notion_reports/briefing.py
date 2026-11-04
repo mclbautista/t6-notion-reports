@@ -9,14 +9,19 @@ from dataclasses import dataclass
 from datetime import date
 
 from .contacts import Contact
-from .diff import ProjectChange, group_by_coordinator, last_updated_text
+from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
 from .owed import OwedOutcome
+from .snapshots import squash
 from .telegram_html import (
-    Block, Line, Span, bold, line, mention_handle, quote, render_messages,
+    LIMIT, Block, Line, Span, bold, line, mention_handle, quote, render_messages,
 )
 
 BANNER = "🧪 TEST"
-HEALTH_MARK = {"Critical": "🔴", "At Risk": "🟠", "On Track": "🟡"}
+FIRST_BRIEF = "First brief: no comparison yet"
+MISSING_HEALTH = "⚠️ missing health update"
+SECTION_TITLES = {"on_hold": "On-Hold", "in_progress": "In-Progress", "leads": "Leads"}
+DM_SECTIONS = ("on_hold", "in_progress")
+DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 OWED_UNAVAILABLE = "Owed items unavailable this week"
 KIND_LABEL = {
@@ -57,60 +62,147 @@ def build_briefing(
     owed: dict[str, OwedOutcome] | None = None,
     owed_failed: list[str] | None = None,
     active: set[str] | None = None,
+    first: bool = False,
+    limit: int = LIMIT,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
-    ``changes`` holds the changed projects plus any unchanged project that has owed items. ``owed`` maps
-    page id → its owed items (``None``: no LLM, so no owed section); ``owed_failed`` names the projects
-    whose owed-items call failed, for Cyril's digest.
+    ``changes`` holds the changed projects plus any unchanged project that has owed items. A project
+    outside the status gate (``group`` is None) is left out. ``owed`` maps page id → its owed items
+    (``None``: no LLM, so no owed section); ``owed_failed`` names the projects whose owed-items call
+    failed, for Cyril's digest.
 
-    A coordinator with nothing changed and nothing owed gets no message at all (no DM, no group fallback).
-    Their name goes on the digest's "No changes" line only if their id is in ``active`` (those with an
-    In-Progress or Archiving project); ``None`` means no filtering.
+    The DM has On-Hold then In-Progress sections. The digest groups by coordinator, alphabetically,
+    each with On-Hold, In-Progress, then Leads. Empty sections are left out, and a section is sorted by
+    Project Health, then name.
+
+    A coordinator with nothing to show in the DM gets no message at all (no DM, no group fallback).
+    Their name goes on the digest's "No changes" line only if their id is in ``active``; ``None``
+    means no filtering. ``first`` marks the first brief, which has no earlier snapshot to compare with.
 
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
+    changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
     stamp = f"{today:%a %b} {today.day}"
+    notice = [line(FIRST_BRIEF)] if first else []
     messages: list[OutboundMessage] = []
     fallbacks: list[str] = []
     quiet: list[str] = []
 
     for contact_id, name in sorted(coordinators.items(), key=lambda kv: (kv[1].lower(), kv[0])):
-        projects = groups.by_coordinator.get(contact_id, (name, []))[1]
+        projects = [
+            ch for ch in groups.by_coordinator.get(contact_id, (name, []))[1] if ch.group in DM_SECTIONS
+        ]
         contact = contacts.get(contact_id)
         chat = contact.telegram_id if contact else None
         if not projects:
             if active is None or contact_id in active:
                 quiet.append(name)
             continue
-        blocks: list[Block] = _dm_blocks(projects, stamp, owed)
+        head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
+        units = _units([(None, projects)], DM_SECTIONS, owed, today)
         if chat is not None:
-            messages += _parts(chat, None, blocks, banner, key, name)
+            messages += _send(chat, None, _pack(head, units, [], banner, limit), key, name)
         else:
             fallbacks.append(name)
             who = Span(name)
             if contact and contact.handle:
                 who = mention_handle(contact.handle)
-            blocks = [line(who, ":"), *blocks]
-            messages += _parts(settings.group_chat_id, settings.group_topic_id, blocks, banner, key, name)
+            head = [line(who, ":"), *head]
+            messages += _send(
+                settings.group_chat_id, settings.group_topic_id, _pack(head, units, [], banner, limit), key, name,
+            )
 
     if digest_missing(settings):
         return messages
-    digest = _digest_blocks(groups, stamp, quiet, fallbacks, bool(changes), owed, owed_failed or [])
+    head = [line(bold(f"PSR digest · {stamp}")), *notice, line()]
+    if not changes and not first:
+        head.append(line("No changes on any project this week"))
+    people = sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower())
+    if groups.no_coordinator:
+        people.append(("No coordinator", groups.no_coordinator))
+    units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, owed, today)
+    tail: list[Block] = []
+    if quiet:
+        tail.append(line("No changes: " + ", ".join(quiet)))
+    for name in fallbacks:
+        tail.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
+    if owed_failed:
+        tail.append(line(f"⚠️ {OWED_UNAVAILABLE}: " + ", ".join(owed_failed)))
+    texts = _pack(head, units, tail, banner, limit)
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
     multi = len(recipients) > 1
     for contact in recipients:
         if contact.telegram_id is not None:
             key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
-            messages += _parts(contact.telegram_id, None, digest, banner, key, contact.name)
+            messages += _send(contact.telegram_id, None, texts, key, contact.name)
     return messages
 
 
-def _parts(to, topic, blocks, banner, key, recipient) -> list[OutboundMessage]:
-    texts = render_messages(blocks, prefix=banner)
+@dataclass(frozen=True)
+class _Unit:
+    """One project with the headings that introduce it, so a message can split between projects."""
+
+    coord: Line | None  # the coordinator's name line (digest only)
+    section: str
+    first_in_coord: bool
+    first_in_section: bool
+    blocks: list[Block]
+
+    def lead(self) -> list[Block]:
+        out: list[Block] = []
+        if self.coord and self.first_in_coord:
+            out.append(self.coord)
+        if self.first_in_section:
+            out.append(line(bold(self.section)))
+        return out
+
+    def restart(self) -> list[Block]:
+        """What a new part starts with: the coordinator and the section heading, "(cont.)" if repeated."""
+        heading = self.section if self.first_in_section else f"{self.section} (cont.)"
+        return [*([self.coord] if self.coord else []), line(bold(heading))]
+
+
+def _units(people, sections: tuple[str, ...], owed, today: date) -> list[_Unit]:
+    units: list[_Unit] = []
+    for coord, projects in people:
+        first_in_coord = True
+        for group in sections:
+            members = sorted(
+                (ch for ch in projects if ch.group == group), key=lambda ch: (health_rank(ch.health), ch.name.lower(), ch.page_id),
+            )
+            for n, ch in enumerate(members):
+                units.append(_Unit(
+                    coord, SECTION_TITLES[group], first_in_coord, n == 0,
+                    project_blocks(ch, (owed or {}).get(ch.page_id), today),
+                ))
+                first_in_coord = False
+    return units
+
+
+def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[str]:
+    """Render the head, the projects and the tail into messages, splitting only between projects."""
+    def fits(blocks: list[Block]) -> bool:
+        return len(render_messages(blocks, prefix=banner, limit=limit)) <= 1
+
+    parts: list[list[Block]] = []
+    current: list[Block] = list(head)
+    placed = False
+    for unit in units:
+        if placed and not fits(current + unit.lead() + unit.blocks):
+            parts.append(current)
+            current = unit.restart() + unit.blocks
+        else:
+            current = current + unit.lead() + unit.blocks
+        placed = True
+    parts.append(current + tail)
+    return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
+
+
+def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[OutboundMessage]:
     # The first part keeps the spec's key, so a rerun is deduplicated by the gateway.
     return [
         OutboundMessage(to, topic, text, key if n == 1 else f"{key}-{n}", recipient)
@@ -118,38 +210,18 @@ def _parts(to, topic, blocks, banner, key, recipient) -> list[OutboundMessage]:
     ]
 
 
-def _dm_blocks(projects: list[ProjectChange], stamp: str, owed) -> list[Block]:
-    blocks: list[Block] = [line(bold(f"PSR briefing · {stamp}")), line()]
-    for ch in projects:
-        blocks += project_blocks(ch, (owed or {}).get(ch.page_id))
-    return blocks
+def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: date | None = None) -> list[Block]:
+    """Heading, field changes, raw new PM Notes and owed items for one project, then a blank line.
 
-
-def _digest_blocks(groups, stamp: str, quiet: list[str], fallbacks: list[str], any_changes: bool, owed, owed_failed: list[str]) -> list[Block]:
-    blocks: list[Block] = [line(bold(f"PSR digest · {stamp}")), line()]
-    if not any_changes:
-        blocks.append(line("No changes on any project this week"))
-    for name, projects in sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower()):
-        blocks += [line(bold(name)), *[b for ch in projects for b in project_blocks(ch, (owed or {}).get(ch.page_id))]]
-    if groups.no_coordinator:
-        blocks += [line(bold("No coordinator")), *[b for ch in groups.no_coordinator for b in project_blocks(ch, (owed or {}).get(ch.page_id))]]
-    if quiet:
-        blocks.append(line("No changes: " + ", ".join(quiet)))
-    for name in fallbacks:
-        blocks.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
-    if owed_failed:
-        blocks.append(line(f"⚠️ {OWED_UNAVAILABLE}: " + ", ".join(owed_failed)))
-    return blocks
-
-
-def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None) -> list[Block]:
-    """Heading, field changes, raw new PM Notes and owed items for one project, then a blank line."""
+    The heading has the name and Stage and the weeks since the Notion page was last edited. It shows
+    neither Status (the section says it) nor Project Health (the sort order says it), and has no link.
+    """
     title = f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
-    health = f"{HEALTH_MARK[ch.health]} {ch.health}" if ch.health in HEALTH_MARK else "Health not set"
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
-    blocks: list[Block] = [
-        line(bold(title, href=NOTION_PAGE + ch.page_id.replace("-", "")), f"{tag} · {health}"),
-    ]
+    extras = [x for x in (ch.stage, updated_text(ch.edited, today)) if x]
+    blocks: list[Block] = [line(bold(title), "".join([tag, *(f" · {x}" for x in extras)]))]
+    if not squash(ch.health or ""):
+        blocks.append(line(MISSING_HEALTH))
     for fc in ch.changes:
         blocks.append(line(f"• {fc.field}: {format_value(fc.old)} → {format_value(fc.new)}"))
     if ch.notes and (ch.notes.blocks or ch.notes.text_diff):
@@ -165,6 +237,16 @@ def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None) -> list[B
         blocks += owed_blocks(owed)
     blocks.append(line())
     return blocks
+
+
+def updated_text(edited: date | None, today: date | None) -> str:
+    """"updated this week" under 7 days, else "updated 3 wks ago"; nothing when unknown."""
+    if edited is None or today is None:
+        return ""
+    weeks = max(0, (today - edited).days) // 7
+    if weeks == 0:
+        return "updated this week"
+    return f"updated {weeks} wk{'s' if weeks > 1 else ''} ago"
 
 
 def owed_blocks(owed: OwedOutcome) -> list[Block]:
