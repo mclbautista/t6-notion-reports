@@ -6,13 +6,18 @@ replaced by a numbered placeholder ("[person 1]", "[project 1]", "[id 1]"). The 
 the reply is validated against the redacted lines the LLM saw, and the placeholders are put back
 afterwards so the brief reads normally.
 
-What counts as a person: every Contacts name, its first name (three letters or more, and not a month
-name; matched only when capitalised, since "Will" or "Joy" are words too), each alias, and each
-Telegram handle. What counts as a project, other than the one the payload
+What counts as a person: every Contacts name, each word of it (three letters or more, and not a month
+name), each alias, and each Telegram handle. What counts as a project, other than the one the payload
 is about: the name of any project in the snapshots (four letters or more, ignoring case), and the code
-of a project that passed the status gate (three characters or more, matching case, since codes such
-as "T6" or "IF" are ordinary words too). Ids: Notion links and page ids, Telegram links, any @handle,
-and runs of seven or more digits (Telegram ids, phone numbers). Matching is by whole word, longest first.
+of any project in them (two characters or more). Ids: Notion links and page ids, Telegram links
+(t.me and tg://), any @handle, runs of seven or more digits (Telegram ids, phone numbers) even when a
+full stop or comma follows, and every known TelegramUserID wherever it stands as a number.
+Matching is by whole word, longest first.
+
+Exposure boundary (#62): a name word or a project code that is not an ordinary word is hidden in any
+case ("marco", "MARCO", "ab"). One that is an ordinary word ("Will", "Joy", a code such as "TWO") is hidden
+only as written capitalised or in capitals, since hiding "will" or "two" everywhere would blank the notes.
+The ordinary words are the lists in ``condense`` plus ``EXTRA_ORDINARY``.
 """
 from __future__ import annotations
 
@@ -20,8 +25,20 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from .condense import COMMON_WORDS, PLAIN_WORDS
 from .contacts import Contact
 from .snapshots import squash
+
+# Ordinary words that are also given names or codes, beyond the grammar and status lists in condense.
+EXTRA_ORDINARY = frozenset("""
+one two three four five six seven eight nine ten zero joy grace hope faith mark rose art bill dawn june
+april may will wade dean earl frank grant hunter lane max miles pat peace rich sky summer victor
+""".split())
+
+
+def ordinary(word: str) -> bool:
+    low = word.casefold()
+    return low in PLAIN_WORDS or low in COMMON_WORDS or low in EXTRA_ORDINARY or low in _MONTH_WORDS
 
 _MONTH_WORDS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
                 "january", "february", "march", "april", "june", "july", "august", "september",
@@ -29,9 +46,10 @@ _MONTH_WORDS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 _IDS = re.compile(
     r"https?://\S*(?:notion\.(?:so|site|com)|t\.me)\S*"
     r"|\b(?:notion\.(?:so|site|com)|t\.me)/\S*"
+    r"|\btg://\S*"
     r"|\b[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\b"
     r"|(?<![\w@])@[A-Za-z0-9_]{3,}"
-    r"|(?<![\d.,])\d{7,}(?![\d.,])",
+    r"|(?<!\d)(?<!\d[.,])\d{7,}(?!\d)(?![.,]\d)",
     re.I,
 )
 _PLACEHOLDER = re.compile(r"\[(?:person|project|id) \d+\]")
@@ -65,66 +83,84 @@ class Mapping:
 class Redactor:
     """The people and project names to hide from free text, built once per brief run."""
 
-    people: tuple[str, ...] = ()  # full names, aliases, handles: matched ignoring case
+    people: tuple[tuple[str, bool], ...] = ()  # (name, loose): loose matches in any case, else as written capitalised
     projects: tuple[tuple[str, str], ...] = ()  # (project page id, a name of it), matched ignoring case
-    codes: tuple[tuple[str, str], ...] = ()  # (project page id, its code), matched case-sensitively
-    first_names: tuple[str, ...] = ()  # matched only as written ("Will", not "will"): they are often words too
+    codes: tuple[tuple[str, str, bool], ...] = ()  # (project page id, its code, loose)
+    known_ids: tuple[str, ...] = ()  # every known TelegramUserID, hidden wherever it stands as a number
 
     @classmethod
     def build(
-        cls, contacts: Iterable[Contact], states: Iterable[dict[str, dict[str, object]]], gated: Iterable[str] = (),
+        cls, contacts: Iterable[Contact], states: Iterable[dict[str, dict[str, object]]],
     ) -> Redactor:
-        """``states``: the snapshots, so an old name of a project is caught too; ``gated``: the page ids
-        whose codes are redacted as well."""
-        people: set[str] = set()
-        firsts: set[str] = set()
+        """``states``: the snapshots, so an old name of a project is caught too."""
+        people: dict[str, bool] = {}
+        ids: set[str] = set()
         for c in contacts:
             name = squash(c.name or "")
             if name and name != c.page_id:
-                people.add(name)
-                first = name.split()[0]
-                if len(first) >= 3 and first.casefold() not in _MONTH_WORDS and first != name:
-                    firsts.add(first)
-            people.update(a for a in (squash(x) for x in (c.aliases or "").split(",")) if len(a) >= 2)
+                people[name] = True
+                for word in name.split():
+                    if len(word) >= 3 and word.casefold() not in _MONTH_WORDS and word != name:
+                        people[word] = people.get(word, True) and not ordinary(word)
+            for alias in (squash(x) for x in (c.aliases or "").split(",")):
+                if len(alias) >= 2:
+                    people[alias] = True
             if c.handle:
-                people.add(c.handle.lstrip("@"))
+                people[c.handle.lstrip("@")] = True
+            if c.telegram_id is not None:
+                ids.add(str(c.telegram_id))
+        states = list(states)
         names = {(p, v) for state in states for p, s in state.items() if len(v := squash(str(s.get("Name") or ""))) >= 4}
-        gated = set(gated)
         codes = {(p, v) for state in states for p, s in state.items()
-                 if p in gated and len(v := squash(str(s.get("Project Code") or ""))) >= 3}
-        def longest_first(pairs: set[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
-            return tuple(sorted(pairs, key=lambda pair: len(pair[1]), reverse=True))
-        return cls(tuple(sorted(people, key=len, reverse=True)), longest_first(names), longest_first(codes),
-                   tuple(sorted(firsts - people, key=len, reverse=True)))
+                 if len(v := squash(str(s.get("Project Code") or ""))) >= 2}
+        return cls(
+            tuple(sorted(people.items(), key=lambda kv: len(kv[0]), reverse=True)),
+            tuple(sorted(names, key=lambda pair: len(pair[1]), reverse=True)),
+            tuple((p, v, not ordinary(v)) for p, v in sorted(codes, key=lambda pair: len(pair[1]), reverse=True)),
+            tuple(sorted(ids, key=len, reverse=True)),
+        )
 
     def _own(self, own_page_id: str) -> set[str]:
-        return {v.casefold() for p, v in (*self.projects, *self.codes) if p == own_page_id}
+        return {v.casefold() for p, v in self.projects if p == own_page_id} | {
+            v.casefold() for p, v, _ in self.codes if p == own_page_id}
+
+    def _id_pattern(self) -> re.Pattern | None:
+        if not self.known_ids:
+            return None
+        return re.compile(r"(?<![\w\[.,])(?:" + "|".join(map(re.escape, self.known_ids)) + r")(?![\w\]]|[.,]\d)")
 
     def redact(self, text: str, own_page_id: str, mapping: Mapping) -> str:
         """``text`` with every identity outside the project ``own_page_id`` replaced by a placeholder."""
         own = self._own(own_page_id)
         text = _IDS.sub(lambda m: mapping.placeholder("id", m.group(0)), text)
-        for values, flags in ((self.projects, re.I), (self.codes, 0)):
-            for page_id, value in values:
-                if page_id != own_page_id and value.casefold() not in own:
-                    text = _word(value, flags).sub(lambda m: mapping.placeholder("project", m.group(0)), text)
-        for values, flags in ((self.people, re.I), (self.first_names, 0)):
-            for person in values:
-                if person.casefold() not in own:
-                    text = _word(person, flags).sub(lambda m: mapping.placeholder("person", m.group(0)), text)
+        if (known := self._id_pattern()) is not None:
+            text = known.sub(lambda m: mapping.placeholder("id", m.group(0)), text)
+        for page_id, value in self.projects:
+            if page_id != own_page_id and value.casefold() not in own:
+                text = _word(value).sub(lambda m: mapping.placeholder("project", m.group(0)), text)
+        for page_id, value, loose in self.codes:
+            if page_id != own_page_id and value.casefold() not in own:
+                text = _word(value, loose).sub(lambda m: mapping.placeholder("project", m.group(0)), text)
+        for person, loose in self.people:
+            if person.casefold() not in own:
+                text = _word(person, loose).sub(lambda m: mapping.placeholder("person", m.group(0)), text)
         return text
 
     def names_in(self, text: str, own_page_id: str) -> str | None:
-        """The first person or other-project name ``text`` holds, in any case: never in a redacted payload."""
+        """The first person or other-project name ``text`` holds, as ``redact`` would find it, or an id."""
         own = self._own(own_page_id)
-        candidates = [(v, re.I) for v in self.people] + [(v, 0) for v in self.first_names]
-        candidates += [(v, re.I) for p, v in self.projects if p != own_page_id]
-        candidates += [(v, 0) for p, v in self.codes if p != own_page_id]
-        for value, flags in candidates:
-            if value.casefold() not in own and _word(value, flags).search(text):
+        candidates = [(v, loose) for v, loose in self.people]
+        candidates += [(v, True) for p, v in self.projects if p != own_page_id]
+        candidates += [(v, loose) for p, v, loose in self.codes if p != own_page_id]
+        for value, loose in candidates:
+            if value.casefold() not in own and _word(value, loose).search(text):
                 return value
         return None
 
 
-def _word(value: str, flags: int = re.I) -> re.Pattern:
-    return re.compile(rf"(?<![\w\[]){re.escape(value)}(?![\w\]])", flags)
+def _word(value: str, loose: bool = True) -> re.Pattern:
+    """Whole-word pattern: any case when ``loose``, else only as written, capitalised or in capitals."""
+    if loose:
+        return re.compile(rf"(?<![\w\[]){re.escape(value)}(?![\w\]])", re.I)
+    forms = "|".join(dict.fromkeys(re.escape(f) for f in (value, value.capitalize(), value.upper())))
+    return re.compile(rf"(?<![\w\[])(?:{forms})(?![\w\]])")

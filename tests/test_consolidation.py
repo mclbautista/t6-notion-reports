@@ -541,3 +541,54 @@ def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
     concerns = lambda p: [_concern("QC waiting for marco", p), _concern("QC waiting for janice", p)]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
     assert "marco" not in dm(gw) and "janice" not in dm(gw)
+
+
+# ---- redaction contract: identity and id variants (#62 item 4) --------------------------------
+# Exposure boundary (recommended, pending Cyril's approval): a name or project code that is not an
+# ordinary word is hidden in any case; one that is an ordinary word (will, two) only as written
+# capitalised or in capitals. Every known TelegramUserID is hidden wherever it stands as a number.
+
+def variants_db(notes, extra_people=()):
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-marco", "Marco Reyes"), *extra_people]
+    done = proj("p3", "AB", "✅ Done", coordinator="c-ana")
+    one = page(notes=notes)
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
+        run_snapshot(conn, FakeNotion([one, done], people), PROJECTS, CONTACTS, kind, at)
+    return conn, people
+
+
+def outbound(notes, **kw):
+    conn, people = variants_db(notes)
+    llm = Llm()
+    run(conn, llm, notion=FakeNotion([], people), **kw)
+    return json.dumps(llm.payloads[0], ensure_ascii=False)
+
+
+def test_name_and_code_variants_never_reach_the_llm():
+    blob = outbound("As of Nov 9\n• marco will ask Reyes, and MARCO again\n• AB is wrapped, ab too")
+    for private in ("marco", "Marco", "MARCO", "Reyes", "reyes", "AB", "ab too"):
+        assert private not in blob, private
+    assert "will ask" in blob  # ordinary words stay
+
+
+def test_punctuated_ids_telegram_links_and_known_telegram_ids_never_reach_the_llm():
+    notes = ("As of Nov 9\n• Telegram 123456789.\n• Link tg://user?id=123456789.\n"
+             "• Pio is user 111 and Ana is 222, call 1234567.89 later")
+    blob = outbound(notes)
+    for private in ("123456789", "tg://", "111", "222"):
+        assert private not in blob, private
+    assert "1234567.89" in blob  # a decimal is not an id
+    assert "Telegram [id" in blob
+
+
+def test_an_ordinary_word_name_or_code_is_hidden_only_as_written_capitalised():
+    from fake_notion import contact as page_of
+    conn, people = variants_db("As of Nov 9\n• Will plans it, we will wait, Sunday two, then TWO", [page_of("c-will", "Will Tan")])
+    llm = Llm()
+    run(conn, llm, notion=FakeNotion([], people))
+    texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
+    assert texts[1].startswith("• [person 1] plans it, we will wait")
+    assert "Tan" not in json.dumps(llm.payloads[0])

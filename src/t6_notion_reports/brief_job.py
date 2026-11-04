@@ -107,7 +107,7 @@ def run_brief(
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
         # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(contacts.values(), (raw_old, raw_new), new_state)
+        redactor = Redactor.build(contacts.values(), (raw_old, raw_new))
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
