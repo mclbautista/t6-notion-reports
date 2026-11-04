@@ -12,7 +12,7 @@ from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
 from .telegram_html import (
-    LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_messages,
+    LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_line, render_messages, split_line,
 )
 
 BANNER = "🧪 TEST"
@@ -23,6 +23,7 @@ DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 LLM_UNAVAILABLE = "(LLM unavailable)"
 AFTER_PSR = "after PSR"
+NO_CYRIL_NOTE = "⚠️ Some warnings are withheld: set cyril_contact_id so private notes reach the right person"
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,7 @@ class OutboundMessage:
 
 @dataclass(frozen=True)
 class Settings:
-    cyril: Contact
+    cyril: Contact | None  # None: no explicit identity, so nothing private is sent to anyone
     group_chat_id: int
     group_topic_id: int | None
     test_banner: bool = False
@@ -133,11 +134,13 @@ def build_briefing(
     tail += [line(note) for note in notes or ()]
     private = [line(note) for note in cyril_notes or ()]
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
+    if private and not any(settings.cyril and c.page_id == settings.cyril.page_id for c in recipients):
+        tail.append(line(NO_CYRIL_NOTE))  # fail closed: the names are sent to nobody, and the digest says why
     multi = len(recipients) > 1
     for contact in recipients:
         if contact.telegram_id is not None:
             key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
-            is_cyril = bool(settings.cyril) and contact.page_id == settings.cyril.page_id
+            is_cyril = settings.cyril is not None and contact.page_id == settings.cyril.page_id
             digest_tail = tail + private if is_cyril else tail
             messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages
@@ -201,6 +204,16 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
     def fits(blocks: list[Block]) -> bool:
         return len(render_messages(blocks, prefix=banner, limit=limit)) <= 1
 
+    def fragments(atom: Block, context: list[Block]) -> list[Block]:
+        """``atom`` itself, or pieces that each fit a message under ``context``, so none loses its heading."""
+        if fits(context + [atom]):
+            return [atom]
+        used = len(banner) + 1 + sum(len(render_line(b)) + 1 for b in context if isinstance(b, Line))
+        quoted = isinstance(atom, Quote)
+        item = atom.lines[0] if isinstance(atom, Quote) else atom
+        pieces = split_line(item, quoted, limit - used)
+        return [quote(p) if quoted else p for p in pieces]
+
     parts: list[list[Block]] = []
     current: list[Block] = list(head)
     placed = False
@@ -214,18 +227,20 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
         if fits(current + unit.blocks):
             current = current + unit.blocks
             continue
-        for atom in _split_points(unit.blocks):  # oversized: fill this part, then resume the project
-            if not fits(current + [atom]) and len(current) > len(unit.resume()):
-                parts.append(current)
-                current = unit.resume()
-            current = _join(current, atom)
+        for whole in _split_points(unit.blocks):  # oversized: fill this part, then resume the project
+            for atom in fragments(whole, unit.resume()):
+                if not fits(current + [atom]):
+                    parts.append(current)
+                    current = unit.resume()
+                current = _join(current, atom)
     title = head[0] if head and isinstance(head[0], Line) else line()
     restart = [Line(title.spans + (Span(" (cont.)"),))] if title.spans else []
-    for atom in tail:  # line by line, so even a tail longer than a message keeps its title
-        if not fits(current + [atom]) and len(current) > len(restart):
-            parts.append(current)
-            current = list(restart)
-        current = current + [atom]
+    for whole in tail:  # line by line, so even a tail longer than a message keeps its title
+        for atom in fragments(whole, restart):
+            if not fits(current + [atom]):
+                parts.append(current)
+                current = list(restart)
+            current = current + [atom]
     parts.append(current)
     return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
 

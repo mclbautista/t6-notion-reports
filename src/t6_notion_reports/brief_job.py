@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import FLAGS, LEAVE, LLM, AgedConcerns, update_concerns
+from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
@@ -107,7 +107,7 @@ def run_brief(
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
         # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(contacts.values(), (raw_old, raw_new), new_state)
+        redactor = Redactor.build(contacts.values(), (raw_old, raw_new))
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
@@ -142,10 +142,11 @@ def run_brief(
         # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
         if o is None or o.failed:
             unavailable.add((p, LLM))
+            unavailable.add((p, FLAGS_NOTES))  # the dates from the notes are unknown, not gone
         if not leaves.available:
             unavailable.add((p, LEAVE))
         current[p] = (
-            *((t, FLAGS) for t in f.concerns),
+            *((t, FLAGS_NOTES if t in f.from_notes else FLAGS) for t in f.concerns),
             *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
@@ -157,12 +158,13 @@ def run_brief(
         conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
-    cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
-    cyril = contacts.get(cyril_id) or Contact(cyril_id, "Cyril")
+    # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
+    cyril_id = brief.cyril_contact_id
+    cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
     digest_contacts = tuple(
         contacts.get(cid) or Contact(cid, cid)
         for cid in brief.digest_recipients
-    ) or (cyril,)
+    ) or ((cyril,) if cyril else ())
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),

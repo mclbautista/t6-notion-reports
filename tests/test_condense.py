@@ -85,6 +85,13 @@ def test_check_grounding_reports_reason():
     assert "Marco" in check_grounding(["Marco is here"], NOTES, SOURCE, MEET)
 
 
+def test_check_grounding_rejects_an_invented_lowercase_name_and_a_recombined_year():
+    assert "zyxmarco" in check_grounding(["Ep 3 locked, ask zyxmarco"], NOTES, SOURCE, MEET)
+    notes = "QC on 2026-12-01, festival in Q2 2027"
+    assert check_grounding(["QC on 2026-12-01"], notes, ["QC on 2026-12-01"], MEET) is None
+    assert "2027-12-01" in check_grounding(["QC on 2027-12-01"], notes, ["QC on 2026-12-01"], MEET)
+
+
 # ---- in the minutes draft: Oct 26 fixtures (synthetic, shaped like the real PAS, LSB and Wedding notes) ----
 import sqlite3
 from datetime import datetime, timezone

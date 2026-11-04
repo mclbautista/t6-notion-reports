@@ -206,3 +206,56 @@ def test_a_digest_tail_that_does_not_fit_starts_a_part_with_the_digest_title():
     assert len(digest) > 1
     for m in digest[1:]:
         assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
+
+
+# ---- a single oversized line keeps its context on every part (#62 item 1) -------------------
+
+def _words(n, prefix="w"):
+    return " ".join(f"{prefix}{i}" for i in range(n))
+
+
+def _all_words(texts, prefix):
+    return {w for t in texts for w in _plain(t).split() if w.startswith(prefix)}
+
+
+def test_a_single_oversized_pm_notes_line_repeats_section_and_project_on_every_part():
+    notes = "As of Nov 12,\n  • " + _words(2500)
+    after = [rec("p1", "BIG", **{"PM Notes": notes}), rec("p2", "SMALL", Stage="Online")]
+    msgs = [m for m in run([rec("p1", "BIG"), rec("p2", "SMALL")], after) if m.recipient == "Pio"]
+    carrying = [m for m in msgs if any(w.startswith("w") and w[1:].isdigit() for w in _plain(m.text).split())]
+    assert len(carrying) >= 3
+    for m in msgs:
+        assert_valid_html(m.text)
+        assert len(m.text) <= 4096
+    for m in carrying[1:]:
+        assert _plain(m.text).splitlines()[:2] == ["In-Progress (cont.)", "BIG · Show BIG (cont.)"]
+    assert _all_words(msgs and [m.text for m in msgs], "w") >= {f"w{i}" for i in range(2500)}
+
+
+def test_a_single_oversized_summary_line_keeps_project_context():
+    from dataclasses import replace
+    conn = connect()
+    a = take_snapshot(conn, [rec("p1", "BIG")], datetime(2026, 11, 9, 3, tzinfo=timezone.utc), "monday").snapshot_id
+    b = take_snapshot(conn, [rec("p1", "BIG", Stage="Online")], datetime(2026, 11, 13, 10, tzinfo=timezone.utc), "friday").snapshot_id
+    changes = diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13))
+    changes = [replace(ch, summary=[_words(2500, "s")], consolidated=True) for ch in changes]
+    msgs = [m for m in build_briefing(changes, {"c-pio": "Pio"}, CONTACTS, SETTINGS, TODAY) if m.recipient == "Pio"]
+    assert len(msgs) >= 3
+    for m in msgs:
+        assert_valid_html(m.text)
+        assert len(m.text) <= 4096
+    for m in msgs[1:]:
+        assert _plain(m.text).splitlines()[:2] == ["In-Progress (cont.)", "BIG · Show BIG (cont.)"]
+    assert _all_words([m.text for m in msgs], "s") >= {f"s{i}" for i in range(2500)}
+
+
+def test_a_single_oversized_digest_warning_keeps_the_digest_title():
+    msgs = build_briefing([], {}, CONTACTS, SETTINGS, TODAY, notes=["⚠️ " + _words(2500, "z")])
+    digest = [m for m in msgs if m.recipient == "Cyril"]
+    assert len(digest) >= 3
+    for m in digest:
+        assert_valid_html(m.text)
+        assert len(m.text) <= 4096
+    for m in digest[1:]:
+        assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
+    assert _all_words([m.text for m in digest], "z") >= {f"z{i}" for i in range(2500)}

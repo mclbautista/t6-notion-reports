@@ -252,6 +252,9 @@ def build_payload(
     return Payload(data, build.lines, _facts(data), mapping, redactor, page_id)
 
 
+UNDATED_BLOCKS_KEPT = 3  # PM Notes blocks whose header has no readable date count as old past the last three
+
+
 def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build: _Build, hide) -> list[dict]:
     """Numbered PM Notes lines from the last ``weeks`` weeks, plus older blocks that hold a future date.
 
@@ -262,10 +265,12 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
     for text in map(hide, parsed.preamble.splitlines()):
         out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": None, "text": text})
     cutoff = today - timedelta(weeks=weeks)
+    latest = parsed.blocks[-UNDATED_BLOCKS_KEPT:]
     for block in parsed.blocks:
-        if block.header_date and block.header_date < cutoff and not has_future_date(
-            "\n".join(block.bullets), block.header_date, today,
-        ):
+        # A block with a readable header date is old when it is before the cutoff; one without is old
+        # unless it is among the last UNDATED_BLOCKS_KEPT. Either way an old block stays for a future date.
+        old = block.header_date < cutoff if block.header_date else not any(block is b for b in latest)
+        if old and not has_future_date("\n".join(block.bullets), block.header_date or snapshot_day, today):
             continue
         header = hide(block.header)
         out.append({"line_id": build.add(SourceLine("pm_notes", header, True, block.header_date)),
@@ -293,7 +298,7 @@ def _plain(value: object) -> object:
 
 
 def _facts(data: dict) -> str:
-    """Every value in the payload (not its keys) as text, plus "Dec 1" for each ISO date in it."""
+    """Every value in the payload (not its keys) as text, plus "Dec 1, 2026" for each ISO date in it."""
     values: list[str] = []
 
     def walk(node: object) -> None:
@@ -314,7 +319,7 @@ def _facts(data: dict) -> str:
             when = date.fromisoformat(iso)
         except ValueError:
             continue
-        values.append(f"{when:%b} {when.day}")
+        values.append(f"{when:%b} {when.day}, {when.year}")
     return "\n".join(values)
 
 
@@ -382,7 +387,7 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
         return False
     # A known name in any case is ungrounded too: the payload never holds one (redact.py).
-    return ungrounded(text, payload.facts) is None and payload.redactor.names_in(text, payload.page_id) is None
+    return ungrounded(text, payload.facts, date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:

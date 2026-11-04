@@ -186,3 +186,8 @@ def _chop(span: Span, budget: int) -> list[Span]:
     if chunk:
         out.append(Span(chunk, span.bold, span.code, span.href))
     return out
+
+
+def split_line(item: Line, quoted: bool, room: int) -> list[Line]:
+    """Split one line into pieces that each fit ``room`` characters of rendered HTML, quote tags included."""
+    return _fit(item, quoted, room)
