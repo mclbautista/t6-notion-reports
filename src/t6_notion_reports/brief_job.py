@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
+from .concerns import AgedConcerns, update_concerns
 from .config import BriefSettings
 from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
@@ -74,7 +75,16 @@ def run_brief(
     changed = len(changes)
     names = display_names(old_state, new_state)
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
-    changes = with_flags(changes, new_state, names, now.astimezone(MANILA).date(), new_day, brief.lead_warning_days)
+    today = now.astimezone(MANILA).date()
+    flagged = {p: project_flags(s, today, brief.lead_warning_days) for p, s in new_state.items()}
+    conn.commit()
+    aged = update_concerns(conn, {p: f.concerns for p, f in flagged.items()}, today, brief.concern_chronic_weeks)
+    # A dry run shows the ages and the resolved line but leaves the store as it was.
+    if dry_print or gateway is None:
+        conn.rollback()
+    else:
+        conn.commit()
+    changes = with_flags(changes, flagged, aged, names, new_state, new_day)
     owed: dict[str, OwedOutcome] | None = None
     owed_failed: list[str] = []
     if llm is not None:
@@ -138,23 +148,25 @@ def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:
 
 
 
-def with_flags(changes, state, names, today, snap_day, lead_warning_days):
-    """Attach each project's flags and date-sanity Concerns; a project with only those is listed too.
+def with_flags(changes, flagged, aged, names, state, snap_day):
+    """Attach each project's flags, aged Concerns and resolved Concerns; a project with flags or Concerns is listed too.
 
-    Flags count as activity, so a project with no changes but a flag still reaches its coordinator.
-    A removed project has no current state to flag.
+    Flags and open Concerns count as activity, so a project with no changes but one of them still
+    reaches its coordinator. A resolved Concern also lists its project, so the "Resolved last week"
+    line is seen once rather than dropped unread. A removed project has no current state to flag.
     """
-    flagged = {p: f for p, s in state.items() if (f := project_flags(s, today, lead_warning_days))}
     shown = set()
     for ch in changes:
         if ch.kind != "removed" and ch.page_id in flagged:
-            ch.flags, ch.concerns = flagged[ch.page_id].lines, flagged[ch.page_id].concerns
+            a = aged.get(ch.page_id, AgedConcerns())
+            ch.flags, ch.concerns, ch.resolved = flagged[ch.page_id].lines, a.open, a.resolved
         shown.add(ch.page_id)
     extra = []
     for page_id, f in flagged.items():
-        if page_id not in shown:
+        a = aged.get(page_id, AgedConcerns())
+        if page_id not in shown and (f.lines or a.open or a.resolved):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
-            ch.flags, ch.concerns = f.lines, f.concerns
+            ch.flags, ch.concerns, ch.resolved = f.lines, a.open, a.resolved
             extra.append(ch)
     return sort_projects(changes + extra) if extra else changes
 

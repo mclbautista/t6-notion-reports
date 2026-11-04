@@ -11,6 +11,7 @@ from typing import Mapping
 
 import yaml
 
+from .concerns import DEFAULT_CHRONIC_WEEKS
 from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .llm import DEFAULT_MODEL
 from .people_match import MatchSettings
@@ -20,7 +21,7 @@ PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "test_banner", "llm_model", "lead_warning_days"}
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
 KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
@@ -45,6 +46,7 @@ class BriefSettings:
     llm_model: str = DEFAULT_MODEL
     openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
     lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
+    concern_chronic_weeks: int = DEFAULT_CHRONIC_WEEKS  # a Concern open longer than this many weeks gets a chronic marker
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,7 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
+        concern_chronic_weeks=_days(raw, "concern_chronic_weeks", DEFAULT_CHRONIC_WEEKS),
     )
 
 
