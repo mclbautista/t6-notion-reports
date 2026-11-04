@@ -1,4 +1,4 @@
-"""Build the Sunday briefing messages from a diff (spec section 7, without owed items).
+"""Build the Saturday briefing messages from a diff (spec section 7, without owed items).
 
 Pure: no network, no clock. ``build_briefing`` returns the messages to send, in order: one DM per
 coordinator, then Cyril's digest.

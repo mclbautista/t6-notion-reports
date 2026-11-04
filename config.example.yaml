@@ -14,12 +14,13 @@ database_path: /app/data/psr.db
 # Meeting Notes, and `draft-mom` works. Meeting Notes: collection://e77662de-dbca-47c3-80ac-355716f6fe43
 # meeting_notes_data_source: "e77662de-dbca-47c3-80ac-355716f6fe43"
 
-# Sunday briefing (optional; leave all of these out to run snapshots only).
+# Saturday briefing (optional; leave all of these out to run snapshots only).
 # When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
-# The secret PSR_SECRET goes in .env. Briefings fire Sunday 16:00 Asia/Manila.
+# The secret PSR_SECRET goes in .env. Briefings fire Saturday 12:00 Asia/Manila (Friday snapshot at 23:30).
+# The Minutes go to the same chat and topic: PSR group -1003261335368, topic 3124.
 # gateway_url: "http://192.168.88.151:8780"
-# psr_group_chat_id: -1000000000000        # FILL IN: PSR group chat id (fallback for coordinators with no Telegram id)
-# psr_group_topic_id: 1                    # optional topic in that group
+# psr_group_chat_id: -1003261335368       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
+# psr_group_topic_id: 3124                 # PSR topic: Minutes go here
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
 # llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for owed items (default shown)
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)

@@ -4,15 +4,15 @@ Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR
 (per-coordinator diffs) and the meeting minutes. Sends nothing itself: delivery goes through the
 Telegram gateway's `POST /notify`.
 
-Status: snapshots run on a schedule (Mon 11:00 and Fri 18:00, Asia/Manila), and the Sunday 16:00
-briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Approved minutes are sent to the PSR group topic when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
+Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
+briefing (changes only, no LLM) sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing lists "What you owe" per project (LLM). Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
 
     pip install -e '.[dev]' && pytest
 
 ## Run on the Mac mini
 
 notion-reports runs as its own container on the T6 Mac mini (Intel, Colima), next to the gateway, with its
-own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 18:00
+own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 23:30
 Asia/Manila time. It does not catch up missed slots: if the container is down at 11:00, take one by hand.
 
 The scheduler fires on its own, so **do not start the container before Cyril's go-ahead**: the
@@ -52,9 +52,9 @@ running image; without that tag there is nothing to roll back to:
 `--kind` is `monday`, `friday` or `manual`. The first snapshot ever taken is flagged as the
 baseline (planned: Mon 2026-11-09 11:00, after Cyril's go-ahead).
 
-## Sunday briefing
+## Saturday briefing
 
-Every Sunday 16:00 Asia/Manila each T6 Post Coordinator gets a DM built from the latest Friday
+Every Saturday 12:00 Asia/Manila each T6 Post Coordinator gets a DM built from the latest Friday
 snapshot against the Monday before it, and Cyril gets one digest of every project. Everything goes
 through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when the
 briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
@@ -118,8 +118,7 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
 
 Three Job Orders reports go to one group topic every day (weekends and holidays included), Asia/Manila:
 05:00 night end of shift, 12:00 day midshift, 18:00 day end of shift. At each slot the scheduler takes a
-Job Orders snapshot (kind `0500`, `1200` or `1800`) and then sends that slot's report. On Friday 18:00 the
-Projects snapshot runs first. Turn it on in `config.yaml`:
+Job Orders snapshot (kind `0500`, `1200` or `1800`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     jo_data_source: "…"
     gateway_url: "http://192.168.88.151:8780"

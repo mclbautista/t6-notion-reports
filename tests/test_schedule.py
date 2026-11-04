@@ -29,12 +29,12 @@ def run_weeks(step=None):
     return fired
 
 
-def test_fires_monday_11_and_friday_18_manila_and_nowhere_else():
+def test_fires_monday_11_and_friday_2330_manila_and_nowhere_else():
     assert run_weeks() == [
         (manila(2026, 11, 9, 11), "monday"),
-        (manila(2026, 11, 13, 18), "friday"),
+        (manila(2026, 11, 13, 23, 30), "friday"),
         (manila(2026, 11, 16, 11), "monday"),
-        (manila(2026, 11, 20, 18), "friday"),
+        (manila(2026, 11, 20, 23, 30), "friday"),
     ]
 
 
@@ -44,7 +44,7 @@ def test_early_wakeups_do_not_fire_early_or_twice():
 
 def test_next_run_is_strictly_after_and_works_from_utc():
     mon = manila(2026, 11, 9, 11)
-    assert next_run(mon) == (manila(2026, 11, 13, 18), "friday")
+    assert next_run(mon) == (manila(2026, 11, 13, 23, 30), "friday")
     assert next_run(mon - timedelta(seconds=1)) == (mon, "monday")
     # Sunday 20:00 UTC is Monday 04:00 in Manila
     assert next_run(datetime(2026, 11, 8, 20, tzinfo=timezone.utc))[1] == "monday"
@@ -63,7 +63,7 @@ def test_failed_job_is_logged_without_message_and_loop_continues():
     assert not any("secret" in line for line in logs)
 
 
-def test_briefing_fires_sunday_16_manila_when_enabled():
+def test_briefing_fires_saturday_12_manila_when_enabled():
     from t6_notion_reports.schedule import BRIEF_SLOT, SLOTS
     fake = FakeClock(manila(2026, 11, 8, 0, 0))
     fired = []
@@ -71,10 +71,9 @@ def test_briefing_fires_sunday_16_manila_when_enabled():
     Scheduler(lambda k: fired.append((fake.now, k)), fake.clock, fake.sleep, log=lambda _: None,
               slots=SLOTS + [BRIEF_SLOT]).run(stop=lambda: fake.now >= end)
     assert fired == [
-        (manila(2026, 11, 8, 16), "brief"),
         (manila(2026, 11, 9, 11), "monday"),
-        (manila(2026, 11, 13, 18), "friday"),
-        (manila(2026, 11, 15, 16), "brief"),
+        (manila(2026, 11, 13, 23, 30), "friday"),
+        (manila(2026, 11, 14, 12), "brief"),
         (manila(2026, 11, 16, 11), "monday"),
     ]
 
@@ -120,22 +119,28 @@ def test_daily_slot_rolls_to_next_day_and_is_strictly_after():
 
 
 def test_two_slots_on_same_minute_both_run_in_declared_order_once():
-    from t6_notion_reports.schedule import SLOTS, Daily
-    slots = SLOTS + [Daily(time(18, 0), "shift18")]
+    from t6_notion_reports.schedule import Daily
+    slots = [(4, time(18, 0), "friday"), Daily(time(18, 0), "shift18")]
     fired = run_slots(slots, manila(2026, 11, 13, 17), manila(2026, 11, 14, 17))
     assert fired == [(manila(2026, 11, 13, 18), "friday"), (manila(2026, 11, 13, 18), "shift18")]
 
 
+def test_friday_18_jo_shift_slot_fires_on_its_own_before_the_projects_snapshot():
+    from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS
+    fired = run_slots(SLOTS + SHIFT_SLOTS, manila(2026, 11, 13, 17), manila(2026, 11, 14, 0, 1))
+    assert fired == [(manila(2026, 11, 13, 18), "shift1800"), (manila(2026, 11, 13, 23, 30), "friday")]
+
+
 def test_declared_order_wins_over_other_order():
-    from t6_notion_reports.schedule import SLOTS, Daily
-    slots = [Daily(time(18, 0), "shift18")] + SLOTS
+    from t6_notion_reports.schedule import Daily
+    slots = [Daily(time(18, 0), "shift18"), (4, time(18, 0), "friday")]
     fired = run_slots(slots, manila(2026, 11, 13, 17), manila(2026, 11, 14, 17))
     assert [k for _, k in fired] == ["shift18", "friday"]
 
 
 def test_failing_first_job_does_not_stop_second_at_shared_minute():
-    from t6_notion_reports.schedule import SLOTS, Daily
-    slots = SLOTS + [Daily(time(18, 0), "shift18")]
+    from t6_notion_reports.schedule import Daily
+    slots = [(4, time(18, 0), "friday"), Daily(time(18, 0), "shift18")]
     ran = []
 
     def job(fired, fake):
