@@ -19,6 +19,7 @@ KINDS = ("monday", "friday", "manual")
 
 RELATION_FIELDS = (
     "T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe",
+    "Assistant Editor", "Director", "Cinematographer",
 )
 
 # Notion's own last-edited time for the page. Stored for the briefing; never reported as a change.

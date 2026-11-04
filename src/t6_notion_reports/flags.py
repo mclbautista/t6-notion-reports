@@ -9,13 +9,13 @@ Which date is flagged depends on the Status:
     Leads                          Playdate in the past, or less than ``lead_warning_days`` away
 
 A date can be overdue only strictly before today (Asia/Manila). The overdue flags come first, so the
-worst news is the first line under the project. Date sanity problems are not flags but Concern
+worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival before Submission) are not flags but Concern
 items, for a later ticket to age.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from .schedule import MANILA
 from .snapshots import squash
@@ -23,10 +23,10 @@ from .snapshots import squash
 PLAYDATE = "Playdate"
 SUBMISSION = "Submission Deadline"
 ARCHIVAL = "Archival Deadline"
-# The team roles whose absence is worth a line. Post Supe is a person, not a department, but is a role.
-ROLES = ("Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe")
+# Roles whose absence is listed together on one "Missing roles" line, and roles flagged one by one.
+ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator")
+SEPARATE_ROLES = ("Director", "Cinematographer")
 DEFAULT_LEAD_WARNING_DAYS = 30
-FAR_DAYS = 365
 
 _DATED_IN_PROGRESS = {"🚨 In-Progress", "🏎. In-Progress TVC"}
 _AIRING = "Airing"
@@ -64,6 +64,7 @@ def project_flags(
             check(name, blank=True, late=status != _AIRING)
         if (missing := [r for r in ROLES if not state.get(r)]):
             other.append("⚠️ Missing roles: " + ", ".join(missing))
+        other += [f"⚠️ No {r}" for r in SEPARATE_ROLES if not state.get(r)]
     elif status == "📦 Archiving":
         check(ARCHIVAL, blank=True, late=True)
     elif status == "🌱 Leads":
@@ -74,19 +75,16 @@ def project_flags(
             if 0 <= ahead < lead_warning_days:
                 other.append("⚠️ Playdate today: check with the client" if ahead == 0 else
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates, today)))
+    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
 
 
-def _sanity(dates: dict[str, date | None], today: date) -> list[str]:
+def _sanity(dates: dict[str, date | None]) -> list[str]:
     out: list[str] = []
     playdate, submission, archival = dates[PLAYDATE], dates[SUBMISSION], dates[ARCHIVAL]
     if playdate and submission and submission < playdate:
         out.append(f"{SUBMISSION} ({_show(submission)}) is before {PLAYDATE} ({_show(playdate)})")
     if submission and archival and archival < submission:
         out.append(f"{ARCHIVAL} ({_show(archival)}) is before {SUBMISSION} ({_show(submission)})")
-    for name, when in dates.items():
-        if when is not None and when - today > timedelta(days=FAR_DAYS):
-            out.append(f"{name} ({_show(when)}) is more than a year away")
     return out
 
 

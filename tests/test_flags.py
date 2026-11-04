@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from fake_notion import CONTACTS, FakeNotion, date, relation
 from t6_notion_reports.brief_job import run_brief
-from t6_notion_reports.flags import ROLES
+from t6_notion_reports.flags import ROLES, SEPARATE_ROLES
 from test_gated_briefs import (
     AIRING, ARCHIVING, BRIEF, IN_PROGRESS, LEADS, SATURDAY, STANDBY, TVC, Gateway, brief, contacts, digest, dm,
     make_db, proj,
@@ -15,7 +15,8 @@ from test_gated_briefs import (
 
 def staffed(**props):
     """A project with every role filled and sane dates, so only what a test changes can be flagged."""
-    base = {role: relation("c-ana") for role in ROLES}
+    # proj() sets the coordinator itself, from its coordinator argument.
+    base = {role: relation("c-ana") for role in (*ROLES, *SEPARATE_ROLES) if role != "T6 Post Coordinator"}
     base.update({"Playdate": date("2026-11-20"), "Submission Deadline": date("2026-12-20")})
     base.update(props)
     return base
@@ -139,6 +140,31 @@ def test_missing_roles_render_as_one_line_naming_them():
     assert roles == ["⚠️ Missing roles: Online Editor, Sound Tech"]
 
 
+def test_assistant_editor_and_coordinator_are_listed_with_the_roles():
+    page = proj("p1", "ONE", IN_PROGRESS, **staffed(**{"Assistant Editor": relation()}))
+    page["properties"]["T6 Post Coordinator"] = relation()
+    text = digest(brief(make_db([page], [page])))
+    assert "⚠️ Missing roles: Assistant Editor, T6 Post Coordinator" in text
+
+
+def test_post_supe_is_not_flagged():
+    assert "Post Supe" not in one(IN_PROGRESS, **staffed(**{"Post Supe": relation()}))
+
+
+def test_director_and_cinematographer_are_flagged_separately_from_the_roles_line():
+    text = one(IN_PROGRESS, **staffed(Director=relation(), Cinematographer=relation(), Colorist=relation()))
+    ls = lines_of(text)
+    assert "⚠️ No Director" in ls and "⚠️ No Cinematographer" in ls
+    assert ["⚠️ Missing roles: Colorist"] == [ln for ln in ls if "Missing roles" in ln]
+
+
+def test_roles_are_only_flagged_for_in_progress_tvc_and_airing():
+    bare = staffed(Director=relation(), Editors=relation())
+    for status in (STANDBY, ARCHIVING):
+        assert "Missing roles" not in one(status, **bare) and "No Director" not in one(status, **bare)
+    assert "No Director" in one(AIRING, **bare) and "No Director" in one(TVC, **bare)
+
+
 def test_a_fully_staffed_project_has_no_roles_line():
     assert "Missing roles" not in one(IN_PROGRESS, **staffed())
 
@@ -153,19 +179,11 @@ def test_date_sanity_problems_are_listed_as_one_concern_each():
     concerns = [ln for ln in lines_of(arch) if "before" in ln]
     assert len(concerns) == 1 and "Archival Deadline" in concerns[0]
 
-    far = one(IN_PROGRESS, **staffed(**{"Submission Deadline": date("2027-11-15")}))
-    concerns = [ln for ln in lines_of(far) if "year away" in ln]
-    assert len(concerns) == 1 and "Submission Deadline" in concerns[0]
 
 
-def test_a_date_just_under_a_year_away_and_ordered_dates_raise_no_concern():
-    text = one(IN_PROGRESS, **staffed(**{"Submission Deadline": date("2027-11-14")}))
-    assert "Concerns" not in text
-
-
-def test_every_far_date_gets_its_own_concern():
+def test_dates_far_in_the_future_and_ordered_dates_raise_no_concern():
     text = one(IN_PROGRESS, **staffed(Playdate=date("2028-01-01"), **{"Submission Deadline": date("2028-02-01")}))
-    assert len([ln for ln in lines_of(text) if "year away" in ln]) == 2
+    assert "Concerns" not in text and "year" not in text
 
 
 def test_a_project_with_no_changes_but_a_flag_counts_as_activity_for_the_coordinator():
@@ -197,7 +215,7 @@ def test_archiving_ignores_playdate_and_submission_dates():
 
 
 def test_date_sanity_concerns_also_apply_to_standby_and_leads():
-    far = {"Playdate": date("2028-01-01")}
+    backwards = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01")}
     for status in (STANDBY, LEADS):
-        text = one(status, **staffed(**far))
-        assert len([ln for ln in lines_of(text) if "year away" in ln]) == 1
+        text = one(status, **staffed(**backwards))
+        assert len([ln for ln in lines_of(text) if "before" in ln]) == 1

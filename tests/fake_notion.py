@@ -45,6 +45,7 @@ def project(page_id, name="Show", code="PAS", **props):
         "Playdate": date(None), "Submission Deadline": date(None), "Archival Deadline": date(None),
         "T6 Post Coordinator": relation(), "Editors": relation(), "Online Editor": relation(),
         "Colorist": relation(), "Sound Tech": relation(), "Post Supe": relation(),
+        "Assistant Editor": relation(), "Director": relation(), "Cinematographer": relation(),
     }
     for f in FORMULAS:
         base[f] = formula("SECRET-FORMULA-VALUE")
