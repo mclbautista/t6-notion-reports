@@ -44,8 +44,8 @@ def leave_lines(description: str | list[dict]) -> list[str] | None:
     ``description`` is the Projects database description as text, or as its rich text items, which
     also tell bold lines apart. Unlike ``upcoming_entries`` this keeps lines without a readable date:
     the leave parser reads them. The section ends at the next heading, so text under a later heading
-    never reaches the leave call. A heading is a bold line, a line starting with "#", a line ending
-    with ":" that holds no digit, or a dateless line after a blank line. Bold lines straight under the
+    never reaches the leave call. A heading is a bold line, a line starting with "#", or a short,
+    unbulleted, dateless line: two words at most ending with ":", or three at most after a blank line. Bold lines straight under the
     heading (a note to the team) are skipped rather than ending the section.
     """
     lines = _rich_lines(description)
@@ -59,8 +59,10 @@ def leave_lines(description: str | list[dict]) -> list[str] | None:
         if not text:
             blank = True
             continue
-        heading = bold or text.startswith("#") or (text.endswith(":") and not re.search(r"\d", text))
-        if out and (heading or (blank and not re.search(r"\d", text))):
+        # A plain-text heading is short, unbulleted and dateless: "Project planning", "Staffing:".
+        words = len(text.split()) if not _BULLET.match(text) and not re.search(r"\d", text) else 99
+        heading = bold or text.startswith("#") or (text.endswith(":") and words <= 2) or (blank and words <= 3)
+        if out and heading:
             break
         blank = False
         if heading:

@@ -208,7 +208,10 @@ def build_payload(
     """
     build = _Build()
     mapping = Mapping()
-    hide = lambda text: redactor.redact(text, page_id, mapping)  # noqa: E731
+
+    def hide(text: str) -> str:
+        return redactor.redact(text, page_id, mapping)
+
     notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build, hide)
     dates = {name: stored_day(state.get(name)) for name in DATE_KEYS}
     relevant = relevant_dates(state.get("Status"))
@@ -218,7 +221,7 @@ def build_payload(
             "name": squash(str(state.get("Name") or "")),
             "stage": squash(str(state.get("Stage") or "")) or None,
             "status": squash(str(state.get("Status") or "")) or None,
-            "project_health": squash(str(state.get("Project Health") or "")) or None,
+            "project_health": hide(squash(str(state.get("Project Health") or ""))) or None,
         },
         "dates": {key: (dates[name].isoformat() if dates[name] else None) for name, key in DATE_KEYS.items()},
         "blank_date_properties": [DATE_KEYS[n] for n in relevant if dates[n] is None],
@@ -236,7 +239,7 @@ def build_payload(
     for w in windows:  # numbered like the other lines, so a snapshot change cites one exactly
         changes = []
         for c in w.changes:
-            old, new = _plain(c.old), _plain(c.new)
+            old, new = (hide(v) if isinstance(v, str) else v for v in (_plain(c.old), _plain(c.new)))
             text = f"{c.field}: {_show(old)} → {_show(new)}"
             changes.append({"line_id": build.add(SourceLine("snapshot", text)), "field": c.field,
                             "old": old, "new": new, "text": text})
@@ -274,6 +277,7 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
 
 
 def _show(value: object) -> str:
+    """A snapshot value as a line shows it: "(none)" when blank, a list joined with commas."""
     if value in (None, "", []):
         return "(none)"
     return ", ".join(map(str, value)) if isinstance(value, list) else str(value)

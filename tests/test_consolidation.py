@@ -474,3 +474,19 @@ def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name
     assert "Pio still has to send the files to ana" in text
     assert "• files to send" in text
     assert "files go to ana" not in text and "files sent by pio" not in text
+
+
+def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-will", "Will Santos")]
+    notes = "As of Nov 9\n• Will sends the grade, we will wait"
+    one = page(notes=notes)
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
+        run_snapshot(conn, FakeNotion([one], people), PROJECTS, CONTACTS, kind, at)
+    cite = lambda p: {"source": "pm_notes", "line_id": line_id(p, "grade"), "quote": "• [person 1] sends the grade, we will wait"}
+    llm = Llm(lambda p: {"changes": [{"text": "team will wait for the grade", **cite(p)}]})
+    gw, _ = run(conn, llm, notion=FakeNotion([], people))
+    assert llm.payloads[0]["pm_notes"][1]["text"] == "• [person 1] sends the grade, we will wait"
+    assert "• team will wait for the grade" in dm(gw)

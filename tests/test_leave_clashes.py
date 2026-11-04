@@ -273,3 +273,12 @@ def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipient
     assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
     assert by(777) and "Zed" not in by(777)
     assert "Zed" not in by(111)
+
+
+def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
+    description = "\n".join([HEADING, "• Lea - leave Nov 20-22", "", "• Ben on vacation next week", "Ana on leave:",
+                             "• Nov 25"])
+    conn, notion = build([team_project()], description=description)
+    llm = LeaveLlm(STANDARD)
+    brief(conn, notion, llm)
+    assert llm.payloads[0]["lines"] == ["Lea - leave Nov 20-22", "Ben on vacation next week", "Ana on leave:", "Nov 25"]

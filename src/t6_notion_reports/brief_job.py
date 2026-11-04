@@ -97,6 +97,7 @@ def run_brief(
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
     outcomes: dict[str, Outcome] = {}
+    contacts = load_contacts(notion, contacts_ds)  # read once: the redaction, the leaves and the messages
     if llm is not None or show_llm_input:
         windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
         minutes = None
@@ -106,7 +107,7 @@ def run_brief(
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
         # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(load_contacts(notion, contacts_ds).values(), {**raw_old, **raw_new}, new_state)
+        redactor = Redactor.build(contacts.values(), (raw_old, raw_new), new_state)
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
@@ -121,7 +122,7 @@ def run_brief(
     leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
     if (llm is not None or show_llm_input) and projects_ds:
         leaves = leave_concerns(
-            notion, projects_ds, llm, today, new_state, load_contacts(notion, contacts_ds),
+            notion, projects_ds, llm, today, new_state, contacts,
             brief.leave_clash_days, matching, show_llm_input, out, log,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
@@ -156,7 +157,6 @@ def run_brief(
         conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
-    contacts = load_contacts(notion, contacts_ds)
     cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
     cyril = contacts.get(cyril_id) or Contact(cyril_id, "Cyril")
     digest_contacts = tuple(

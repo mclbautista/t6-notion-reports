@@ -137,8 +137,9 @@ def build_briefing(
     for contact in recipients:
         if contact.telegram_id is not None:
             key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
-            own = tail + private if contact.page_id == settings.cyril.page_id else tail
-            messages += _send(contact.telegram_id, None, _pack(head, units, own, banner, limit), key, contact.name)
+            is_cyril = bool(settings.cyril) and contact.page_id == settings.cyril.page_id
+            digest_tail = tail + private if is_cyril else tail
+            messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages
 
 
@@ -213,7 +214,7 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
         if fits(current + unit.blocks):
             current = current + unit.blocks
             continue
-        for atom in _atoms(unit.blocks):  # oversized: fill this part, then resume the project
+        for atom in _split_points(unit.blocks):  # oversized: fill this part, then resume the project
             if not fits(current + [atom]) and len(current) > len(unit.resume()):
                 parts.append(current)
                 current = unit.resume()
@@ -229,7 +230,7 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
     return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
 
 
-def _atoms(blocks: list[Block]) -> list[Block]:
+def _split_points(blocks: list[Block]) -> list[Block]:
     """The pieces a project may be split into: each line, and each line of a quote as a one-line quote."""
     out: list[Block] = []
     for block in blocks:
@@ -290,6 +291,7 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
 
 
 def project_title(ch: ProjectChange) -> str:
+    """"CODE · Title", or the display name when either is missing."""
     return f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
 
 
