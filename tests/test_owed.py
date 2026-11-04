@@ -11,7 +11,7 @@ from t6_notion_reports.llm import LlmError, OpenRouterClient
 from t6_notion_reports.owed import MAX_ITEMS, OwedItem, OwedItems, OwedOutcome, find_owed
 
 NOTES = "As of Nov 12,\n  • TLR piclock TBC\n  • Shoot today"
-STATE = {"Name": "Show", "Project Code": "MAU", "Stage": "Preprod", "Status": "In-Progress",
+STATE = {"Name": "Show", "Project Code": "MAU", "Stage": "Preprod", "Status": "🚨 In-Progress",
          "Project Health": "On Track", "PM Notes": NOTES, "Playdate": None, "Submission Deadline": None, "Archival Deadline": None, "Editors": [],
          "Online Editor": [{"id": "x", "name": "Ben"}], "T6 Post Coordinator": [{"id": "c-pio", "name": "Pio"}]}
 

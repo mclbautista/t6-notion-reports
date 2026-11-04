@@ -27,6 +27,7 @@ def test_multiple_digest_recipients():
             coordinators=[Person("c-cyril", "Cyril")],
             health="On Track",
             kind="changed",
+            group="in_progress",
             changes=[FieldChange("Stage", "Offline", "Online")],
             last_updated=SUNDAY,
         )

@@ -12,10 +12,10 @@ from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .gateway import GatewayError
 from .llm import LlmClient
-from .mom import norm
 from .owed import OwedOutcome, find_owed
 from .schedule import MANILA
-from .snapshots import default_diff_pair, load_snapshot, snapshot_info
+from .snapshots import default_diff_pair, latest_snapshot_ids, load_snapshot, snapshot_info
+from .status_gate import gate, is_archiving, looks_like_in_progress
 
 
 class BriefFailed(Exception):
@@ -49,15 +49,23 @@ def run_brief(
     With ``llm``, each project also gets its owed items; without one the owed section is left out.
     """
     pair = default_diff_pair(conn)
+    first = False
     if pair is None:
-        out("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one)")
-        log("brief baseline=True sent=0 failed=0")
-        return BriefResult(baseline=True)
-    old_id, new_id = pair
+        latest = latest_snapshot_ids(conn, 1)
+        if not latest:
+            out("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one)")
+            log("brief baseline=True sent=0 failed=0")
+            return BriefResult(baseline=True)
+        # Only one comparison point exists: brief without a changes section.
+        first = True
+        old_id = new_id = latest[0]
+    else:
+        old_id, new_id = pair
     old_state, new_state = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
+    old_state, new_state = apply_gate(old_state, new_state, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
-    changes = diff_snapshots(
+    changes = [] if first else diff_snapshots(
         old_state, new_state,
         datetime.fromisoformat(old_on).astimezone(MANILA).date(),
         datetime.fromisoformat(new_on).astimezone(MANILA).date(),
@@ -88,7 +96,7 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        owed, owed_failed, active_coordinators_in(new_state),
+        owed, owed_failed, active_coordinators_in(new_state), first=first,
     )
     no_digest = digest_missing(settings)
 
@@ -128,13 +136,28 @@ def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:
 
 
 
-ACTIVE_STATUSES = {"in-progress", "archiving"}
+def apply_gate(old, new, log: Callable[[str], None] = print):
+    """Drop every project outside the status gate from both snapshots, judged by its latest state.
+
+    Runs before the LLM or any message. An excluded Status that looks like an In-Progress option is
+    logged by project name, so the Notion data can be fixed.
+    """
+    names = display_names(old, new)
+    latest = {**old, **new}
+    keep = set()
+    for page_id, state in latest.items():
+        if gate(state.get("Status")) is not None:
+            keep.add(page_id)
+        elif looks_like_in_progress(state.get("Status")):
+            log(f"brief status excluded looks like In-Progress project={names[page_id]} status={state.get('Status')!r}")
+    return ({p: s for p, s in old.items() if p in keep}, {p: s for p, s in new.items() if p in keep})
 
 
 def active_coordinators_in(state: dict[str, dict[str, object]]) -> set[str]:
-    """Contact page ids of coordinators with an In-Progress or Archiving project in the snapshot."""
+    """Contact page ids of coordinators with an In-Progress (any kind) or Archiving project."""
     return {
         str(ref["id"])
-        for project in state.values() if norm(project.get("Status")) in ACTIVE_STATUSES
+        for project in state.values()
+        if gate(project.get("Status")) == "in_progress" or is_archiving(project.get("Status"))
         for ref in project.get("T6 Post Coordinator") or [] if isinstance(ref, dict)
     }

@@ -112,7 +112,7 @@ def test_unchanged_projects_are_skipped_via_content_hash():
 def test_whitespace_only_change_counts_as_unchanged():
     conn = connect()
     snap(conn, FakeNotion([project("p1")], CONTACTS_LIST))
-    res = snap(conn, FakeNotion([project("p1", Status=select("In-Progress  "))], CONTACTS_LIST), at=T2)
+    res = snap(conn, FakeNotion([project("p1", Status=select("🚨 In-Progress  "))], CONTACTS_LIST), at=T2)
     assert res.unchanged == 1
 
 

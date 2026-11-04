@@ -21,10 +21,13 @@ RELATION_FIELDS = (
     "T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe",
 )
 
+# Notion's own last-edited time for the page. Stored for the briefing; never reported as a change.
+LAST_EDITED = "Last Edited"
+
 # Spec section 3.1. Stored names match the Notion property names.
 TRACKED_FIELDS = (
     "Name", "Project Code", "Stage", "Status", "Project Health", "PM Notes",
-    "Playdate", "Submission Deadline", "Archival Deadline",
+    "Playdate", "Submission Deadline", "Archival Deadline", LAST_EDITED,
 ) + RELATION_FIELDS
 
 SCHEMA = """

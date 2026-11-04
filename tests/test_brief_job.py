@@ -86,7 +86,7 @@ def test_digest_no_changes_line_skips_coordinators_with_only_standby_projects():
     c.executescript(SCHEMA)
     for kind, stage, at in (("monday", "Offline", datetime(2026, 11, 9, 3, tzinfo=timezone.utc)),
                             ("friday", "Online", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))):
-        run_snapshot(c, FakeNotion(pages(stage, "⏸ Standby"), contacts()), PROJECTS, CONTACTS, kind, at)
+        run_snapshot(c, FakeNotion(pages(stage, "🏋️ Standby"), contacts()), PROJECTS, CONTACTS, kind, at)
     gw = FakeGateway()
     run_brief(c, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert "No changes" not in digest_text(gw)

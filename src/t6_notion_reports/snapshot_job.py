@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime
 from typing import Protocol
 
-from .snapshots import RELATION_FIELDS, ProjectRecord, SnapshotResult, take_snapshot
+from .snapshots import LAST_EDITED, RELATION_FIELDS, ProjectRecord, SnapshotResult, take_snapshot
 
 # Never snapshotted (spec section 4). Matched on the word, ignoring emoji and whitespace.
 EXCLUDED_STATUSES = {"archived", "lost"}
@@ -58,6 +58,7 @@ def parse_project(page: dict, contact_names: dict[str, str | None]) -> ProjectRe
             fields[stored] = [{"id": i, "name": contact_names.get(i)} for i in ids]
         else:
             fields[stored] = _value(prop)
+    fields[LAST_EDITED] = page.get("last_edited_time")
     return ProjectRecord(page["id"], fields)
 
 
