@@ -293,7 +293,7 @@ def _plain(value: object) -> object:
 
 
 def _facts(data: dict) -> str:
-    """Every value in the payload (not its keys) as text, plus "Dec 1" for each ISO date in it."""
+    """Every value in the payload (not its keys) as text, plus "Dec 1, 2026" for each ISO date in it."""
     values: list[str] = []
 
     def walk(node: object) -> None:
@@ -314,7 +314,7 @@ def _facts(data: dict) -> str:
             when = date.fromisoformat(iso)
         except ValueError:
             continue
-        values.append(f"{when:%b} {when.day}")
+        values.append(f"{when:%b} {when.day}, {when.year}")
     return "\n".join(values)
 
 
@@ -382,7 +382,7 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
         return False
     # A known name in any case is ungrounded too: the payload never holds one (redact.py).
-    return ungrounded(text, payload.facts) is None and payload.redactor.names_in(text, payload.page_id) is None
+    return ungrounded(text, payload.facts, date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:

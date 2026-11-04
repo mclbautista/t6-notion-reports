@@ -490,3 +490,54 @@ def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
     gw, _ = run(conn, llm, notion=FakeNotion([], people))
     assert llm.payloads[0]["pm_notes"][1]["text"] == "• [person 1] sends the grade, we will wait"
     assert "• team will wait for the grade" in dm(gw)
+
+
+# ---- grounding of fluent prose (#62 item 3) ----------------------------------------------------
+# Contract: every date with a written year must be a date a source line writes (so the year cannot be
+# recombined from another date), and every word of an item must be a word of the sources (or one of
+# their inflections), a month name, a number, or a small set of plain connecting words.
+
+QC_QUOTE = "• QC on Nov 20, waiting for client notes"
+
+
+def _concern(text, p):
+    return {"kind": "open_item", "text": text, "source": "pm_notes",
+            "line_id": line_id(p, "waiting for client notes"), "quote": QC_QUOTE}
+
+
+def test_an_invented_lowercase_name_drops_only_that_item():
+    concerns = lambda p: [_concern("QC on Nov 20 waiting for client notes", p),
+                          _concern("QC waiting for zyxmarco", p)]
+    gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
+    text = dm(gw)
+    assert "QC on Nov 20 waiting for client notes" in text and "zyxmarco" not in text
+
+
+def test_inflections_and_plain_connecting_words_are_still_grounded():
+    changes = lambda p: [{"text": "QC is still waiting on the client notes", "source": "pm_notes",
+                          "line_id": line_id(p, "waiting for client notes"), "quote": QC_QUOTE}]
+    gw, _ = run(conn_one(), Llm(reply_with(changes=changes)))
+    assert "QC is still waiting on the client notes" in dm(gw)
+
+
+def test_a_year_recombined_from_another_date_is_dropped():
+    notes = "As of Nov 9\n• QC on 2026-12-01, festival in Q2 2027"
+    quote = "• QC on 2026-12-01, festival in Q2 2027"
+    changes = lambda p: [
+        {"text": "QC on 2026-12-01", "source": "pm_notes", "line_id": line_id(p, "festival"), "quote": quote},
+        {"text": "QC on 2027-12-01", "source": "pm_notes", "line_id": line_id(p, "festival"), "quote": quote},
+        {"text": "Festival in Q2 2027", "source": "pm_notes", "line_id": line_id(p, "festival"), "quote": quote},
+        {"text": "Festival in Q2 2026", "source": "pm_notes", "line_id": line_id(p, "festival"), "quote": quote},
+        {"text": "QC on Dec 1, 2027", "source": "pm_notes", "line_id": line_id(p, "festival"), "quote": quote},
+    ]
+    gw, _ = run(conn_one(notes), Llm(reply_with(changes=changes)))
+    text = dm(gw)
+    assert "• QC on 2026-12-01" in text and "• Festival in Q2 2027" in text
+    for dropped in ("2027-12-01", "Q2 2026", "Dec 1, 2027"):
+        assert dropped not in text
+
+
+def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
+    concerns = lambda p: [_concern("QC waiting for marco", p), _concern("QC waiting for janice", p)]
+    gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
+    assert "marco" not in dm(gw) and "janice" not in dm(gw)
