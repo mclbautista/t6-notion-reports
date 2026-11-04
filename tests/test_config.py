@@ -130,3 +130,15 @@ def test_bad_matching_value_fails_boot_naming_key(tmp_path, line, key):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, good() + "\n" + line + "\n"), ENV)
     assert key in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_lead_warning_days_defaults_to_30_and_is_read_from_config(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.lead_warning_days == 30
+    assert load_config(write(tmp_path, BRIEF_YAML + "\nlead_warning_days: 14\n"), ENV).brief.lead_warning_days == 14
+
+
+@pytest.mark.parametrize("bad", ["hunter2", "0", "-3", "true", "2.5"])
+def test_bad_lead_warning_days_fails_boot_naming_key_not_value(tmp_path, bad):
+    with pytest.raises(ConfigError) as err:
+        load_config(write(tmp_path, BRIEF_YAML + f"\nlead_warning_days: {bad}\n"), ENV)
+    assert "lead_warning_days" in str(err.value) and "hunter2" not in str(err.value)
