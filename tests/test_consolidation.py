@@ -47,6 +47,13 @@ class Llm:
         return schema(**self.reply(payload))
 
 
+def snapshot_change(payload, window="since_psr", **item):
+    """A change citing the payload's first snapshot change in ``window``, with its exact text."""
+    w = next(w for w in payload["snapshot_changes"] if w["window"] == window)
+    c = w["changes"][0]
+    return {"source": "snapshot", "line_id": c["line_id"], "quote": c["text"], **item}
+
+
 def line_id(payload, text, where="pm_notes"):
     rows = payload["pm_notes"] if where == "pm_notes" else payload["minutes"]["lines"]
     return next(r["line_id"] for r in rows if text in r["text"])
@@ -125,10 +132,10 @@ def test_both_diff_windows_and_the_minutes_lines_are_in_the_payload():
     payload = llm.payloads[0]
     assert payload["snapshot_changes"] == [
         {"window": "since_last_brief", "from": "2026-11-06T23:30:00+08:00", "to": "2026-11-13T23:30:00+08:00",
-         "changes": [{"field": "Stage", "old": "Preprod", "new": "Online"}]},
+         "changes": [{"line_id": 7, "field": "Stage", "old": "Preprod", "new": "Online", "text": "Stage: Preprod → Online"}]},
         {"window": "since_psr", "from": "2026-11-09T11:00:00+08:00", "to": "2026-11-13T23:30:00+08:00",
-         "changes": [{"field": "Stage", "old": "Offline", "new": "Online"}]},
-    ]
+         "changes": [{"line_id": 8, "field": "Stage", "old": "Offline", "new": "Online", "text": "Stage: Offline → Online"}]},
+    ]  # snapshot changes are numbered after the Minutes lines, so they can be cited too
     assert payload["minutes"] == {
         "page_date": "2026-11-09", "last_edited": "2026-11-09T14:10:00.000+08:00", "sent_at": "2026-11-09T14:30:00+08:00",
         "lines": [{"line_id": 5, "text": "• Submission moved to Nov 28"}, {"line_id": 6, "text": "• Grade on Nov 24"}],
@@ -200,12 +207,15 @@ def test_an_item_that_fails_validation_is_dropped_and_the_rest_of_the_reply_stil
         {"text": "QC with Jam", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC after 3 days", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC invented", "source": "invented", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
-        {"text": "Stage Offline to Online", "source": "snapshot"},
+        snapshot_change(p, text="Stage Offline to Online"),
+        {"text": "Snapshot without a citation", "source": "snapshot"},
+        {"text": "Snapshot invented line", "source": "snapshot", "line_id": 99999, "quote": "Stage: Offline → Online"},
+        {**snapshot_change(p, text="Snapshot wrong quote"), "quote": "Stage: Preprod → Online"},
     ]
     gw, _ = run(conn_one(), Llm(reply_with(changes=changes)))
     text = dm(gw)
     assert "• QC on Nov 20" in text and "• Online started" in text and "• Stage Offline to Online" in text
-    for dropped in ("Wrong", "Dec 9", "Jam", "3 days", "invented"):
+    for dropped in ("Wrong", "Dec 9", "Jam", "3 days", "invented", "Snapshot"):
         assert dropped not in text
 
 
@@ -280,19 +290,19 @@ def test_an_invalid_or_future_last_update_falls_back_to_last_edited_time():
 # ---- changes --------------------------------------------------------------------------------
 
 def test_after_psr_changes_are_marked_and_duplicates_across_windows_show_once():
-    changes = [
-        {"text": "Stage moved to Online", "source": "snapshot", "after_psr": False},
-        {"text": "stage  moved to Online", "source": "snapshot", "after_psr": True},  # same change, other window
-        {"text": "Online started", "source": "snapshot", "after_psr": True},
+    changes = lambda p: [
+        snapshot_change(p, text="Stage moved to Online", after_psr=False),
+        snapshot_change(p, text="stage  moved to Online", after_psr=True),  # same change, other window
+        snapshot_change(p, text="Online started", after_psr=True),
     ]
-    gw, _ = run(conn_one(), Llm(lambda p: {"changes": changes}))
+    gw, _ = run(conn_one(), Llm(lambda p: {"changes": changes(p)}))
     text = dm(gw)
     assert text.count("Stage moved to Online") == 1 and "stage  moved" not in text
     assert "• Stage moved to Online (after PSR)" in text and "• Online started (after PSR)" in text
 
 
 def test_consolidated_changes_replace_the_raw_changes_list():
-    gw, _ = run(conn_one(), Llm(lambda p: {"changes": [{"text": "Online started", "source": "snapshot"}]}))
+    gw, _ = run(conn_one(), Llm(lambda p: {"changes": [snapshot_change(p, text="Online started")]}))
     text = dm(gw)
     assert "• Online started" in text
     assert "→" not in text and "PM Notes ·" not in text  # no raw field change, no raw notes quote
@@ -327,7 +337,7 @@ def two_projects():
 
 
 def test_a_failing_call_marks_that_project_only_and_the_digest_names_it():
-    gw, logs = run(two_projects(), Llm(lambda p: {"changes": [{"text": "Online started", "source": "snapshot"}]},
+    gw, logs = run(two_projects(), Llm(lambda p: {"changes": [snapshot_change(p, text="Online started")]},
                                        fail_for={"Show ONE"}))
     one = dm(gw)
     assert "(LLM unavailable)" in one and "Stage: Offline → Online" in one  # code-only: the raw diff

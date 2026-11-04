@@ -27,7 +27,7 @@ from .snapshots import squash
 
 DEFAULT_PM_NOTES_WEEKS = 52
 CONCERN_KINDS = ("open_item", "health_vs_evidence", "stale_milestone", "source_conflict")
-SOURCES = {"pm_notes", "minutes"}
+SOURCES = {"pm_notes", "minutes", "snapshot"}
 DATE_KEYS = {PLAYDATE: "playdate", SUBMISSION: "submission_deadline", ARCHIVAL: "archival_deadline"}
 _PROPERTY_BY_KEY = {key: name for name, key in DATE_KEYS.items()}
 
@@ -45,7 +45,7 @@ Use only what is in the payload. Never invent a fact, a date or a name. Every da
 4. dates_from_notes: for each property in blank_date_properties, look for its date in the PM Notes. Give iso_date (YYYY-MM-DD) when the line states a precise day, otherwise fuzzy_text copied exactly from the line (for example "Q2 2027"). Cite the line_id and an exact quote. Return nothing for a property the notes do not state, and never for a property that is not in blank_date_properties.
 
 When sources disagree, prefer the newest by its timestamp (minutes.last_edited, the end of a snapshot window, the PM Notes "As of" date). Raise source_conflict only when you cannot tell which source is newer.
-For a change, source is pm_notes, minutes or snapshot; for pm_notes and minutes give the line_id and an exact quote, for snapshot leave both null.
+For a change, source is pm_notes, minutes or snapshot. Every change gives the line_id and an exact quote: for snapshot, the line_id of the snapshot change and its "text" as the quote.
 Every quote must be copied exactly from one line, character for character, and cited by line_id.
 If nothing applies, return empty lists."""
 
@@ -116,7 +116,7 @@ _ITEM_TYPES = {"changes": Change, "concerns": Concern, "dates_from_notes": DateF
 
 @dataclass(frozen=True)
 class SourceLine:
-    origin: str  # pm_notes | minutes
+    origin: str  # pm_notes | minutes | snapshot
     text: str
     header: bool = False  # an "As of" header line
     header_date: date | None = None  # what the header says, when code can read it
@@ -210,15 +210,7 @@ def build_payload(
         "dates": {key: (dates[name].isoformat() if dates[name] else None) for name, key in DATE_KEYS.items()},
         "blank_date_properties": [DATE_KEYS[n] for n in relevant if dates[n] is None],
         "pm_notes": notes,
-        "snapshot_changes": [
-            {
-                "window": w.name,
-                "from": w.start.astimezone(MANILA).isoformat(timespec="seconds"),
-                "to": w.end.astimezone(MANILA).isoformat(timespec="seconds"),
-                "changes": [{"field": c.field, "old": _plain(c.old), "new": _plain(c.new)} for c in w.changes],
-            }
-            for w in windows
-        ],
+        "snapshot_changes": [],
         "minutes": None,
     }
     if minutes_lines and minutes_meta:
@@ -228,6 +220,19 @@ def build_payload(
             "sent_at": minutes_meta.get("sent_at"),
             "lines": [{"line_id": build.add(SourceLine("minutes", t)), "text": t} for t in minutes_lines],
         }
+    for w in windows:  # numbered like the other lines, so a snapshot change cites one exactly
+        changes = []
+        for c in w.changes:
+            old, new = _plain(c.old), _plain(c.new)
+            text = f"{c.field}: {_show(old)} → {_show(new)}"
+            changes.append({"line_id": build.add(SourceLine("snapshot", text)), "field": c.field,
+                            "old": old, "new": new, "text": text})
+        data["snapshot_changes"].append({
+            "window": w.name,
+            "from": w.start.astimezone(MANILA).isoformat(timespec="seconds"),
+            "to": w.end.astimezone(MANILA).isoformat(timespec="seconds"),
+            "changes": changes,
+        })
     return Payload(data, build.lines, _facts(data))
 
 
@@ -249,6 +254,12 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
             text = f"• {bullet}"
             out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": block.header, "text": text})
     return out
+
+
+def _show(value: object) -> str:
+    if value in (None, "", []):
+        return "(none)"
+    return ", ".join(map(str, value)) if isinstance(value, list) else str(value)
 
 
 def _plain(value: object) -> object:
@@ -342,15 +353,11 @@ def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate,
 
 
 def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quote: str | None, snapshot_ok: bool) -> bool:
-    if not squash(text):
+    """Every item cites a real line of its source and quotes it exactly; a snapshot change cites a snapshot line."""
+    if not squash(text) or source not in SOURCES or (source == "snapshot" and not snapshot_ok):
         return False
-    if source == "snapshot" and snapshot_ok:
-        pass
-    elif source in SOURCES:
-        line = payload.lines.get(line_id) if line_id is not None else None
-        if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
-            return False
-    else:
+    line = payload.lines.get(line_id) if line_id is not None else None
+    if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
         return False
     return ungrounded(text, payload.facts) is None
 
