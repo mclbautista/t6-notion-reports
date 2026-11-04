@@ -25,9 +25,9 @@ from .snapshots import squash
 PLAYDATE = "Playdate"
 SUBMISSION = "Submission Deadline"
 ARCHIVAL = "Archival Deadline"
-# Roles whose absence is listed together on one "Missing roles" line, and roles flagged one by one.
-ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator")
-SEPARATE_ROLES = ("Director", "Cinematographer")
+# Every required role; the missing ones are listed together on one "Missing roles" line (Cyril, #60).
+ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator",
+         "Director", "Cinematographer")
 DEFAULT_LEAD_WARNING_DAYS = 30
 MISSING_HEALTH = "⚠️ missing health update"
 
@@ -77,7 +77,6 @@ def project_flags(
             check(name, blank=True, late=status != _AIRING)
         if (missing := [r for r in ROLES if not state.get(r)]):
             other.append("⚠️ Missing roles: " + ", ".join(missing))
-        other += [f"⚠️ No {r}" for r in SEPARATE_ROLES if not state.get(r)]
     elif status == "📦 Archiving":
         check(ARCHIVAL, blank=True, late=True)
     elif status == "🌱 Leads":

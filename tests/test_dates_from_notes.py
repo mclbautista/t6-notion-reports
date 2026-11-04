@@ -1,6 +1,6 @@
 """Dates from PM Notes (#48): a blank date property filled from a quoted line, precise or fuzzy."""
 from fake_notion import date, relation, rich
-from t6_notion_reports.flags import ROLES, SEPARATE_ROLES
+from t6_notion_reports.flags import ROLES
 from test_consolidation import Llm, line_id, make_db, reply_with, run
 from test_gated_briefs import AIRING, IN_PROGRESS, LEADS, STANDBY, digest, dm, proj
 
@@ -11,7 +11,7 @@ PLAY_QUOTE = "• Playdate is Q2 2027"
 
 
 def staffed(**props):
-    base = {r: relation("c-ana") for r in (*ROLES, *SEPARATE_ROLES) if r != "T6 Post Coordinator"}
+    base = {r: relation("c-ana") for r in ROLES if r != "T6 Post Coordinator"}
     base.update(props)
     return base
 

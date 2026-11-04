@@ -197,8 +197,8 @@ def test_the_first_brief_has_the_banner_and_no_changes():
 def staffed(**props):
     """Every role filled and both dates set: nothing to flag, so an unchanged project stays quiet."""
     from fake_notion import date
-    from t6_notion_reports.flags import ROLES, SEPARATE_ROLES
-    return {**{r: relation("c-ana") for r in (*ROLES, *SEPARATE_ROLES) if r != "T6 Post Coordinator"},
+    from t6_notion_reports.flags import ROLES
+    return {**{r: relation("c-ana") for r in ROLES if r != "T6 Post Coordinator"},
             "Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20"), **props}
 
 
