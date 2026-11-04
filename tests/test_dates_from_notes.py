@@ -160,3 +160,12 @@ def test_a_placeholder_is_not_a_fuzzy_date_and_the_missing_flag_stays():
             {"property": "playdate", "fuzzy_text": w, "line_id": line_id(p, "Playdate"), "quote": n.splitlines()[1]}]}
         text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
         assert f"Playdate (from PM Notes): {wording}" in text, wording
+
+
+def test_a_precise_date_from_notes_is_checked_for_order_and_a_fuzzy_one_is_not():
+    # The notes give a Submission Deadline (Dec 1) before the property's Playdate (Dec 20).
+    text = text_of(reply={"dates_from_notes": submission()}, Playdate=date("2026-12-20"))
+    concerns = [ln for ln in text.splitlines() if "is before" in ln]
+    assert len(concerns) == 1 and "Submission Deadline (Dec 1, 2026) is before Playdate (Dec 20, 2026)" in concerns[0]
+    text = text_of(reply={"dates_from_notes": fuzzy()}, **{"Submission Deadline": date("2026-12-20")})
+    assert "is before" not in text

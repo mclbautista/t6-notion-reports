@@ -11,8 +11,8 @@ Which date is flagged depends on the Status:
 Any Status with a blank Project Health gets the "missing health update" note, as its last flag.
 
 A date can be overdue only strictly before today (Asia/Manila). The overdue flags come first, so the
-worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival before Submission) are not flags but Concern
-items, for a later ticket to age.
+worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival
+before Submission) are not flags but Concerns, judged on the precise dates a property or the PM Notes give.
 """
 from __future__ import annotations
 
@@ -52,11 +52,10 @@ def project_flags(
 
     ``stated`` holds dates the PM Notes give for blank properties (property name -> day, or None for a
     fuzzy value). A stated date is not missing; a precise one is judged like the property's own, a fuzzy
-    one never overdue. Date sanity looks at the properties only.
+    one never overdue. Date sanity looks at the precise dates, from the property or the notes.
     """
     status = squash(str(state.get("Status") or ""))
     dates = {name: stored_day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
-    own = dict(dates)  # the properties as stored, for the date sanity checks
     stated = stated or {}
     for name, day in stated.items():
         if dates.get(name) is None:
@@ -91,7 +90,8 @@ def project_flags(
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
     if not squash(str(state.get("Project Health") or "")):
         other.append(MISSING_HEALTH)  # every gated Status: the project also sorts last in its section
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(own)))
+    # Sanity uses the effective precise dates: a fuzzy one from the notes is None here.
+    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
 
 
 def relevant_dates(status: object) -> tuple[str, ...]:
