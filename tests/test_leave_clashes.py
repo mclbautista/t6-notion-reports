@@ -282,3 +282,42 @@ def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
     llm = LeaveLlm(STANDARD)
     brief(conn, notion, llm)
     assert llm.payloads[0]["lines"] == ["Lea - leave Nov 20-22", "Ben on vacation next week", "Ana on leave:", "Nov 25"]
+
+
+# ---- section boundaries when the section is empty or the heading is long (#62 item 7) ---------
+
+def leave_payload_for(description):
+    conn, notion = build([team_project()], description=description)
+    llm = LeaveLlm(STANDARD)
+    brief(conn, notion, llm)
+    return llm.payloads
+
+
+def test_an_empty_leave_section_stops_at_a_markdown_heading_and_sends_nothing():
+    description = HEADING + "\n\n# Project planning\n• ONE needs Lea Santos on Dec 1"
+    assert leave_payload_for(description) == []
+
+
+def test_an_empty_leave_section_stops_at_a_rich_text_heading_and_an_end_marker():
+    rich_text = [
+        {"plain_text": HEADING + "\n\n", "annotations": {"bold": True}},
+        {"plain_text": "Staffing", "annotations": {"bold": True}},
+        {"plain_text": "\nONE needs Lea Santos on Dec 1", "annotations": {"bold": False}},
+    ]
+    assert leave_payload_for(rich_text) == []
+    assert leave_payload_for(HEADING + "\n---\n• ONE needs Lea Santos on Dec 1") == []
+
+
+def test_an_introductory_bold_note_does_not_end_an_empty_section():
+    rich_text = [
+        {"plain_text": HEADING + "\n\nDon't forget the onboarding projects", "annotations": {"bold": True}},
+        {"plain_text": "\n" + "\n".join(LEAVES), "annotations": {"bold": False}},
+    ]
+    (payload,) = leave_payload_for(rich_text)
+    assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]
+
+
+def test_a_long_plain_heading_after_the_entries_ends_the_section():
+    description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Lea Santos on Dec 1"])
+    (payload,) = leave_payload_for(description)
+    assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]

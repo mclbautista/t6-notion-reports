@@ -9,6 +9,7 @@ _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
            "august", "september", "october", "november", "december")
 _BULLET = re.compile(r"^\s*(?:[•\-*·–]+|\d+[.)])\s*")
 # "Nov 12", "Nov 12-14", "Nov 30 - Dec 2", "November 30 to Dec 2"
+_END_MARKER = re.compile(r"^(?:-{3,}|\*{3,}|_{3,}|={3,})$")
 _RANGE = re.compile(
     r"\b(?P<m1>[A-Za-z]{3,9})\.?\s+(?P<d1>\d{1,2})(?!\d)"
     r"(?:\s*(?:-|–|—|to|until)\s*(?:(?P<m2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2})(?!\d))?",
@@ -44,9 +45,14 @@ def leave_lines(description: str | list[dict]) -> list[str] | None:
     ``description`` is the Projects database description as text, or as its rich text items, which
     also tell bold lines apart. Unlike ``upcoming_entries`` this keeps lines without a readable date:
     the leave parser reads them. The section ends at the next heading, so text under a later heading
-    never reaches the leave call. A heading is a bold line, a line starting with "#", or a short,
-    unbulleted, dateless line: two words at most ending with ":", or three at most after a blank line. Bold lines straight under the
-    heading (a note to the team) are skipped rather than ending the section.
+    never reaches the leave call.
+
+    Heading contract (#62). The section ends at the first line that is any of these, whether or not
+    entries came before it: a line starting with "#"; an end marker (``---``, ``***``, ``___``, ``===``);
+    a bold line of three words at most; an unbulleted, dateless plain line of two words at most ending
+    with ":", or of three at most after a blank line. Once entries have started, any unbulleted dateless
+    line after a blank line is a heading too, however long. A longer bold line straight under the
+    heading, before any entry, is a note to the team and is skipped.
     """
     lines = _rich_lines(description)
     start = next((i for i, (text, _) in enumerate(lines) if HEADING in text.lower()), None)
@@ -61,12 +67,18 @@ def leave_lines(description: str | list[dict]) -> list[str] | None:
             continue
         # A plain-text heading is short, unbulleted and dateless: "Project planning", "Staffing:".
         words = len(text.split()) if not _BULLET.match(text) and not re.search(r"\d", text) else 99
-        heading = bold or text.startswith("#") or (text.endswith(":") and words <= 2) or (blank and words <= 3)
-        if out and heading:
+        dateless = not _BULLET.match(text) and not re.search(r"\d", text)
+        heading = (
+            text.startswith("#") or _END_MARKER.match(text) is not None
+            or (bold and (bool(out) or len(text.split()) <= 3))
+            or (text.endswith(":") and words <= 2) or (blank and words <= 3)
+            or (bool(out) and blank and dateless)
+        )
+        if heading:
             break
         blank = False
-        if heading:
-            continue
+        if bold:
+            continue  # a note to the team under the heading
         if (clean := _BULLET.sub("", text).strip()):
             out.append(clean)
     return out
