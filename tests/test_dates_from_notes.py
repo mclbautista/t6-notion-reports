@@ -115,3 +115,23 @@ def test_a_lead_uses_a_precise_playdate_from_notes_for_its_warning():
     text = text_of(LEADS, reply, notes=notes, to_digest=True)
     assert "Playdate (from PM Notes): Nov 30, 2026 · not in property" in text
     assert "Playdate in 16 days: check with the client" in text
+
+
+def test_a_year_that_the_line_or_the_calendar_contradicts_drops_the_item():
+    notes = "As of Nov 9\n• Submission is Dec 1, 2026, waiting on the client"
+    quote = "• Submission is Dec 1, 2026, waiting on the client"
+    for iso in ("2025-12-01", "2027-12-01"):
+        text = text_of(reply={"dates_from_notes": submission(iso, quote)}, notes=notes, Playdate=date("2026-12-20"))
+        assert "from PM Notes" not in text and "No Submission Deadline" in text
+    far = "As of Nov 9\n• Submission is Dec 1, waiting on the client"
+    text = text_of(reply={"dates_from_notes": submission("2028-12-01")}, notes=far, Playdate=date("2026-12-20"))
+    assert "from PM Notes" not in text
+
+
+def test_a_past_fuzzy_value_is_never_overdue():
+    notes = "As of Nov 9\n• Playdate was Q1 2025"
+    reply = {"dates_from_notes": fuzzy("Q1 2025", "• Playdate was Q1 2025")}
+    reply["dates_from_notes"] = lambda p: [{"property": "playdate", "fuzzy_text": "Q1 2025",
+                                              "line_id": line_id(p, "Q1 2025"), "quote": "• Playdate was Q1 2025"}]
+    text = text_of(reply=reply, notes=notes, **{"Submission Deadline": date("2026-12-20")})
+    assert "Playdate (from PM Notes): Q1 2025" in text and "overdue" not in text and "No Playdate" not in text

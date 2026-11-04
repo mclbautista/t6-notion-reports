@@ -53,7 +53,7 @@ def project_flags(
     """
     status = squash(str(state.get("Status") or ""))
     dates = {name: stored_day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
-    sane = dict(dates)
+    own = dict(dates)  # the properties as stored, for the date sanity checks
     stated = stated or {}
     for name, day in stated.items():
         if dates.get(name) is None:
@@ -86,7 +86,7 @@ def project_flags(
             if 0 <= ahead < lead_warning_days:
                 other.append("⚠️ Playdate today: check with the client" if ahead == 0 else
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(sane)))
+    return ProjectFlags(tuple(overdue + other), tuple(_sanity(own)))
 
 
 def relevant_dates(status: object) -> tuple[str, ...]:

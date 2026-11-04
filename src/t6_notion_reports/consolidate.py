@@ -306,7 +306,7 @@ def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate,
                 day = date.fromisoformat(item.iso_date)
             except ValueError:
                 continue
-            if (day.month, day.day) in extract_facts(line.text).dates:
+            if _day_grounded(day, line.text, date.fromisoformat(payload.data["today"])):
                 found[name] = NoteDate(name, day=day)
         elif item.fuzzy_text and squash(item.fuzzy_text).casefold() in squash(line.text).casefold():
             found[name] = NoteDate(name, fuzzy=squash(item.fuzzy_text))
@@ -325,6 +325,14 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     else:
         return False
     return ungrounded(text, payload.facts) is None
+
+
+def _day_grounded(day: date, line: str, today: date) -> bool:
+    """The line holds the day's month and day, any year it writes is this one, and it is within a year of today."""
+    if (day.month, day.day) not in extract_facts(line).dates:
+        return False
+    years = {int(y) for y in re.findall(r"\b(20\d\d)\b", line)}
+    return abs((day - today).days) <= 366 and (not years or day.year in years)
 
 
 def _last_update(cited: LastUpdate | None, payload: Payload, today: date) -> date | None:
