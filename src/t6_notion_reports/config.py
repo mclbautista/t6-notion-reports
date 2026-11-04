@@ -11,6 +11,7 @@ from typing import Mapping
 
 import yaml
 
+from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .llm import DEFAULT_MODEL
 from .people_match import MatchSettings
 
@@ -43,7 +44,7 @@ class BriefSettings:
     digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
     openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
-    lead_warning_days: int = 30  # a Lead whose Playdate is less than this many days away is flagged
+    lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
 
 
 @dataclass(frozen=True)
@@ -163,7 +164,7 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         digest_recipients=tuple(digest_recipients),
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
-        lead_warning_days=_days(raw, "lead_warning_days", 30),
+        lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
     )
 
 

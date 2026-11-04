@@ -9,6 +9,7 @@ from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, date, project, 
 from t6_notion_reports.brief_job import BriefFailed, run_brief
 from t6_notion_reports.cli import main
 from t6_notion_reports.config import BriefSettings
+from t6_notion_reports.flags import ROLES
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.snapshot_job import run_snapshot
 
@@ -32,7 +33,7 @@ def contacts():
 def pages(stage, dubbing_status=None, staffed=True):
     extra = {"Status": select(dubbing_status)} if dubbing_status else {}
     if staffed:  # nothing to flag, so Dubbing stays quiet when unchanged
-        extra.update({role: relation("c-pio") for role in ("Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe")})
+        extra.update({role: relation("c-pio") for role in ROLES})
         extra.update({"Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20")})
     return [
         project("p1", "Show", "PAS", Stage=select(stage), **{"T6 Post Coordinator": relation("c-pio")}),

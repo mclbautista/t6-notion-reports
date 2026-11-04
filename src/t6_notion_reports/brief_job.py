@@ -9,8 +9,8 @@ from typing import Callable
 from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
 from .config import BriefSettings
 from .contacts import Contact, load_contacts
-from .flags import project_flags
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
+from .flags import project_flags
 from .gateway import GatewayError
 from .llm import LlmClient
 from .owed import OwedOutcome, find_owed

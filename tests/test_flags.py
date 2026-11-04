@@ -2,13 +2,15 @@
 import re
 from dataclasses import replace
 
-from fake_notion import date, relation
+from fake_notion import CONTACTS, FakeNotion, date, relation
+from t6_notion_reports.brief_job import run_brief
+from t6_notion_reports.flags import ROLES
 from test_gated_briefs import (
-    AIRING, ARCHIVING, BRIEF, IN_PROGRESS, LEADS, STANDBY, TVC, brief, digest, dm, make_db, proj,
+    AIRING, ARCHIVING, BRIEF, IN_PROGRESS, LEADS, SATURDAY, STANDBY, TVC, Gateway, brief, contacts, digest, dm,
+    make_db, proj,
 )
 
 # Today is Sat 2026-11-14 in Manila.
-ROLES = ("Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe")
 
 
 def staffed(**props):
@@ -118,12 +120,9 @@ def test_a_lead_playdate_30_or_more_days_away_gets_no_warning():
 def test_the_lead_warning_window_is_configurable():
     page = proj("p1", "ONE", LEADS, **staffed(Playdate=date("2026-12-04")))  # 20 days away
     conn = make_db([page], [page])
-    import test_gated_briefs as base
-    from t6_notion_reports.brief_job import run_brief
-    from fake_notion import CONTACTS, FakeNotion
-    gw = base.Gateway()
-    run_brief(conn, FakeNotion([], base.contacts()), CONTACTS, replace(BRIEF, lead_warning_days=10),
-              base.SATURDAY, gateway=gw, log=lambda _: None)
+    gw = Gateway()
+    run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, lead_warning_days=10),
+              SATURDAY, gateway=gw, log=lambda _: None)
     assert "Playdate in" not in dm(gw)
     assert "Playdate in 20 days" in digest(brief(conn))
 
@@ -190,3 +189,15 @@ def test_flags_show_on_the_first_brief_and_on_changed_projects():
     new = proj("p1", "ONE", IN_PROGRESS, stage="Online", **staffed(Playdate=date(None)))
     text = dm(brief(make_db([old], [new])))
     assert "No Playdate" in text and "Stage: Offline → Online" in text
+
+
+def test_archiving_ignores_playdate_and_submission_dates():
+    text = one(ARCHIVING, **staffed(Playdate=date("2026-10-01"), **{"Submission Deadline": date("2026-10-05"), "Archival Deadline": date("2026-12-20")}))
+    assert "overdue" not in text and "No Playdate" not in text
+
+
+def test_date_sanity_concerns_also_apply_to_standby_and_leads():
+    far = {"Playdate": date("2028-01-01")}
+    for status in (STANDBY, LEADS):
+        text = one(status, **staffed(**far))
+        assert len([ln for ln in lines_of(text) if "year away" in ln]) == 1
