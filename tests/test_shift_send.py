@@ -200,7 +200,7 @@ def test_slots_only_include_shift_when_enabled(tmp_path):
     assert cli._slots(on) == SLOTS + SHIFT_SLOTS and cli._slots(off) == SLOTS
 
 
-def test_fake_clock_fires_all_three_every_day_and_friday_1800_runs_projects_first():
+def test_fake_clock_fires_all_three_every_day_and_friday_1800_fires_on_its_own():
     fake, fired = FakeClock(manila(2026, 11, 12, 0)), []
     end = manila(2026, 11, 15, 0)
     Scheduler(lambda k: fired.append((fake.now, k)), fake.clock, fake.sleep, log=lambda _: None,
@@ -209,7 +209,7 @@ def test_fake_clock_fires_all_three_every_day_and_friday_1800_runs_projects_firs
         (manila(2026, 11, 12, 5), "shift0500"), (manila(2026, 11, 12, 12), "shift1200"),
         (manila(2026, 11, 12, 18), "shift1800"),
         (manila(2026, 11, 13, 5), "shift0500"), (manila(2026, 11, 13, 12), "shift1200"),
-        (manila(2026, 11, 13, 18), "friday"), (manila(2026, 11, 13, 18), "shift1800"),
+        (manila(2026, 11, 13, 18), "shift1800"), (manila(2026, 11, 13, 23, 30), "friday"),
         (manila(2026, 11, 14, 5), "shift0500"), (manila(2026, 11, 14, 12), "shift1200"),
         (manila(2026, 11, 14, 18), "shift1800"),
     ]

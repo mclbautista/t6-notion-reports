@@ -1,4 +1,4 @@
-"""The Sunday briefing job: diff Friday against Monday, build the messages, send them."""
+"""The Saturday briefing job: diff Friday against Monday, build the messages, send them."""
 from __future__ import annotations
 
 import sqlite3

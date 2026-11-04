@@ -30,7 +30,7 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class BriefSettings:
-    """Sunday briefing settings. Present only when the briefing keys are in config.yaml."""
+    """Saturday briefing settings. Present only when the briefing keys are in config.yaml."""
 
     gateway_url: str
     group_chat_id: int
