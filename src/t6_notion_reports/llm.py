@@ -84,8 +84,19 @@ class OpenRouterClient:
         except (KeyError, IndexError, TypeError):
             raise LlmError("OpenRouter answer has no message content") from None
         try:
-            return schema.model_validate_json(_strip_fence(content))
-        except (ValidationError, TypeError):
+            text = _strip_fence(content)
+        except TypeError:
+            raise LlmError("OpenRouter answer did not match the schema") from None
+        try:
+            return schema.model_validate_json(text)
+        except ValidationError as exc:
+            if not any(err["type"] == "json_invalid" for err in exc.errors()):
+                raise LlmError("OpenRouter answer did not match the schema") from None
+        # Not valid JSON: models sometimes leave double quotes unescaped inside a string (a quote
+        # field quoting a phrase). Repair that one defect; anything else still fails.
+        try:
+            return schema.model_validate_json(_repair_quotes(text))
+        except ValidationError:
             raise LlmError("OpenRouter answer did not match the schema") from None
 
 
@@ -94,3 +105,40 @@ def _strip_fence(text: object) -> str:
         raise TypeError("content is not text")
     match = re.fullmatch(r"\s*```(?:json)?\s*(.*?)\s*```\s*", text, re.DOTALL)
     return match.group(1) if match else text
+
+
+_AFTER_STRING = {",", "}", "]", ":"}
+
+
+def _repair_quotes(text: str) -> str:
+    """Escape double quotes (and raw newlines) that sit inside a JSON string value.
+
+    Inside a string, a quote closes it only if the next non-space character is ``, } ] :`` or the
+    text ends; otherwise it is part of the content and gets a backslash. Valid escapes are kept.
+    """
+    out: list[str] = []
+    in_string = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if not in_string:
+            in_string = ch == '"'
+            out.append(ch)
+        elif ch == "\\" and i + 1 < n:
+            out.append(text[i : i + 2])
+            i += 1
+        elif ch == '"':
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j >= n or text[j] in _AFTER_STRING:
+                in_string = False
+                out.append(ch)
+            else:
+                out.append('\\"')
+        elif ch in "\n\r\t":
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
