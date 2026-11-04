@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from fake_notion import CONTACTS, FakeNotion, date, relation
 from t6_notion_reports.brief_job import run_brief
-from t6_notion_reports.flags import ROLES, SEPARATE_ROLES
+from t6_notion_reports.flags import ROLES
 from test_gated_briefs import (
     AIRING, ARCHIVING, BRIEF, IN_PROGRESS, LEADS, SATURDAY, STANDBY, TVC, Gateway, brief, contacts, digest, dm,
     make_db, proj,
@@ -16,7 +16,7 @@ from test_gated_briefs import (
 def staffed(**props):
     """A project with every role filled and sane dates, so only what a test changes can be flagged."""
     # proj() sets the coordinator itself, from its coordinator argument.
-    base = {role: relation("c-ana") for role in (*ROLES, *SEPARATE_ROLES) if role != "T6 Post Coordinator"}
+    base = {role: relation("c-ana") for role in ROLES if role != "T6 Post Coordinator"}
     base.update({"Playdate": date("2026-11-20"), "Submission Deadline": date("2026-12-20")})
     base.update(props)
     return base
@@ -151,18 +151,18 @@ def test_post_supe_is_not_flagged():
     assert "Post Supe" not in one(IN_PROGRESS, **staffed(**{"Post Supe": relation()}))
 
 
-def test_director_and_cinematographer_are_flagged_separately_from_the_roles_line():
+def test_director_and_cinematographer_are_listed_on_the_one_roles_line():
     text = one(IN_PROGRESS, **staffed(Director=relation(), Cinematographer=relation(), Colorist=relation()))
     ls = lines_of(text)
-    assert "⚠️ No Director" in ls and "⚠️ No Cinematographer" in ls
-    assert ["⚠️ Missing roles: Colorist"] == [ln for ln in ls if "Missing roles" in ln]
+    assert [ln for ln in ls if "Missing roles" in ln or "No Director" in ln or "No Cinematographer" in ln] == [
+        "⚠️ Missing roles: Colorist, Director, Cinematographer"]
 
 
 def test_roles_are_only_flagged_for_in_progress_tvc_and_airing():
     bare = staffed(Director=relation(), Editors=relation())
     for status in (STANDBY, ARCHIVING):
-        assert "Missing roles" not in one(status, **bare) and "No Director" not in one(status, **bare)
-    assert "No Director" in one(AIRING, **bare) and "No Director" in one(TVC, **bare)
+        assert "Missing roles" not in one(status, **bare)
+    assert "Missing roles: Editors, Director" in one(AIRING, **bare) and "Missing roles: Editors, Director" in one(TVC, **bare)
 
 
 def test_a_fully_staffed_project_has_no_roles_line():

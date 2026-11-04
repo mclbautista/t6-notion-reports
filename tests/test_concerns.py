@@ -139,3 +139,40 @@ def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_sho
                  "friday", FRIDAY + timedelta(minutes=1))
     assert resolved_lines(dm(run(conn, 1)))
     assert not resolved_lines(dm(run(conn, 2)))
+
+
+class FailingLlm:
+    def complete(self, system, user, schema):
+        from t6_notion_reports.llm import LlmError
+        raise LlmError("down")
+
+
+def test_a_fixed_date_problem_resolves_even_when_the_projects_llm_call_fails():
+    conn = setup()
+    assert concern_lines(dm(run(conn, 0, llm=FailingLlm())))
+    friday(conn, concern=False)
+    text = dm(run(conn, 1, llm=FailingLlm()))
+    assert concern_lines(text) == []
+    assert len(resolved_lines(text)) == 1 and "before" in resolved_lines(text)[0]
+
+
+def test_an_llm_concern_stays_open_with_its_age_while_the_call_fails():
+    from test_consolidation import Llm, line_id, reply_with
+    from fake_notion import rich
+    notes = "As of Nov 9\n• Client notes still pending"
+    page = proj("p1", "ONE", IN_PROGRESS, **props(concern=False), **{"PM Notes": rich(notes)})
+    conn = make_db([page], [page])
+    concern = lambda p: [{"kind": "open_item", "text": "Client notes are still pending", "source": "pm_notes",
+                          "line_id": line_id(p, "pending"), "quote": "• Client notes still pending"}]
+    run(conn, 0, llm=Llm(reply_with(concerns=concern)))
+    text = dm(run(conn, 1, llm=FailingLlm()))
+    assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved" not in text
+
+
+def test_a_store_made_before_the_source_column_is_upgraded_in_place():
+    conn = setup()
+    conn.execute("DROP TABLE concerns")
+    conn.execute("CREATE TABLE concerns (page_id TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL,"
+                 " first_on TEXT NOT NULL, last_on TEXT NOT NULL, resolved_on TEXT, PRIMARY KEY (page_id, key))")
+    assert concern_lines(dm(run(conn, 0)))
+    assert "source" in {r[1] for r in conn.execute("PRAGMA table_info(concerns)")}

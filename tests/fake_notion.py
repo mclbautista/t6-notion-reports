@@ -119,7 +119,9 @@ class FakeNotion:
         return [p for p in pages if not p.get("in_trash")]
 
     def retrieve_data_source(self, data_source_id):
-        return {"id": data_source_id, "description": [{"plain_text": self.description}]}
+        # A string is one plain rich text item; a list is passed through as rich text items.
+        rich_items = self.description if isinstance(self.description, list) else [{"plain_text": self.description}]
+        return {"id": data_source_id, "description": rich_items}
 
     def create_page(self, data_source_id, properties, children):
         assert data_source_id == MEETING and len(children) <= 100

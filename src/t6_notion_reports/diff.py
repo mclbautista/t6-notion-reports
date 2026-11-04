@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
@@ -56,6 +57,7 @@ class ProjectChange:
     stage: str | None = None
     group: str | None = None  # status gate: on_hold | in_progress | leads
     edited: date | None = None  # Notion last-edited day (Manila)
+    dates: tuple[str, ...] = ()  # the date properties that are set, as of this state: "Playdate Dec 1, 2026"
     flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
     note_dates: tuple[str, ...] = ()  # blank dates the PM Notes state, with a "not in property" hint when precise
     concerns: tuple[str, ...] = ()  # open Concerns, each with its age (concerns.py)
@@ -93,7 +95,8 @@ def diff_snapshots(
             changes = [
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
-                if f not in ("PM Notes", LAST_EDITED) and _cmp(o.get(f)) != _cmp(n.get(f))
+                # A field on one side only is a change, even when the other side holds an explicit null.
+                if f not in ("PM Notes", LAST_EDITED) and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
             ]
             notes = _diff_notes(o.get("PM Notes"), n.get("PM Notes"), old_date, new_date)
             if changes or notes:
@@ -159,7 +162,17 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         code=state.get("Project Code") or None, title=state.get("Name") or None,
         stage=squash(str(state["Stage"])) if state.get("Stage") else None,
         group=gate(state.get("Status")), edited=_edited_day(state.get(LAST_EDITED)),
+        dates=_dates(state),
     )
+
+
+def _dates(state: dict[str, object]) -> tuple[str, ...]:
+    out = []
+    for name in (PLAYDATE, SUBMISSION, ARCHIVAL):
+        day = stored_day(state.get(name))
+        if day is not None:
+            out.append(f"{name} {day:%b} {day.day}, {day.year}")
+    return tuple(out)
 
 
 def _edited_day(value: object) -> date | None:

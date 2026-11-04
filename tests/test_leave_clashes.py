@@ -134,10 +134,13 @@ def test_an_entry_whose_quote_is_not_an_exact_line_or_whose_dates_are_invalid_is
     assert dm(gw).count("on leave") == 1  # one bad entry does not void the rest
 
 
-def test_a_quote_may_carry_the_bullet_mark_and_extra_spaces():
+def test_a_quote_may_carry_the_bullet_mark_but_not_altered_spacing_inside_the_line():
     conn, notion = build([team_project()])
-    gw, _ = brief(conn, notion, LeaveLlm([entry("Lea", "2026-11-20", "2026-11-22", "•  Lea -  leave Nov 20-22")]))
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Lea", "2026-11-20", "2026-11-22", "•  Lea - leave Nov 20-22 ")]))
     assert "Lea Santos is on leave" in dm(gw)
+    conn, notion = build([team_project()])
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Lea", "2026-11-20", "2026-11-22", "Lea -  leave Nov 20-22")]))
+    assert "on leave" not in dm(gw)
 
 
 def test_a_nickname_is_matched_through_the_contacts_alias():
@@ -193,11 +196,35 @@ def test_leaves_are_parsed_once_per_run_and_the_payload_holds_only_the_leave_lin
 
 
 def test_there_is_no_leave_call_without_leave_lines_and_no_note():
-    conn, notion = build([team_project()], description="")
+    conn, notion = build([team_project()], description=HEADING + "\n\n")
     llm = LeaveLlm(STANDARD)
     gw, _ = brief(conn, notion, llm)
     assert llm.payloads == []
     assert "Leaves unavailable" not in digest(gw)
+
+
+def test_without_the_heading_nothing_is_sent_and_the_digest_says_leaves_are_unavailable():
+    conn, notion = build([team_project()], description="Notes about the db\n• Lea - leave Nov 20-22")
+    llm = LeaveLlm(STANDARD)
+    gw, _ = brief(conn, notion, llm)
+    assert llm.payloads == []
+    assert "Leaves unavailable: no Upcoming Holidays and Leaves heading" in digest(gw)
+    assert "Leaves unavailable" not in dm(gw)
+
+
+def test_only_the_leaves_section_is_sent_and_a_later_heading_ends_it():
+    plain = "\n".join([HEADING, *LEAVES, "", "Project planning", "• ONE needs Lea Santos on Dec 1 for the online"])
+    rich_text = [
+        {"plain_text": HEADING + "\n\nDon't forget the onboarding projects", "annotations": {"bold": True}},
+        {"plain_text": "\n" + "\n".join(LEAVES) + "\n", "annotations": {"bold": False}},
+        {"plain_text": "Staffing", "annotations": {"bold": True}},
+        {"plain_text": "\nONE is short of an editor on Dec 3", "annotations": {"bold": False}},
+    ]
+    for description in (plain, rich_text, "\n".join([HEADING, *LEAVES, "Planning:", "• ONE on Dec 1"])):
+        conn, notion = build([team_project()], description=description)
+        llm = LeaveLlm(STANDARD)
+        brief(conn, notion, llm)
+        assert llm.payloads[0]["lines"] == [ln.lstrip("• ") for ln in LEAVES], description
 
 
 def test_a_clash_concern_ages_through_the_store_and_resolves_when_the_leave_goes():
@@ -223,3 +250,35 @@ def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
               projects_ds=PROJECTS, show_llm_input=True)
     assert llm.payloads == []
     assert any("llm input: leaves" in text and "Lea - leave Nov 20-22" in text for text in out)
+
+
+def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_it():
+    conn, notion = build([team_project()])
+    brief(conn, notion, LeaveLlm(STANDARD))
+    gw, _ = brief(conn, notion, LeaveLlm(fail=True))
+    text = dm(gw)
+    assert "Lea Santos is on leave Nov 20–22" in text and "Resolved last week" not in text
+    assert "Leaves unavailable" in digest(gw)
+
+
+def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipients():
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-jam", "Jam")]
+    people[-1]["properties"].update(tg("jam_h", 777))
+    conn, _ = build([team_project()])
+    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    settings = replace(BRIEF, digest_recipients=("c-cyril", "c-jam"))
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
+    by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
+    assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
+    assert by(777) and "Zed" not in by(777)
+    assert "Zed" not in by(111)
+
+
+def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
+    description = "\n".join([HEADING, "• Lea - leave Nov 20-22", "", "• Ben on vacation next week", "Ana on leave:",
+                             "• Nov 25"])
+    conn, notion = build([team_project()], description=description)
+    llm = LeaveLlm(STANDARD)
+    brief(conn, notion, llm)
+    assert llm.payloads[0]["lines"] == ["Lea - leave Nov 20-22", "Ben on vacation next week", "Ana on leave:", "Nov 25"]

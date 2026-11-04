@@ -66,3 +66,9 @@ def test_last_updated_is_latest_header():
     assert last_updated(REAL, SNAP) == date(2026, 10, 26)
     assert last_updated("loose line", SNAP) is None
     assert last_updated("", SNAP) is None
+
+
+def test_a_year_the_header_writes_is_kept_and_iso_headers_are_read():
+    notes = parse_pm_notes("As of Nov 1, 2024\n- old\nAs of 2025-03-04\n- iso\nAs of Oct 20 2026: tail", SNAP)
+    assert [b.header_date for b in notes.blocks] == [date(2024, 11, 1), date(2025, 3, 4), date(2026, 10, 20)]
+    assert notes.blocks[2].bullets == ["tail"]

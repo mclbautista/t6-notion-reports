@@ -13,7 +13,10 @@ _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _HEADER = re.compile(r"^\s*as\s*of\b[\s.,:;-]*(?P<rest>.*)$", re.IGNORECASE)
 _BULLET = re.compile(r"^\s*[•\-*·–]+\s*")
-_DATE = re.compile(r"^(?P<month>[A-Za-z]{3,})\.?\s*(?P<day>\d{1,2})\b[\s.,:;-]*(?P<tail>.*)$")
+_DATE = re.compile(
+    r"^(?P<month>[A-Za-z]{3,})\.?\s*(?P<day>\d{1,2})\b(?:[\s.,]*(?P<year>20\d\d)\b)?[\s.,:;-]*(?P<tail>.*)$"
+)
+_ISO = re.compile(r"^(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})\b[\s.,:;-]*(?P<tail>.*)$")
 
 
 @dataclass
@@ -67,11 +70,15 @@ def _header_block(line: str, rest: str, snapshot_date: date) -> Block:
     words = rest.split()
     if words and words[0].rstrip(".,:;")[:3].lower() in _WEEKDAYS and not _month(words[0]):
         rest = " ".join(words[1:])
-    m = _DATE.match(rest)
-    month = _month(m.group("month")) if m else None
+    m = _ISO.match(rest) or _DATE.match(rest)
+    month = (int(m.group("month")) if m.re is _ISO else _month(m.group("month"))) if m else None
     if not (m and month):
         return Block(line, None)
-    when = _infer_year(month, int(m.group("day")), snapshot_date)
+    try:  # a year the header writes is kept, even a far one; without one the year is inferred
+        when = (date(int(m.group("year")), month, int(m.group("day"))) if m.group("year")
+                else _infer_year(month, int(m.group("day")), snapshot_date))
+    except ValueError:
+        return Block(line, None)
     tail = m.group("tail").strip()
     block = Block(line[: len(line) - len(tail)].rstrip() if tail else line, when)
     if tail:

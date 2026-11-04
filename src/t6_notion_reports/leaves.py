@@ -3,7 +3,7 @@
 Once per brief run, one LLM call parses the "Upcoming Holidays and Leaves" lines of the Projects
 database description into entries (who, kind, start, end, quote). The call sees those lines and
 today's date and nothing about projects. Code checks each entry: the quote must be an exact input
-line and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
+line (a leading bullet mark aside) and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
 
 Each leave entry's name is resolved to a Contacts page with ``people_match`` (onboarded Contacts
 first). A leave clashes with a project when that page is in the project's team relations and the
@@ -14,6 +14,7 @@ code template; names that matched nobody are listed for Cyril's digest only.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Iterable
@@ -30,6 +31,8 @@ DEFAULT_CLASH_DAYS = 14
 ALL = "ALL"
 KINDS = ("leave", "holiday")
 UNAVAILABLE_NOTE = "⚠️ Leaves unavailable: no leave clash Concerns this run"
+NO_HEADING_NOTE = "⚠️ Leaves unavailable: no Upcoming Holidays and Leaves heading in the Projects description"
+_BULLET = re.compile(r"^[•\-*·–]+\s*")
 UNMATCHED_NOTE = "⚠️ Unmatched leave names (add an alias in Contacts): "
 
 SYSTEM = """You read the "Upcoming Holidays and Leaves" list of a post-production studio. You are given its lines (each is free text) and today's date.
@@ -78,10 +81,11 @@ def parse_leaves(llm: LlmClient, lines: list[str], today: date) -> LeaveResult:
         reply = llm.complete(SYSTEM, json.dumps(payload(lines, today), ensure_ascii=False), LeaveParse)
     except LlmError:
         return LeaveResult(failed=True)
-    exact = {_bare(ln) for ln in lines}
+    # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
+    exact = {_BULLET.sub("", ln.strip()) for ln in lines}
     kept: list[Leave] = []
     for item in reply.entries:
-        if item.kind not in KINDS or not squash(item.who) or _bare(item.quote) not in exact:
+        if item.kind not in KINDS or not squash(item.who) or _BULLET.sub("", item.quote.strip()) not in exact:
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)
@@ -156,5 +160,3 @@ def _show(when: date) -> str:
     return f"{when:%b} {when.day}, {when.year}"
 
 
-def _bare(text: str) -> str:
-    return squash(text).lstrip("•-*·– ").strip()

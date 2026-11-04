@@ -8,9 +8,11 @@ Which date is flagged depends on the Status:
     Archiving                      blank or overdue Archival Deadline
     Leads                          Playdate in the past, or less than ``lead_warning_days`` away
 
+Any Status with a blank Project Health gets the "missing health update" note, as its last flag.
+
 A date can be overdue only strictly before today (Asia/Manila). The overdue flags come first, so the
-worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival before Submission) are not flags but Concern
-items, for a later ticket to age.
+worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival
+before Submission) are not flags but Concerns, judged on the precise dates a property or the PM Notes give.
 """
 from __future__ import annotations
 
@@ -23,10 +25,11 @@ from .snapshots import squash
 PLAYDATE = "Playdate"
 SUBMISSION = "Submission Deadline"
 ARCHIVAL = "Archival Deadline"
-# Roles whose absence is listed together on one "Missing roles" line, and roles flagged one by one.
-ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator")
-SEPARATE_ROLES = ("Director", "Cinematographer")
+# Every required role; the missing ones are listed together on one "Missing roles" line (Cyril, #60).
+ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator",
+         "Director", "Cinematographer")
 DEFAULT_LEAD_WARNING_DAYS = 30
+MISSING_HEALTH = "⚠️ missing health update"
 
 _DATED_IN_PROGRESS = {"🚨 In-Progress", "🏎. In-Progress TVC"}
 _AIRING = "Airing"
@@ -49,11 +52,10 @@ def project_flags(
 
     ``stated`` holds dates the PM Notes give for blank properties (property name -> day, or None for a
     fuzzy value). A stated date is not missing; a precise one is judged like the property's own, a fuzzy
-    one never overdue. Date sanity looks at the properties only.
+    one never overdue. Date sanity looks at the precise dates, from the property or the notes.
     """
     status = squash(str(state.get("Status") or ""))
     dates = {name: stored_day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
-    own = dict(dates)  # the properties as stored, for the date sanity checks
     stated = stated or {}
     for name, day in stated.items():
         if dates.get(name) is None:
@@ -75,7 +77,6 @@ def project_flags(
             check(name, blank=True, late=status != _AIRING)
         if (missing := [r for r in ROLES if not state.get(r)]):
             other.append("⚠️ Missing roles: " + ", ".join(missing))
-        other += [f"⚠️ No {r}" for r in SEPARATE_ROLES if not state.get(r)]
     elif status == "📦 Archiving":
         check(ARCHIVAL, blank=True, late=True)
     elif status == "🌱 Leads":
@@ -86,7 +87,10 @@ def project_flags(
             if 0 <= ahead < lead_warning_days:
                 other.append("⚠️ Playdate today: check with the client" if ahead == 0 else
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
-    return ProjectFlags(tuple(overdue + other), tuple(_sanity(own)))
+    if not squash(str(state.get("Project Health") or "")):
+        other.append(MISSING_HEALTH)  # every gated Status: the project also sorts last in its section
+    # Sanity uses the effective precise dates: a fuzzy one from the notes is None here.
+    return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
 
 
 def relevant_dates(status: object) -> tuple[str, ...]:

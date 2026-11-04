@@ -47,6 +47,13 @@ class Llm:
         return schema(**self.reply(payload))
 
 
+def snapshot_change(payload, window="since_psr", **item):
+    """A change citing the payload's first snapshot change in ``window``, with its exact text."""
+    w = next(w for w in payload["snapshot_changes"] if w["window"] == window)
+    c = w["changes"][0]
+    return {"source": "snapshot", "line_id": c["line_id"], "quote": c["text"], **item}
+
+
 def line_id(payload, text, where="pm_notes"):
     rows = payload["pm_notes"] if where == "pm_notes" else payload["minutes"]["lines"]
     return next(r["line_id"] for r in rows if text in r["text"])
@@ -125,10 +132,10 @@ def test_both_diff_windows_and_the_minutes_lines_are_in_the_payload():
     payload = llm.payloads[0]
     assert payload["snapshot_changes"] == [
         {"window": "since_last_brief", "from": "2026-11-06T23:30:00+08:00", "to": "2026-11-13T23:30:00+08:00",
-         "changes": [{"field": "Stage", "old": "Preprod", "new": "Online"}]},
+         "changes": [{"line_id": 7, "field": "Stage", "old": "Preprod", "new": "Online", "text": "Stage: Preprod → Online"}]},
         {"window": "since_psr", "from": "2026-11-09T11:00:00+08:00", "to": "2026-11-13T23:30:00+08:00",
-         "changes": [{"field": "Stage", "old": "Offline", "new": "Online"}]},
-    ]
+         "changes": [{"line_id": 8, "field": "Stage", "old": "Offline", "new": "Online", "text": "Stage: Offline → Online"}]},
+    ]  # snapshot changes are numbered after the Minutes lines, so they can be cited too
     assert payload["minutes"] == {
         "page_date": "2026-11-09", "last_edited": "2026-11-09T14:10:00.000+08:00", "sent_at": "2026-11-09T14:30:00+08:00",
         "lines": [{"line_id": 5, "text": "• Submission moved to Nov 28"}, {"line_id": 6, "text": "• Grade on Nov 24"}],
@@ -200,12 +207,15 @@ def test_an_item_that_fails_validation_is_dropped_and_the_rest_of_the_reply_stil
         {"text": "QC with Jam", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC after 3 days", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC invented", "source": "invented", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
-        {"text": "Stage Offline to Online", "source": "snapshot"},
+        snapshot_change(p, text="Stage Offline to Online"),
+        {"text": "Snapshot without a citation", "source": "snapshot"},
+        {"text": "Snapshot invented line", "source": "snapshot", "line_id": 99999, "quote": "Stage: Offline → Online"},
+        {**snapshot_change(p, text="Snapshot wrong quote"), "quote": "Stage: Preprod → Online"},
     ]
     gw, _ = run(conn_one(), Llm(reply_with(changes=changes)))
     text = dm(gw)
     assert "• QC on Nov 20" in text and "• Online started" in text and "• Stage Offline to Online" in text
-    for dropped in ("Wrong", "Dec 9", "Jam", "3 days", "invented"):
+    for dropped in ("Wrong", "Dec 9", "Jam", "3 days", "invented", "Snapshot"):
         assert dropped not in text
 
 
@@ -280,19 +290,19 @@ def test_an_invalid_or_future_last_update_falls_back_to_last_edited_time():
 # ---- changes --------------------------------------------------------------------------------
 
 def test_after_psr_changes_are_marked_and_duplicates_across_windows_show_once():
-    changes = [
-        {"text": "Stage moved to Online", "source": "snapshot", "after_psr": False},
-        {"text": "stage  moved to Online", "source": "snapshot", "after_psr": True},  # same change, other window
-        {"text": "Online started", "source": "snapshot", "after_psr": True},
+    changes = lambda p: [
+        snapshot_change(p, text="Stage moved to Online", after_psr=False),
+        snapshot_change(p, text="stage  moved to Online", after_psr=True),  # same change, other window
+        snapshot_change(p, text="Online started", after_psr=True),
     ]
-    gw, _ = run(conn_one(), Llm(lambda p: {"changes": changes}))
+    gw, _ = run(conn_one(), Llm(lambda p: {"changes": changes(p)}))
     text = dm(gw)
     assert text.count("Stage moved to Online") == 1 and "stage  moved" not in text
     assert "• Stage moved to Online (after PSR)" in text and "• Online started (after PSR)" in text
 
 
 def test_consolidated_changes_replace_the_raw_changes_list():
-    gw, _ = run(conn_one(), Llm(lambda p: {"changes": [{"text": "Online started", "source": "snapshot"}]}))
+    gw, _ = run(conn_one(), Llm(lambda p: {"changes": [snapshot_change(p, text="Online started")]}))
     text = dm(gw)
     assert "• Online started" in text
     assert "→" not in text and "PM Notes ·" not in text  # no raw field change, no raw notes quote
@@ -327,7 +337,7 @@ def two_projects():
 
 
 def test_a_failing_call_marks_that_project_only_and_the_digest_names_it():
-    gw, logs = run(two_projects(), Llm(lambda p: {"changes": [{"text": "Online started", "source": "snapshot"}]},
+    gw, logs = run(two_projects(), Llm(lambda p: {"changes": [snapshot_change(p, text="Online started")]},
                                        fail_for={"Show ONE"}))
     one = dm(gw)
     assert "(LLM unavailable)" in one and "Stage: Offline → Online" in one  # code-only: the raw diff
@@ -361,3 +371,122 @@ def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
 def test_the_owed_items_section_is_gone():
     gw, _ = run(conn_one(), Llm())
     assert not any("What you owe" in t for *_, t in gw.sent)
+
+
+# ---- PM Notes years (#60) -------------------------------------------------------------------
+
+OLD_2024 = "As of Nov 1, 2024\n• Offline locked in 2024"
+
+
+def test_a_header_with_an_old_year_is_outside_the_window_and_can_be_cited_as_the_last_update():
+    llm = Llm()
+    run(conn_one(OLD_2024 + "\n" + NOTES), llm)
+    texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
+    assert "As of Nov 1, 2024" not in texts and "• Offline locked in 2024" not in texts
+    notes = OLD_2024  # only the old block: the LLM cites it as the real last update
+    llm = Llm(reply_with(last_update=lambda p: {"line_id": 1, "as_of_date": "2024-11-01"}))
+    gw, _ = run(conn_one(notes), llm, brief=replace(BRIEF, pm_notes_weeks=200))
+    assert llm.payloads[0]["pm_notes"][0]["text"] == "As of Nov 1, 2024"
+    assert weeks_text(gw) == "updated 106 wks ago"  # Nov 1, 2024 to Sat Nov 14, 2026: 743 days
+
+
+def test_an_old_block_is_kept_for_a_far_or_iso_future_date_and_dropped_for_a_past_year():
+    cases = {
+        "As of Aug 3\n• Launch in July 2027": True,
+        "As of Aug 3\n• Delivery 2027-07-01": True,
+        "As of Aug 3\n• Festival Q1 2027": True,
+        "As of Aug 3, 2024\n• Screening Dec 2, 2024": False,
+        "As of Aug 3, 2024\n• Screening Dec 2": False,  # no year: read near its 2024 block
+        "As of Aug 3, 2024\n• Premiere December 2024": False,
+    }
+    for old, kept in cases.items():
+        llm = Llm()
+        run(conn_one(NOTES + "\n" + old), llm, brief=replace(BRIEF, pm_notes_weeks=4))
+        texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
+        assert (old.splitlines()[1] in texts) is kept, old
+
+
+def test_a_malformed_item_is_dropped_without_losing_its_valid_siblings():
+    qc = lambda p: line_id(p, "QC on Nov 20")
+    quote = "• QC on Nov 20, waiting for client notes"
+    reply = reply_with(
+        changes=lambda p: [{"text": None, "source": "pm_notes", "line_id": qc(p), "quote": quote},
+                           {"text": "QC on Nov 20", "source": "pm_notes", "line_id": qc(p), "quote": quote}],
+        concerns=lambda p: [{"kind": "open_item", "text": ["not", "text"], "source": "pm_notes"},
+                            {"kind": "open_item", "text": "QC still waits for client notes", "source": "pm_notes",
+                             "line_id": qc(p), "quote": quote}],
+        last_update={"line_id": "not a number"},
+    )
+    gw, _ = run(conn_one(), Llm(reply))
+    text = dm(gw)
+    assert "• QC on Nov 20" in text and "QC still waits for client notes" in text
+    assert "LLM unavailable" not in text and "LLM unavailable" not in digest(gw)
+
+
+# ---- free-text privacy (#60) ----------------------------------------------------------------
+
+LEAKY = ("As of Nov 9\n• Pio to send the files to ana, see notion.so/0123456789abcdef0123456789abcdef"
+         "\n• Ping @ana_h or tg 123456789\n• Same colorist as Show TWO, TWO needs her first")
+
+
+def leaky_db():
+    one, two = page("p1", "ONE", notes=LEAKY), page("p2", "TWO", coordinator="c-ana")
+    return make_db([one, two], [one, two], [one, two])
+
+
+def test_names_ids_and_other_projects_in_free_text_never_reach_the_llm():
+    llm = Llm()
+    run(leaky_db(), llm, notion=minutes_notion("Pio confirmed with Ana, same as TWO"), meeting_notes_ds=MEETING)
+    payload = next(p for p in llm.payloads if p["project"]["name"] == "Show ONE")
+    blob = json.dumps(payload, ensure_ascii=False)
+    for private in ("Pio", "ana", "Ana", "notion.so", "0123456789abcdef", "@ana_h", "ana_h", "123456789",
+                    "Show TWO", "TWO", "c-pio", "c-ana", "p1", "p2"):
+        assert private not in blob, private
+    texts = [r["text"] for r in payload["pm_notes"]]
+    pio, ana = ("[person 1]", "[person 2]") if texts[1].startswith("• [person 1]") else ("[person 2]", "[person 1]")
+    assert texts[1] == f"• {pio} to send the files to {ana}, see [id 1]"
+    assert texts[2] == "• Ping [id 2] or tg [id 3]"
+    assert texts[3] in ("• Same colorist as [project 1], [project 2] needs her first",
+                        "• Same colorist as [project 2], [project 1] needs her first")
+    two = texts[3].split(", ")[1].split(" needs")[0]
+    assert payload["minutes"]["lines"][0]["text"] == f"• {pio} confirmed with {ana}, same as {two}"  # one mapping
+    assert payload["project"]["name"] == "Show ONE"  # the project's own name stays
+
+
+def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name_is_dropped():
+    def row(p):
+        return next(r for r in p["pm_notes"] if "send the files" in r["text"])
+
+    def placeholders(p):  # (Pio's, Ana's), as this payload numbered them
+        text = row(p)["text"]
+        return text[2:12], text.split("files to ")[1][:10]
+
+    def reply(p):
+        if p["project"]["name"] != "Show ONE":
+            return {}
+        pio, ana = placeholders(p)
+        cite = {"source": "pm_notes", "line_id": row(p)["line_id"], "quote": row(p)["text"]}
+        return {"concerns": [{"kind": "open_item", "text": f"{pio} still has to send the files to {ana}", **cite}],
+                "changes": [{"text": "files go to ana", **cite}, {"text": "files sent by pio", **cite},
+                            {"text": "files to send", **cite}]}
+    gw, _ = run(leaky_db(), Llm(reply))
+    text = dm(gw)
+    assert "Pio still has to send the files to ana" in text
+    assert "• files to send" in text
+    assert "files go to ana" not in text and "files sent by pio" not in text
+
+
+def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-will", "Will Santos")]
+    notes = "As of Nov 9\n• Will sends the grade, we will wait"
+    one = page(notes=notes)
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
+        run_snapshot(conn, FakeNotion([one], people), PROJECTS, CONTACTS, kind, at)
+    cite = lambda p: {"source": "pm_notes", "line_id": line_id(p, "grade"), "quote": "• [person 1] sends the grade, we will wait"}
+    llm = Llm(lambda p: {"changes": [{"text": "team will wait for the grade", **cite(p)}]})
+    gw, _ = run(conn, llm, notion=FakeNotion([], people))
+    assert llm.payloads[0]["pm_notes"][1]["text"] == "• [person 1] sends the grade, we will wait"
+    assert "• team will wait for the grade" in dm(gw)
