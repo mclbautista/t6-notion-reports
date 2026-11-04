@@ -7,7 +7,7 @@ from fake_notion import CONTACTS, PROJECTS, FakeNotion, date, relation
 from t6_notion_reports.brief_job import run_brief
 from t6_notion_reports.snapshot_job import run_snapshot
 from test_flags import lines_of, staffed
-from test_gated_briefs import BRIEF, FRIDAY, IN_PROGRESS, SATURDAY, Gateway, contacts, dm, make_db, proj
+from test_gated_briefs import BRIEF, FRIDAY, digest, IN_PROGRESS, SATURDAY, Gateway, contacts, dm, make_db, proj
 
 # Submission before Playdate is a date-sanity Concern. The missing Colorist is a flag, so the
 # project is listed every week and the Concern coming and going is visible.
@@ -122,7 +122,20 @@ def test_a_dry_run_shows_ages_but_stores_nothing():
     assert conn.execute("SELECT COUNT(*) FROM concerns").fetchone()[0] == 0
 
 
-def test_a_project_with_only_a_concern_counts_as_activity_for_the_coordinator():
-    page = proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP))
-    conn = make_db([page], [page])
-    assert "since Nov 14" in dm(run(conn))
+def test_a_project_with_only_a_concern_counts_as_activity_for_the_quiet_coordinator_rule():
+    quiet = proj("p0", "QUIET", IN_PROGRESS, **staffed(**LATER))
+    noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ana", **staffed(**SLIP))
+    conn = make_db([quiet, noisy], [quiet, noisy])
+    gw = run(conn)
+    assert dm(gw, 111) == ""  # Pio has nothing to show
+    assert "since Nov 14" in dm(gw, 222)
+    assert "No changes: Pio" in digest(gw)
+
+
+def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_show():
+    conn = make_db([proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP))] * 1, [proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP))])
+    run(conn, 0)
+    run_snapshot(conn, FakeNotion([proj("p1", "ONE", IN_PROGRESS, **staffed(**LATER))], contacts()), PROJECTS, CONTACTS,
+                 "friday", FRIDAY + timedelta(minutes=1))
+    assert resolved_lines(dm(run(conn, 1)))
+    assert not resolved_lines(dm(run(conn, 2)))

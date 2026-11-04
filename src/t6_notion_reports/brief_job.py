@@ -80,7 +80,10 @@ def run_brief(
     conn.commit()
     aged = update_concerns(conn, {p: f.concerns for p, f in flagged.items()}, today, brief.concern_chronic_weeks)
     # A dry run shows the ages and the resolved line but leaves the store as it was.
-    conn.rollback() if dry_print or gateway is None else conn.commit()
+    if dry_print or gateway is None:
+        conn.rollback()
+    else:
+        conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day)
     owed: dict[str, OwedOutcome] | None = None
     owed_failed: list[str] = []
@@ -149,20 +152,19 @@ def with_flags(changes, flagged, aged, names, state, snap_day):
     """Attach each project's flags, aged Concerns and resolved Concerns; a project with flags or Concerns is listed too.
 
     Flags and open Concerns count as activity, so a project with no changes but one of them still
-    reaches its coordinator. A resolved Concern alone does not: it shows only under a project that is
-    listed anyway. A removed project has no current state to flag.
+    reaches its coordinator. A resolved Concern also lists its project, so the "Resolved last week"
+    line is seen once rather than dropped unread. A removed project has no current state to flag.
     """
     shown = set()
     for ch in changes:
         if ch.kind != "removed" and ch.page_id in flagged:
-            ch.flags = flagged[ch.page_id].lines
-            ch.concerns = aged.get(ch.page_id, AgedConcerns()).open
-            ch.resolved = aged.get(ch.page_id, AgedConcerns()).resolved
+            a = aged.get(ch.page_id, AgedConcerns())
+            ch.flags, ch.concerns, ch.resolved = flagged[ch.page_id].lines, a.open, a.resolved
         shown.add(ch.page_id)
     extra = []
     for page_id, f in flagged.items():
         a = aged.get(page_id, AgedConcerns())
-        if page_id not in shown and (f.lines or a.open):
+        if page_id not in shown and (f.lines or a.open or a.resolved):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
             ch.flags, ch.concerns, ch.resolved = f.lines, a.open, a.resolved
             extra.append(ch)

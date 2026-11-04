@@ -35,7 +35,7 @@ def concern_key(text: str) -> str:
     return squash(text).casefold()
 
 
-def age_text(first_on: date, today: date, chronic_weeks: int = DEFAULT_CHRONIC_WEEKS) -> str:
+def age_text(first_on: date, today: date, chronic_weeks: int) -> str:
     """"since Oct 26 (2 wks)", plus a marker when open for more than ``chronic_weeks`` weeks."""
     weeks = max(0, (today - first_on).days) // 7
     text = f"since {first_on:%b} {first_on.day} ({weeks} wk{'s' if weeks != 1 else ''})"
@@ -48,7 +48,7 @@ def update_concerns(
     conn: sqlite3.Connection,
     current: dict[str, tuple[str, ...]],
     today: date,
-    chronic_weeks: int = DEFAULT_CHRONIC_WEEKS,
+    chronic_weeks: int,
 ) -> dict[str, AgedConcerns]:
     """Record this run's Concerns (project id → texts) and return what each project shows.
 
@@ -73,7 +73,7 @@ def update_concerns(
                 first = day
                 conn.execute("INSERT INTO concerns VALUES (?, ?, ?, ?, ?, NULL)", (page_id, key, text, day, day))
             else:
-                _, _, _, first, last, resolved = row
+                _, _, _, first, _, resolved = row
                 if resolved is not None and resolved < day:
                     first = day  # gone for a brief, back now: ages from today
                 conn.execute(
