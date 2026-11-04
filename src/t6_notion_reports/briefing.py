@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
 from .owed import OwedOutcome
@@ -226,6 +227,8 @@ def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: da
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
         blocks += [line(f"• {text}") for text in ch.concerns]
+    if ch.resolved:
+        blocks.append(line(f"{RESOLVED_LABEL}: " + "; ".join(ch.resolved)))
     for fc in ch.changes:
         blocks.append(line(f"• {fc.field}: {format_value(fc.old)} → {format_value(fc.new)}"))
     if ch.notes and (ch.notes.blocks or ch.notes.text_diff):

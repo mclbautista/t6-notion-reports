@@ -24,6 +24,7 @@ database_path: /app/data/psr.db
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
 # llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for owed items (default shown)
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
+# concern_chronic_weeks: 4               # a Concern open longer than this many weeks gets a chronic marker
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 
 # JO shift reports (optional). Needs jo_data_source above. When true, the scheduler snapshots Job Orders

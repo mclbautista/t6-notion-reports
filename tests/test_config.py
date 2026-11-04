@@ -142,3 +142,8 @@ def test_bad_lead_warning_days_fails_boot_naming_key_not_value(tmp_path, bad):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, BRIEF_YAML + f"\nlead_warning_days: {bad}\n"), ENV)
     assert "lead_warning_days" in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_concern_chronic_weeks_defaults_to_4_and_is_read_from_config(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.concern_chronic_weeks == 4
+    assert load_config(write(tmp_path, BRIEF_YAML + "\nconcern_chronic_weeks: 6\n"), ENV).brief.concern_chronic_weeks == 6
