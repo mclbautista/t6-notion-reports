@@ -56,6 +56,8 @@ class ProjectChange:
     stage: str | None = None
     group: str | None = None  # status gate: on_hold | in_progress | leads
     edited: date | None = None  # Notion last-edited day (Manila)
+    flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
+    concerns: tuple[str, ...] = ()  # code-made Concerns (date sanity)
 
 
 @dataclass

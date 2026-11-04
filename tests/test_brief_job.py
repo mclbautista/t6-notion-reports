@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 import yaml
 
-from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, project, relation, rich, select, title
+from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, date, project, relation, rich, select, title
 from t6_notion_reports.brief_job import BriefFailed, run_brief
 from t6_notion_reports.cli import main
 from t6_notion_reports.config import BriefSettings
@@ -29,24 +29,37 @@ def contacts():
     return out
 
 
-def pages(stage, dubbing_status=None):
+def pages(stage, dubbing_status=None, staffed=True):
     extra = {"Status": select(dubbing_status)} if dubbing_status else {}
+    if staffed:  # nothing to flag, so Dubbing stays quiet when unchanged
+        extra.update({role: relation("c-pio") for role in ("Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe")})
+        extra.update({"Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20")})
     return [
         project("p1", "Show", "PAS", Stage=select(stage), **{"T6 Post Coordinator": relation("c-pio")}),
         project("p2", "Dubbing", "DW", **extra, **{"T6 Post Coordinator": relation("c-angel")}),
     ]
 
 
-@pytest.fixture
-def conn():
+def seeded(staffed):
     c = sqlite3.connect(":memory:")
     from t6_notion_reports.snapshots import SCHEMA
     c.executescript(SCHEMA)
-    notion = FakeNotion(pages("Offline"), contacts())
+    notion = FakeNotion(pages("Offline", staffed=staffed), contacts())
     run_snapshot(c, notion, PROJECTS, CONTACTS, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
-    notion = FakeNotion(pages("Online"), contacts())
+    notion = FakeNotion(pages("Online", staffed=staffed), contacts())
     run_snapshot(c, notion, PROJECTS, CONTACTS, "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
     return c
+
+
+@pytest.fixture
+def conn():
+    return seeded(staffed=True)
+
+
+@pytest.fixture
+def conn_unstaffed():
+    """Dubbing has blank dates and no team, so it is flagged and may have owed items."""
+    return seeded(staffed=False)
 
 
 class NoOwedLlm:
@@ -232,7 +245,8 @@ class FakeLlm:
         return schema(items=[])
 
 
-def test_brief_job_adds_owed_items_and_includes_unchanged_projects(conn):
+def test_brief_job_adds_owed_items_and_includes_unchanged_projects(conn_unstaffed):
+    conn = conn_unstaffed
     # p2 (Angel's Dubbing) is unchanged but has an owed item, so it still gets a briefing.
     gw, llm = FakeGateway(), FakeLlm()
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, llm=llm, log=lambda _: None)
@@ -243,7 +257,8 @@ def test_brief_job_adds_owed_items_and_includes_unchanged_projects(conn):
     assert res.owed_failed == 0 and len(llm.users) == 2
 
 
-def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn):
+def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
+    conn = conn_unstaffed
     gw = FakeGateway()
     logs = []
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,

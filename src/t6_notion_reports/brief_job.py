@@ -9,6 +9,7 @@ from typing import Callable
 from .briefing import OutboundMessage, Settings, build_briefing, digest_missing
 from .config import BriefSettings
 from .contacts import Contact, load_contacts
+from .flags import project_flags
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .gateway import GatewayError
 from .llm import LlmClient
@@ -71,15 +72,16 @@ def run_brief(
         datetime.fromisoformat(new_on).astimezone(MANILA).date(),
     )
     changed = len(changes)
+    names = display_names(old_state, new_state)
+    new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
+    changes = with_flags(changes, new_state, names, now.astimezone(MANILA).date(), new_day, brief.lead_warning_days)
     owed: dict[str, OwedOutcome] | None = None
     owed_failed: list[str] = []
     if llm is not None:
         owed = {page_id: find_owed(llm, state) for page_id, state in new_state.items()}
-        names = display_names(old_state, new_state)
         owed_failed = sorted(names[p] for p, o in owed.items() if o.failed)
         failed_ids = sorted(p for p, o in owed.items() if o.failed)
         shown = {c.page_id for c in changes}
-        new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
         changes = sort_projects(changes + [
             unchanged_project(p, names, new_state[p], new_day)
             for p, o in owed.items() if (o.items or o.failed) and p not in shown
@@ -134,6 +136,27 @@ def coordinators_in(*states: dict[str, dict[str, object]]) -> dict[str, str]:
                     people.setdefault(str(ref["id"]), str(ref.get("name") or ref["id"]))
     return people
 
+
+
+def with_flags(changes, state, names, today, snap_day, lead_warning_days):
+    """Attach each project's flags and date-sanity Concerns; a project with only those is listed too.
+
+    Flags count as activity, so a project with no changes but a flag still reaches its coordinator.
+    A removed project has no current state to flag.
+    """
+    flagged = {p: f for p, s in state.items() if (f := project_flags(s, today, lead_warning_days))}
+    shown = set()
+    for ch in changes:
+        if ch.kind != "removed" and ch.page_id in flagged:
+            ch.flags, ch.concerns = flagged[ch.page_id].lines, flagged[ch.page_id].concerns
+        shown.add(ch.page_id)
+    extra = []
+    for page_id, f in flagged.items():
+        if page_id not in shown:
+            ch = unchanged_project(page_id, names, state[page_id], snap_day)
+            ch.flags, ch.concerns = f.lines, f.concerns
+            extra.append(ch)
+    return sort_projects(changes + extra) if extra else changes
 
 
 def apply_gate(old, new, log: Callable[[str], None] = print):

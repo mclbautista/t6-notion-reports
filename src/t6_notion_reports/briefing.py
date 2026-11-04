@@ -211,7 +211,7 @@ def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[Outboun
 
 
 def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: date | None = None) -> list[Block]:
-    """Heading, field changes, raw new PM Notes and owed items for one project, then a blank line.
+    """Heading, flags, Concerns, field changes, raw new PM Notes and owed items for one project, then a blank line.
 
     The heading has the name and Stage and the weeks since the Notion page was last edited. It shows
     neither Status (the section says it) nor Project Health (the sort order says it), and has no link.
@@ -220,8 +220,12 @@ def project_blocks(ch: ProjectChange, owed: OwedOutcome | None = None, today: da
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
     extras = [x for x in (ch.stage, updated_text(ch.edited, today)) if x]
     blocks: list[Block] = [line(bold(title), "".join([tag, *(f" · {x}" for x in extras)]))]
+    blocks += [line(text) for text in ch.flags]
     if not squash(ch.health or ""):
         blocks.append(line(MISSING_HEALTH))
+    if ch.concerns:
+        blocks.append(line(bold("Concerns")))
+        blocks += [line(f"• {text}") for text in ch.concerns]
     for fc in ch.changes:
         blocks.append(line(f"• {fc.field}: {format_value(fc.old)} → {format_value(fc.new)}"))
     if ch.notes and (ch.notes.blocks or ch.notes.text_diff):
