@@ -77,7 +77,7 @@ _PERIOD = re.compile(
 
 # Words that say there is no date (yet): a period after one of them is not a stated date.
 _NEGATING = re.compile(
-    r"(?i)\b(?:no|not|none|never|without|tbc|tbd|tba|pending|unknown|undecided|unconfirmed|awaiting|waiting|n/a)\b"
+    r"(?i)\b(?:no|not|none|never|without|tbc|tbd|tba|pending|unknown|undecided|unconfirmed|undetermined|unsure|maybe|perhaps|awaiting|waiting|n/a|to\s+be\s+(?:confirmed|determined|decided))\b"
 )
 
 

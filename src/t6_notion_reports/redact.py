@@ -25,7 +25,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from .condense import COMMON_WORDS, PLAIN_WORDS
+from .condense import _MONTH_WORDS, COMMON_WORDS, PLAIN_WORDS
 from .contacts import Contact
 from .snapshots import squash
 
@@ -40,9 +40,6 @@ def ordinary(word: str) -> bool:
     low = word.casefold()
     return low in PLAIN_WORDS or low in COMMON_WORDS or low in EXTRA_ORDINARY or low in _MONTH_WORDS
 
-_MONTH_WORDS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
-                "january", "february", "march", "april", "june", "july", "august", "september",
-                "october", "november", "december"}
 _IDS = re.compile(
     r"https?://\S*(?:notion\.(?:so|site|com)|t\.me)\S*"
     r"|\b(?:notion\.(?:so|site|com)|t\.me)/\S*"
