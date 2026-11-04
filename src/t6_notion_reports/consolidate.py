@@ -22,6 +22,7 @@ from .diff import FieldChange
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, relevant_dates, stored_day
 from .llm import LlmClient, LlmError
 from .pm_notes import parse_pm_notes
+from .redact import Mapping, Redactor
 from .schedule import MANILA
 from .snapshots import squash
 
@@ -124,11 +125,18 @@ class SourceLine:
 
 @dataclass(frozen=True)
 class Payload:
-    """What leaves the machine for one project, and the lines the reply may cite."""
+    """What leaves the machine for one project, and the lines the reply may cite.
+
+    ``lines`` hold the text as sent (redacted), so quotes are checked against what the LLM saw;
+    ``mapping`` puts the redacted values back into accepted items.
+    """
 
     data: dict
     lines: dict[int, SourceLine]
     facts: str  # every value in the payload as text, for the grounding check
+    mapping: Mapping = field(default_factory=Mapping)
+    redactor: Redactor = field(default_factory=Redactor)
+    page_id: str = ""
 
     def json(self, indent: int | None = None) -> str:
         return json.dumps(self.data, ensure_ascii=False, indent=indent)
@@ -189,14 +197,19 @@ def build_payload(
     minutes_lines: tuple[str, ...] = (),
     minutes_meta: dict[str, str | None] | None = None,
     notes_weeks: int = DEFAULT_PM_NOTES_WEEKS,
+    redactor: Redactor = Redactor(),
+    page_id: str = "",
 ) -> Payload:
-    """The payload for one project. Nothing about other projects, people or Notion ids goes in.
+    """The payload for one project. Nothing about other projects, people or Notion ids goes in:
+    the PM Notes and Minutes lines pass through ``redactor`` first (see redact.py).
 
     ``minutes_meta`` holds the minutes page's date, last-edited time and Sent at; it is sent only with
     lines about this project.
     """
     build = _Build()
-    notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build)
+    mapping = Mapping()
+    hide = lambda text: redactor.redact(text, page_id, mapping)  # noqa: E731
+    notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build, hide)
     dates = {name: stored_day(state.get(name)) for name in DATE_KEYS}
     relevant = relevant_dates(state.get("Status"))
     data: dict = {
@@ -218,7 +231,7 @@ def build_payload(
             "page_date": minutes_meta.get("page_date"),
             "last_edited": minutes_meta.get("last_edited"),
             "sent_at": minutes_meta.get("sent_at"),
-            "lines": [{"line_id": build.add(SourceLine("minutes", t)), "text": t} for t in minutes_lines],
+            "lines": [{"line_id": build.add(SourceLine("minutes", t)), "text": t} for t in map(hide, minutes_lines)],
         }
     for w in windows:  # numbered like the other lines, so a snapshot change cites one exactly
         changes = []
@@ -233,14 +246,17 @@ def build_payload(
             "to": w.end.astimezone(MANILA).isoformat(timespec="seconds"),
             "changes": changes,
         })
-    return Payload(data, build.lines, _facts(data))
+    return Payload(data, build.lines, _facts(data), mapping, redactor, page_id)
 
 
-def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build: _Build) -> list[dict]:
-    """Numbered PM Notes lines from the last ``weeks`` weeks, plus older blocks that hold a future date."""
+def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build: _Build, hide) -> list[dict]:
+    """Numbered PM Notes lines from the last ``weeks`` weeks, plus older blocks that hold a future date.
+
+    Which blocks go in is judged on the text as written; each line is redacted by ``hide`` as it is sent.
+    """
     parsed = parse_pm_notes(str(raw) if raw else "", snapshot_day)
     out: list[dict] = []
-    for text in parsed.preamble.splitlines():
+    for text in map(hide, parsed.preamble.splitlines()):
         out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": None, "text": text})
     cutoff = today - timedelta(weeks=weeks)
     for block in parsed.blocks:
@@ -248,11 +264,12 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
             "\n".join(block.bullets), block.header_date, today,
         ):
             continue
-        out.append({"line_id": build.add(SourceLine("pm_notes", block.header, True, block.header_date)),
-                    "block": block.header, "text": block.header})
+        header = hide(block.header)
+        out.append({"line_id": build.add(SourceLine("pm_notes", header, True, block.header_date)),
+                    "block": header, "text": header})
         for bullet in block.bullets:
-            text = f"• {bullet}"
-            out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": block.header, "text": text})
+            text = hide(f"• {bullet}")
+            out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": header, "text": text})
     return out
 
 
@@ -313,15 +330,16 @@ def validate(reply: Consolidation, payload: Payload, today: date) -> Outcome:
     for item in reply.changes:
         if not _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=True):
             continue
-        key = squash(item.text).casefold()
+        text = payload.mapping.restore(squash(item.text))
+        key = text.casefold()
         kept = changes.get(key)
-        changes[key] = ChangeLine(kept.text if kept else squash(item.text), item.after_psr or bool(kept and kept.after_psr))
+        changes[key] = ChangeLine(kept.text if kept else text, item.after_psr or bool(kept and kept.after_psr))
     concerns: list[str] = []
     for item in reply.concerns:
         if item.kind not in CONCERN_KINDS or (item.kind == "health_vs_evidence" and not health):
             continue
         if _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=False):
-            concerns.append(squash(item.text))
+            concerns.append(payload.mapping.restore(squash(item.text)))
     return Outcome(
         _last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)),
         _note_dates(reply.dates_from_notes, payload),
@@ -348,7 +366,7 @@ def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate,
                 found[name] = NoteDate(name, day=day)
         elif (item.fuzzy_text and is_period(item.fuzzy_text)
               and squash(item.fuzzy_text).casefold() in squash(line.text).casefold()):
-            found[name] = NoteDate(name, fuzzy=squash(item.fuzzy_text))
+            found[name] = NoteDate(name, fuzzy=payload.mapping.restore(squash(item.fuzzy_text)))
     return tuple(found.values())
 
 
@@ -359,7 +377,8 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     line = payload.lines.get(line_id) if line_id is not None else None
     if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
         return False
-    return ungrounded(text, payload.facts) is None
+    # A known name in any case is ungrounded too: the payload never holds one (redact.py).
+    return ungrounded(text, payload.facts) is None and payload.redactor.names_in(text, payload.page_id) is None
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:

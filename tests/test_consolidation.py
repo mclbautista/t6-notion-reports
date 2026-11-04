@@ -421,3 +421,56 @@ def test_a_malformed_item_is_dropped_without_losing_its_valid_siblings():
     text = dm(gw)
     assert "• QC on Nov 20" in text and "QC still waits for client notes" in text
     assert "LLM unavailable" not in text and "LLM unavailable" not in digest(gw)
+
+
+# ---- free-text privacy (#60) ----------------------------------------------------------------
+
+LEAKY = ("As of Nov 9\n• Pio to send the files to ana, see notion.so/0123456789abcdef0123456789abcdef"
+         "\n• Ping @ana_h or tg 123456789\n• Same colorist as Show TWO, TWO needs her first")
+
+
+def leaky_db():
+    one, two = page("p1", "ONE", notes=LEAKY), page("p2", "TWO", coordinator="c-ana")
+    return make_db([one, two], [one, two], [one, two])
+
+
+def test_names_ids_and_other_projects_in_free_text_never_reach_the_llm():
+    llm = Llm()
+    run(leaky_db(), llm, notion=minutes_notion("Pio confirmed with Ana, same as TWO"), meeting_notes_ds=MEETING)
+    payload = next(p for p in llm.payloads if p["project"]["name"] == "Show ONE")
+    blob = json.dumps(payload, ensure_ascii=False)
+    for private in ("Pio", "ana", "Ana", "notion.so", "0123456789abcdef", "@ana_h", "ana_h", "123456789",
+                    "Show TWO", "TWO", "c-pio", "c-ana", "p1", "p2"):
+        assert private not in blob, private
+    texts = [r["text"] for r in payload["pm_notes"]]
+    pio, ana = ("[person 1]", "[person 2]") if texts[1].startswith("• [person 1]") else ("[person 2]", "[person 1]")
+    assert texts[1] == f"• {pio} to send the files to {ana}, see [id 1]"
+    assert texts[2] == "• Ping [id 2] or tg [id 3]"
+    assert texts[3] in ("• Same colorist as [project 1], [project 2] needs her first",
+                        "• Same colorist as [project 2], [project 1] needs her first")
+    two = texts[3].split(", ")[1].split(" needs")[0]
+    assert payload["minutes"]["lines"][0]["text"] == f"• {pio} confirmed with {ana}, same as {two}"  # one mapping
+    assert payload["project"]["name"] == "Show ONE"  # the project's own name stays
+
+
+def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name_is_dropped():
+    def row(p):
+        return next(r for r in p["pm_notes"] if "send the files" in r["text"])
+
+    def placeholders(p):  # (Pio's, Ana's), as this payload numbered them
+        text = row(p)["text"]
+        return text[2:12], text.split("files to ")[1][:10]
+
+    def reply(p):
+        if p["project"]["name"] != "Show ONE":
+            return {}
+        pio, ana = placeholders(p)
+        cite = {"source": "pm_notes", "line_id": row(p)["line_id"], "quote": row(p)["text"]}
+        return {"concerns": [{"kind": "open_item", "text": f"{pio} still has to send the files to {ana}", **cite}],
+                "changes": [{"text": "files go to ana", **cite}, {"text": "files sent by pio", **cite},
+                            {"text": "files to send", **cite}]}
+    gw, _ = run(leaky_db(), Llm(reply))
+    text = dm(gw)
+    assert "Pio still has to send the files to ana" in text
+    assert "• files to send" in text
+    assert "files go to ana" not in text and "files sent by pio" not in text

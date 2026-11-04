@@ -21,6 +21,7 @@ from .llm import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
 from .people_match import MatchSettings
+from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
@@ -82,8 +83,8 @@ def run_brief(
         old_id = new_id = latest[0]
     else:
         old_id, new_id = pair
-    old_state, new_state = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
-    old_state, new_state = apply_gate(old_state, new_state, log)
+    raw_old, raw_new = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
+    old_state, new_state = apply_gate(raw_old, raw_new, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
     changes = [] if first else diff_snapshots(
@@ -104,9 +105,12 @@ def run_brief(
                 minutes = load_minutes(notion, meeting_notes_ds, today)
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
+        # Contacts people, other projects and ids are redacted from free text before it is sent.
+        redactor = Redactor.build(load_contacts(notion, contacts_ds).values(), {**raw_old, **raw_new}, new_state)
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
+                redactor, p,
             ) for p, s in new_state.items()
         }
         for page_id in sorted(payloads, key=lambda p: (names[p].lower(), p)):
