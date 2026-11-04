@@ -41,8 +41,8 @@ def formula(value):
 def project(page_id, name="Show", code="PAS", **props):
     base = {
         "Name": title(name), "Project Code": select(code), "Stage": select("Offline"),
-        "Status": select("In-Progress"), "Health": select("On Track"), "PM Notes": rich(""),
-        "Deadline (Playdate/Submission)": date(None),
+        "Status": select("In-Progress"), "Project Health": select("On Track"), "PM Notes": rich(""),
+        "Playdate": date(None), "Submission Deadline": date(None), "Archival Deadline": date(None),
         "T6 Post Coordinator": relation(), "Editors": relation(), "Online Editor": relation(),
         "Colorist": relation(), "Sound Tech": relation(), "Post Supe": relation(),
     }

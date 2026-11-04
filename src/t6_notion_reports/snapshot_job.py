@@ -18,7 +18,8 @@ def _is_excluded(status: object) -> bool:
 # Only these Notion properties are read. Formula fields are never touched.
 NOTION_NAMES = {
     "Name": "Name", "Project Code": "Project Code", "Stage": "Stage", "Status": "Status",
-    "Health": "Health", "PM Notes": "PM Notes", "Deadline (Playdate/Submission)": "Deadline",
+    "Project Health": "Project Health", "PM Notes": "PM Notes", "Playdate": "Playdate",
+    "Submission Deadline": "Submission Deadline", "Archival Deadline": "Archival Deadline",
     **{f: f for f in RELATION_FIELDS},
 }
 

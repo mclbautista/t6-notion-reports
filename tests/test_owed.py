@@ -12,7 +12,7 @@ from t6_notion_reports.owed import MAX_ITEMS, OwedItem, OwedItems, OwedOutcome, 
 
 NOTES = "As of Nov 12,\n  • TLR piclock TBC\n  • Shoot today"
 STATE = {"Name": "Show", "Project Code": "MAU", "Stage": "Preprod", "Status": "In-Progress",
-         "Health": "On Track", "PM Notes": NOTES, "Deadline": None, "Editors": [],
+         "Project Health": "On Track", "PM Notes": NOTES, "Playdate": None, "Submission Deadline": None, "Archival Deadline": None, "Editors": [],
          "Online Editor": [{"id": "x", "name": "Ben"}], "T6 Post Coordinator": [{"id": "c-pio", "name": "Pio"}]}
 
 
@@ -98,7 +98,7 @@ def test_partial_quote_of_a_line_is_dropped():
 
 def test_property_citation_must_be_empty():
     llm = FakeLlm([
-        item("missing_date", "No deadline", empty_property="Deadline"),
+        item("missing_date", "No deadline", empty_property="Submission Deadline"),
         item("missing_role", "No editor", empty_property="Editors"),
         item("missing_role", "No online", empty_property="Online Editor"),  # named: not empty
         item("missing_role", "Bogus", empty_property="Name"),                # not an input property
@@ -182,7 +182,7 @@ def test_failed_project_without_changes_still_gets_the_unavailable_line():
 
 
 def test_property_citation_only_for_date_and_role_kinds():
-    out = find_owed(FakeLlm([item("open_item", "x", empty_property="Deadline")]), STATE)
+    out = find_owed(FakeLlm([item("open_item", "x", empty_property="Submission Deadline")]), STATE)
     assert out.items == ()
 
 

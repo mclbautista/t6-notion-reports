@@ -30,8 +30,8 @@ def pages(monday):
         project("lead-idle", "Idle Lead", "IDL", Status=select("👀  Lead")),
         project("lead-new", "New Lead", "NLD", Status=select("🌱 Leads"),
                 **{"PM Notes": rich(NOTES_NEW if monday else "")}),
-        project("nohealth", "No Health", "NH", Health=select(None), **{"PM Notes": rich(NOTES_OLD)}),
-        project("crit", "Crit", "cr", Health=select("Critical"), **{"PM Notes": rich(notes)}),
+        project("nohealth", "No Health", "NH", **{"Project Health": select(None), "PM Notes": rich(NOTES_OLD)}),
+        project("crit", "Crit", "cr", **{"Project Health": select("Critical"), "PM Notes": rich(notes)}),
         project("standby", "Stand", "SBY", Status=select("⏸ Standby")),
         project("empty", "Fresh", "FRS", **{"PM Notes": rich("")}),
     ]
@@ -74,17 +74,17 @@ def all_blocks(n):
 # ---- group rules ----
 
 def test_group_rules_first_match_wins():
-    g = lambda **f: group_of({"Status": "In-Progress", "Stage": "Offline", "Health": "On Track", **f})
-    assert g(Stage="Archiving", Health="Critical") == "archiving"  # archiving beats health
+    g = lambda **f: group_of({"Status": "In-Progress", "Stage": "Offline", "Project Health": "On Track", **f})
+    assert g(Stage="Archiving", **{"Project Health": "Critical"}) == "archiving"  # archiving beats health
     assert g(Status="📦 Archiving") == "archiving"
     assert g(Stage="For Drives Turnover") == "archiving"
     assert g(Stage="Waiting for Payment") == "archiving"
     assert g(Status="👀  Lead") == "incoming"
-    assert g(Status="🔏   Negotiations", Health="Critical") == "incoming"
+    assert g(Status="🔏   Negotiations", **{"Project Health": "Critical"}) == "incoming"
     assert g(Status="🙋  Proposal Made") == "incoming"
-    assert g(Status="🚨 In-Progress", Health="Critical") == "critical"
-    assert g(Health="At Risk") == "at_risk"
-    assert g(Health=None) == "on_track"
+    assert g(Status="🚨 In-Progress", **{"Project Health": "Critical"}) == "critical"
+    assert g(**{"Project Health": "At Risk"}) == "at_risk"
+    assert g(**{"Project Health": None}) == "on_track"
 
 
 def test_group_order_on_the_page():

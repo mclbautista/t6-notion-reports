@@ -7,7 +7,7 @@ D1, D2 = date(2026, 10, 26), date(2026, 10, 30)  # Monday baseline, Friday
 
 def proj(code="RIA", name="Ria", notes="", health=None, coords=(("c1", "Pio"),), **extra):
     return {"Name": name, "Project Code": code, "Stage": "Offline", "Status": "In-Progress",
-            "Health": health, "PM Notes": notes, "Deadline": None,
+            "Project Health": health, "PM Notes": notes, "Playdate": None,
             "T6 Post Coordinator": [{"id": i, "name": n} for i, n in coords], "Editors": [], **extra}
 
 

@@ -12,7 +12,7 @@ def take_snapshot(conn, records, at):
 
 def rec(page_id, **fields):
     base = {"Name": "Show", "Project Code": "PAS", "Stage": "Offline",
-            "Status": "In-Progress", "PM Notes": "", "Deadline": None,
+            "Status": "In-Progress", "PM Notes": "", "Playdate": None,
             "T6 Post Coordinator": [{"id": "c1", "name": "Pio"}], "Editors": []}
     base.update(fields)
     return ProjectRecord(page_id, base)
@@ -69,3 +69,13 @@ def test_group_by_coordinator_and_unassigned():
     grouped = group_by_coordinator(diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b)))
     assert set(grouped.by_coordinator) == {"c1"}
     assert [c.page_id for c in grouped.no_coordinator] == ["p2"]
+
+
+def test_field_present_on_one_side_only_is_a_change_not_an_error():
+    old = ProjectRecord("p1", {k: v for k, v in rec("p1").fields.items() if k != "Playdate"})
+    new = rec("p1", Playdate={"start": "2026-11-20", "end": None})
+    conn, a, b = two_snapshots([old], [new])
+    out = diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b))
+    assert [(c.field, c.old, c.new) for c in out[0].changes] == [
+        ("Playdate", None, {"start": "2026-11-20", "end": None})
+    ]

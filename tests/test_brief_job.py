@@ -228,7 +228,7 @@ class FakeLlm:
         if data["project"] == "Show" and data["pm_notes"]:
             return schema(items=[{"kind": "open_item", "text": "Confirm grade date", "notes_line": "Grade date pending"}])
         if data["project"] == "Dubbing":
-            return schema(items=[{"kind": "missing_date", "text": "No deadline", "empty_property": "Deadline"}])
+            return schema(items=[{"kind": "missing_date", "text": "No deadline", "empty_property": "Submission Deadline"}])
         return schema(items=[])
 
 

@@ -31,14 +31,18 @@ def test_stores_exactly_tracked_fields_and_never_reads_formulas(tmp_path):
 
 def test_field_values_parsed():
     conn = connect()
-    p = project("p1", name="Bawod", code="BW", Health=select("At Risk"),
-                **{"PM Notes": rich("As of Oct 26,\n  • Delay"),
-                   "Deadline (Playdate/Submission)": date("2026-11-20", "2026-11-22")})
+    p = project("p1", name="Bawod", code="BW", **{"Project Health": select("At Risk"),
+                   "PM Notes": rich("As of Oct 26,\n  • Delay"),
+                   "Playdate": date("2026-11-20"), "Submission Deadline": date("2026-11-22"),
+                   "Archival Deadline": date("2026-12-01")})
     sid = snap(conn, FakeNotion([p], CONTACTS_LIST)).snapshot_id
     s = load_snapshot(conn, sid)["p1"]
-    assert (s["Name"], s["Project Code"], s["Health"]) == ("Bawod", "BW", "At Risk")
+    assert (s["Name"], s["Project Code"], s["Project Health"]) == ("Bawod", "BW", "At Risk")
     assert s["PM Notes"] == "As of Oct 26,\n  • Delay"
-    assert s["Deadline"] == {"start": "2026-11-20", "end": "2026-11-22"}
+    assert s["Playdate"] == {"start": "2026-11-20", "end": None}
+    assert s["Submission Deadline"] == {"start": "2026-11-22", "end": None}
+    assert s["Archival Deadline"] == {"start": "2026-12-01", "end": None}
+    assert "Health" not in s and "Deadline" not in s
 
 
 def test_excludes_archived_and_lost_but_keeps_leads_standby_archiving():
