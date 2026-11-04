@@ -1,13 +1,27 @@
 # t6-notion-reports
 
-Snapshots the Notion **Projects** database into SQLite and drafts the weekly PSR briefings
-(per-coordinator diffs) and the meeting minutes. Sends nothing itself: delivery goes through the
-Telegram gateway's `POST /notify`.
+Snapshots the Notion **Projects** and **Job Orders** databases into SQLite, drafts the weekly PSR briefings
+(per-coordinator diffs) and the meeting minutes, and builds the daily JO shift reports. Sends nothing itself:
+delivery goes through the Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
-briefing sends through the gateway. The Monday run also drafts the minutes in Notion (raw PM Notes, no LLM). The briefing consolidates each project's week with an LLM. Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**. Not done: LLM condensing of the minutes.
+briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed when `OPENROUTER_API_KEY` is set, and stay raw PM Notes otherwise. The briefing consolidates each project's week with an LLM when that key is set. Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**.
 
     pip install -e '.[dev]' && pytest
+
+## Commands
+
+`python -m t6_notion_reports <command>`. In the container, run them with
+`docker compose run --rm notion-reports <command> --config /app/config.yaml` (`diff` has no `--config`; its `--db` defaults to `data/psr.db`).
+
+- `serve`: the scheduler. This is the container's default command.
+- `snapshot --kind monday|friday|manual`: one Projects snapshot.
+- `jo-snapshot --kind 0500|1200|1800|manual`: one Job Orders snapshot.
+- `shift-report --slot 0500|1200|1800 [--dry-print]`: one shift report.
+- `brief [--dry-print] [--show-llm-input]`: the Saturday briefing now.
+- `draft-mom [--date YYYY-MM-DD]`: re-draft the minutes in Notion.
+- `send-ready-mom [--dry-print]`: send the approved minutes once.
+- `diff [--old ID --new ID]`: what changed between two snapshots (default: latest Monday against the latest Friday).
 
 ## Run on the Mac mini
 
@@ -36,11 +50,11 @@ changed=... unchanged=... removed=...`). No secrets, no note text.
 
 ### Rollback
 
-Each build is tagged `notion-reports:<PSR_TAG>` (default `latest`). **Before every deploy**, tag the
+Each build is tagged `notion-reports:<NOTION_REPORTS_TAG>` (default `latest`). **Before every deploy**, tag the
 running image; without that tag there is nothing to roll back to:
 
     docker tag notion-reports:latest notion-reports:previous      # before the new deploy
-    PSR_TAG=previous docker compose up -d               # roll back
+    NOTION_REPORTS_TAG=previous docker compose up -d    # roll back
     # or: git checkout <old-commit> && docker compose up -d --build
 
 `./data` is never touched by a rollback. Snapshots are append-only.
@@ -61,7 +75,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
 
 - A coordinator with no `TelegramUserID` in Contacts gets their briefing in the PSR group topic,
   prefixed with their @handle, and the digest says so.
-- Idempotency keys are `notion-reports-<date>-<contact id>` and `psr-digest-<date>`, so a same-day rerun
+- Idempotency keys are `notion-reports-<date>-<contact id>` for each coordinator and `psr-digest-<date>` for the digest (`psr-digest-<date>-<contact id>` when there is more than one digest recipient), so a same-day rerun
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
