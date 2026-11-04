@@ -132,3 +132,12 @@ def test_block_with_unparsed_date_is_diffed_by_header_text():
     old = {"p": proj(notes="As of sometime\n- x")}
     (ch,) = run(old, {"p": proj(notes="As of sometime\n- x\nAs of later")})
     assert [b.block.header for b in ch.notes.blocks] == ["As of later"]
+
+
+def test_a_field_absent_on_one_side_and_null_on_the_other_is_a_change_both_ways():
+    without = proj()
+    with_null = proj(Director=None)
+    (added,) = run({"p": without}, {"p": with_null})
+    assert [(c.field, c.old, c.new) for c in added.changes] == [("Director", None, None)]
+    (removed,) = run({"p": with_null}, {"p": without})
+    assert [c.field for c in removed.changes] == ["Director"]

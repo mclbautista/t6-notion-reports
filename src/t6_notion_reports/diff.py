@@ -93,7 +93,8 @@ def diff_snapshots(
             changes = [
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
-                if f not in ("PM Notes", LAST_EDITED) and _cmp(o.get(f)) != _cmp(n.get(f))
+                # A field on one side only is a change, even when the other side holds an explicit null.
+                if f not in ("PM Notes", LAST_EDITED) and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
             ]
             notes = _diff_notes(o.get("PM Notes"), n.get("PM Notes"), old_date, new_date)
             if changes or notes:
