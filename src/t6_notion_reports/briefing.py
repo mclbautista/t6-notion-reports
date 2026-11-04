@@ -23,6 +23,7 @@ DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 LLM_UNAVAILABLE = "(LLM unavailable)"
 AFTER_PSR = "after PSR"
+NO_CYRIL_NOTE = "⚠️ Some warnings are withheld: set cyril_contact_id so private notes reach the right person"
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,7 @@ class OutboundMessage:
 
 @dataclass(frozen=True)
 class Settings:
-    cyril: Contact
+    cyril: Contact | None  # None: no explicit identity, so nothing private is sent to anyone
     group_chat_id: int
     group_topic_id: int | None
     test_banner: bool = False
@@ -133,11 +134,13 @@ def build_briefing(
     tail += [line(note) for note in notes or ()]
     private = [line(note) for note in cyril_notes or ()]
     recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
+    if private and not any(settings.cyril and c.page_id == settings.cyril.page_id for c in recipients):
+        tail.append(line(NO_CYRIL_NOTE))  # fail closed: the names are sent to nobody, and the digest says why
     multi = len(recipients) > 1
     for contact in recipients:
         if contact.telegram_id is not None:
             key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
-            is_cyril = bool(settings.cyril) and contact.page_id == settings.cyril.page_id
+            is_cyril = settings.cyril is not None and contact.page_id == settings.cyril.page_id
             digest_tail = tail + private if is_cyril else tail
             messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages

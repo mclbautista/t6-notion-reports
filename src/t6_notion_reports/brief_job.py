@@ -158,12 +158,13 @@ def run_brief(
         conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
-    cyril_id = brief.cyril_contact_id or (brief.digest_recipients[0] if brief.digest_recipients else "")
-    cyril = contacts.get(cyril_id) or Contact(cyril_id, "Cyril")
+    # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
+    cyril_id = brief.cyril_contact_id
+    cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
     digest_contacts = tuple(
         contacts.get(cid) or Contact(cid, cid)
         for cid in brief.digest_recipients
-    ) or (cyril,)
+    ) or ((cyril,) if cyril else ())
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),

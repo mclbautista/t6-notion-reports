@@ -321,3 +321,36 @@ def test_a_long_plain_heading_after_the_entries_ends_the_section():
     description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Lea Santos on Dec 1"])
     (payload,) = leave_payload_for(description)
     assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]
+
+
+# ---- private unmatched names need an explicitly identified Cyril (#62 item 8) ------------------
+
+def _unmatched_run(recipients, cyril_id):
+    from fake_notion import contact as page_of
+    people = contacts() + [page_of("c-jam", "Jam")]
+    people[-1]["properties"].update(tg("jam_h", 777))
+    conn, _ = build([team_project()])
+    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    settings = replace(BRIEF, cyril_contact_id=cyril_id, digest_recipients=recipients)
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
+    return lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
+
+
+def test_unmatched_names_reach_only_the_explicit_cyril_whatever_the_recipient_order():
+    for recipients in (("c-cyril", "c-jam"), ("c-jam", "c-cyril")):
+        by = _unmatched_run(recipients, "c-cyril")
+        assert "Zed" in by(999) and "Zed" not in by(777), recipients
+
+
+def test_without_an_explicit_cyril_unmatched_names_are_withheld_and_a_configuration_warning_is_shown():
+    for recipients in (("c-jam", "c-cyril"), ("c-cyril", "c-jam"), ("c-jam",)):
+        by = _unmatched_run(recipients, None)
+        for who in (999, 777):
+            assert "Zed" not in by(who), recipients
+        shared = by(777) or by(999)
+        assert "cyril_contact_id" in shared and "Unmatched leave names" not in shared, recipients
+
+
+def test_cyril_outside_the_recipient_list_never_gets_a_private_digest_and_names_stay_withheld():
+    by = _unmatched_run(("c-jam", "c-pio"), "c-cyril")
+    assert "Zed" not in by(777) and "Zed" not in by(111) and "cyril_contact_id" in by(777)
