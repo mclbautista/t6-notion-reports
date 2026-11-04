@@ -114,11 +114,13 @@ def run_brief(
                 out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
-    digest_notes: list[str] = []
+    digest_notes: tuple[str, ...] = ()
     clashes: dict[str, tuple[str, ...]] = {}
     if (llm is not None or show_llm_input) and projects_ds:
-        clashes = leave_concerns(notion, projects_ds, llm, today, new_state, load_contacts(notion, contacts_ds),
-                                 brief, matching, show_llm_input, out, log, digest_notes)
+        clashes, digest_notes = leave_concerns(
+            notion, projects_ds, llm, today, new_state, load_contacts(notion, contacts_ds),
+            brief.leave_clash_days, matching, show_llm_input, out, log,
+        )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
     flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
@@ -152,7 +154,7 @@ def run_brief(
     settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first, notes=digest_notes,
+        llm_failed, active_coordinators_in(new_state), first=first, notes=list(digest_notes),
     )
     no_digest = digest_missing(settings)
 
@@ -180,8 +182,8 @@ def run_brief(
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
 
 
-def leave_concerns(notion, projects_ds, llm, today, states, contacts, brief, matching, show_input, out, log, notes):
-    """Leave clash Concerns by project id. Adds to ``notes`` what only Cyril's digest shows.
+def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log):
+    """(Leave clash Concerns by project id, the notes only Cyril's digest shows).
 
     No leave lines means no call. A failed call (or an unreadable description) gives no clash Concerns
     this run, and the digest says leaves were unavailable.
@@ -191,23 +193,20 @@ def leave_concerns(notion, projects_ds, llm, today, states, contacts, brief, mat
     except Exception as exc:  # type only: never the response
         log(f"brief leaves unavailable error={type(exc).__name__}")
         if not show_input:
-            notes.append(UNAVAILABLE_NOTE)
-        return {}
+            return {}, (UNAVAILABLE_NOTE,)
+        return {}, ()
     lines = leave_lines(description)
     if not lines:
-        return {}
+        return {}, ()
     if show_input:
         out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
-        return {}
+        return {}, ()
     result = parse_leaves(llm, lines, today)
     if result.failed:
         log("brief leaves unavailable")
-        notes.append(UNAVAILABLE_NOTE)
-        return {}
-    found = leave_clashes(result.entries, contacts.values(), states, today, brief.leave_clash_days, matching)
-    if found.unmatched:
-        notes.append(UNMATCHED_NOTE + ", ".join(found.unmatched))
-    return found.concerns
+        return {}, (UNAVAILABLE_NOTE,)
+    found = leave_clashes(result.entries, contacts.values(), states, today, clash_days, matching)
+    return found.concerns, ((UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ())
 
 
 def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:
