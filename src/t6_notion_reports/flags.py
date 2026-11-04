@@ -8,6 +8,8 @@ Which date is flagged depends on the Status:
     Archiving                      blank or overdue Archival Deadline
     Leads                          Playdate in the past, or less than ``lead_warning_days`` away
 
+Any Status with a blank Project Health gets the "missing health update" note, as its last flag.
+
 A date can be overdue only strictly before today (Asia/Manila). The overdue flags come first, so the
 worst news is the first line under the project. Date sanity problems (Submission before Playdate, Archival before Submission) are not flags but Concern
 items, for a later ticket to age.
@@ -27,6 +29,7 @@ ARCHIVAL = "Archival Deadline"
 ROLES = ("Editors", "Assistant Editor", "Online Editor", "Colorist", "Sound Tech", "T6 Post Coordinator")
 SEPARATE_ROLES = ("Director", "Cinematographer")
 DEFAULT_LEAD_WARNING_DAYS = 30
+MISSING_HEALTH = "⚠️ missing health update"
 
 _DATED_IN_PROGRESS = {"🚨 In-Progress", "🏎. In-Progress TVC"}
 _AIRING = "Airing"
@@ -86,6 +89,8 @@ def project_flags(
             if 0 <= ahead < lead_warning_days:
                 other.append("⚠️ Playdate today: check with the client" if ahead == 0 else
                              f"⚠️ Playdate in {ahead} day{'s' if ahead != 1 else ''}: check with the client")
+    if not squash(str(state.get("Project Health") or "")):
+        other.append(MISSING_HEALTH)  # every gated Status: the project also sorts last in its section
     return ProjectFlags(tuple(overdue + other), tuple(_sanity(own)))
 
 

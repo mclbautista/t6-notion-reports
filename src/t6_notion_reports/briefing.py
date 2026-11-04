@@ -11,14 +11,12 @@ from datetime import date
 from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
-from .snapshots import squash
 from .telegram_html import (
     LIMIT, Block, Line, Span, bold, line, mention_handle, quote, render_messages,
 )
 
 BANNER = "🧪 TEST"
 FIRST_BRIEF = "First brief: no comparison yet"
-MISSING_HEALTH = "⚠️ missing health update"
 SECTION_TITLES = {"on_hold": "On-Hold", "in_progress": "In-Progress", "leads": "Leads"}
 DM_SECTIONS = ("on_hold", "in_progress")
 DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
@@ -212,21 +210,19 @@ def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[Outboun
 def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     """Heading, flags, Concerns and the week's changes for one project, then a blank line.
 
-    The heading has the name and Stage and the weeks since the project's last update: the "As of" date
+    The heading has the name, Stage, the date properties that are set, and the weeks since the project's last update: the "As of" date
     the LLM judged real, else Notion's last-edited time. It shows neither Status (the section says it)
     nor Project Health (the sort order says it), and has no link. The changes are the LLM's consolidated
     list; when its call failed they are the raw field changes and new PM Notes, marked "(LLM unavailable)".
     """
     title = f"{ch.code} · {ch.title}" if ch.code and ch.title else ch.name
     tag = {"added": " (new)", "removed": " (removed)"}.get(ch.kind, "")
-    extras = [x for x in (ch.stage, updated_text(ch.llm_update or ch.edited, today)) if x]
+    extras = [x for x in (ch.stage, *ch.dates, updated_text(ch.llm_update or ch.edited, today)) if x]
     blocks: list[Block] = [line(bold(title), "".join([tag, *(f" · {x}" for x in extras)]))]
     if ch.llm_failed:
         blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
-    if not squash(ch.health or ""):
-        blocks.append(line(MISSING_HEALTH))
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
         blocks += [line(f"• {text}") for text in ch.concerns]

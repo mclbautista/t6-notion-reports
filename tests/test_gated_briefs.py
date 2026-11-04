@@ -192,3 +192,31 @@ def test_the_first_brief_has_the_banner_and_no_changes():
         assert "Project Health:" not in text and "→" not in text and "No changes on any project" not in text
         assert "Online started" not in text  # no earlier snapshot: even the LLM's changes are left out
     assert "No Submission Deadline" in dm(gw)
+
+
+def staffed(**props):
+    """Every role filled and both dates set: nothing to flag, so an unchanged project stays quiet."""
+    from fake_notion import date
+    from t6_notion_reports.flags import ROLES, SEPARATE_ROLES
+    return {**{r: relation("c-ana") for r in (*ROLES, *SEPARATE_ROLES) if r != "T6 Post Coordinator"},
+            "Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20"), **props}
+
+
+def test_an_unchanged_staffed_project_with_blank_health_reaches_its_coordinator_with_one_note():
+    pages = [proj("p1", "NOHEALTH", health=None, **staffed())]
+    for llm in (None, Llm()):
+        gw = brief(make_db(pages, pages), llm=llm)
+        text = dm(gw)
+        assert "Show NOHEALTH" in text
+        assert text.count("missing health update") == 1
+        assert digest(gw).count("missing health update") == 1
+        assert "No changes: Pio" not in digest(gw)
+
+
+def test_the_project_line_shows_the_current_dates_even_when_they_did_not_change():
+    # Blank health keeps the project listed after consolidation finds no change.
+    rows = [("p1", "DATED", IN_PROGRESS, staffed(health=None))]
+    for llm in (None, Llm()):
+        text = dm(brief(make_db(*changed(rows)), llm=llm))
+        heading = next(ln for ln in text.splitlines() if "Show DATED" in ln)
+        assert "Playdate Dec 1, 2026" in heading and "Submission Deadline Dec 20, 2026" in heading
