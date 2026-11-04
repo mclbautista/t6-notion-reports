@@ -394,3 +394,20 @@ def test_an_old_block_is_kept_for_a_far_or_iso_future_date_and_dropped_for_a_pas
         run(conn_one(NOTES + "\n" + old), llm, brief=replace(BRIEF, pm_notes_weeks=4))
         texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
         assert (old.splitlines()[1] in texts) is kept, old
+
+
+def test_a_malformed_item_is_dropped_without_losing_its_valid_siblings():
+    qc = lambda p: line_id(p, "QC on Nov 20")
+    quote = "• QC on Nov 20, waiting for client notes"
+    reply = reply_with(
+        changes=lambda p: [{"text": None, "source": "pm_notes", "line_id": qc(p), "quote": quote},
+                           {"text": "QC on Nov 20", "source": "pm_notes", "line_id": qc(p), "quote": quote}],
+        concerns=lambda p: [{"kind": "open_item", "text": ["not", "text"], "source": "pm_notes"},
+                            {"kind": "open_item", "text": "QC still waits for client notes", "source": "pm_notes",
+                             "line_id": qc(p), "quote": quote}],
+        last_update={"line_id": "not a number"},
+    )
+    gw, _ = run(conn_one(), Llm(reply))
+    text = dm(gw)
+    assert "• QC on Nov 20" in text and "QC still waits for client notes" in text
+    assert "LLM unavailable" not in text and "LLM unavailable" not in digest(gw)

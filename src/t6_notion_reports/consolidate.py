@@ -12,7 +12,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, ValidationError, field_validator
 
 from .condense import ungrounded
 from .dates import has_future_date, is_period, mentions
@@ -78,12 +80,38 @@ class DateFromNotes(BaseModel):
 
 
 class Consolidation(BaseModel):
-    """The reply. Kinds and sources are plain text here so one odd item cannot void the whole reply."""
+    """The reply. Kinds and sources are plain text here, and each item is parsed on its own, so one
+    malformed item (a null text, a list for a quote) is dropped without voiding the rest of the reply."""
 
     last_update: LastUpdate | None = None
     changes: list[Change] = []
     concerns: list[Concern] = []
     dates_from_notes: list[DateFromNotes] = []
+
+    @field_validator("changes", "concerns", "dates_from_notes", mode="wrap")
+    @classmethod
+    def _each_item(cls, value: Any, handler, info):
+        if not isinstance(value, list):
+            return handler(value)  # the envelope itself is wrong: the reply fails
+        item = _ITEM_TYPES[info.field_name]
+        kept = []
+        for raw in value:
+            try:
+                kept.append(item.model_validate(raw))
+            except ValidationError:
+                continue
+        return kept
+
+    @field_validator("last_update", mode="wrap")
+    @classmethod
+    def _lenient_last_update(cls, value: Any, handler):
+        try:
+            return handler(value)
+        except ValidationError:
+            return None  # an unreadable last update falls back to last-edited time
+
+
+_ITEM_TYPES = {"changes": Change, "concerns": Concern, "dates_from_notes": DateFromNotes}
 
 
 @dataclass(frozen=True)
