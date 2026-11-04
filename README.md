@@ -73,7 +73,14 @@ snapshot against the Monday before it, and Cyril gets one digest of every projec
 through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when the
 briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
 
-- A coordinator with no `TelegramUserID` in Contacts gets their briefing in the PSR group topic,
+- `coordinator_recipients` optionally limits Coordinator DM delivery to a list of Contacts page ids. Omit it
+  to allow all coordinators; use `[]` to disable all Coordinator DMs and their group fallbacks. A nonempty
+  list allows only those coordinators. Excluded coordinators get no DM or fallback and are not named in
+  the delivery-specific quiet/fallback notices. Their projects still appear in the full Master PSR Digest
+  and still pass through the normal LLM/status gate. This setting does not change Minutes or JO shift delivery.
+- `digest_recipients` independently selects Master PSR Digest recipients by Contacts page id; it defaults
+  to `cyril_contact_id` when omitted. Keep excluded entries commented out for a temporary rollout.
+- An allowed coordinator with no `TelegramUserID` in Contacts gets their briefing in the PSR group topic,
   prefixed with their @handle, and the digest says so.
 - Idempotency keys are `notion-reports-<date>-<contact id>` for each coordinator and `psr-digest-<date>` for the digest (`psr-digest-<date>-<contact id>` when there is more than one digest recipient), so a same-day rerun
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.

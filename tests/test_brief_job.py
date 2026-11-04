@@ -93,6 +93,74 @@ def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(
     }
 
 
+@pytest.mark.parametrize("allowlist, targets, fallback", [
+    (None, {111, -1003}, True),
+    ([], set(), False),
+    (["c-pio"], {111}, False),
+    (["c-angel"], {-1003}, True),
+    (["c-pio", "c-angel"], {111, -1003}, True),
+    (["c-unknown"], set(), False),
+])
+def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed, allowlist, targets, fallback):
+    from dataclasses import replace
+    settings = replace(BRIEF, coordinator_recipients=None if allowlist is None else tuple(allowlist))
+    gw, llm = FakeGateway(), FakeLlm(fail_for={"Show", "Dubbing"})
+    result = run_brief(conn_unstaffed, FakeNotion([], contacts()), CONTACTS, settings, SUNDAY,
+                       gateway=gw, llm=llm, log=lambda _: None)
+    coordinator_messages = [m for m in result.messages if not m.key.startswith("psr-digest")]
+    assert {m.to for m in coordinator_messages} == targets
+    assert len(coordinator_messages) == len(targets)
+    for message in coordinator_messages:
+        assert message.topic == (7 if message.to == -1003 else None)
+    digest = digest_text(gw)
+    assert "PAS" in digest and "DW" in digest
+    assert "Pio" in digest and "Angel Gaas" in digest
+    assert ("briefing posted in the group topic" in digest) is fallback
+    assert {p["project"]["name"] for p in llm.users} == {"Show", "Dubbing"}
+    assert result.llm_failed == 2
+
+
+@pytest.mark.parametrize("allowlist, quiet", [((), False), (("c-pio",), False), (("c-angel",), True)])
+def test_coordinator_allowlist_quiet_line_only_names_eligible_coordinators(conn, allowlist, quiet):
+    from dataclasses import replace
+    gw = FakeGateway()
+    run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, coordinator_recipients=allowlist),
+              SUNDAY, gateway=gw, log=lambda _: None)
+    assert ("No changes: Angel Gaas" in digest_text(gw)) is quiet
+
+
+@pytest.mark.parametrize("configured, notion_id", [
+    ("abcdefab123456789abc123456789abc", "abcdefab-1234-5678-9abc-123456789abc"),
+    ("ABCDEFAB-1234-5678-9ABC-123456789ABC", "abcdefab123456789abc123456789abc"),
+])
+def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, configured, notion_id):
+    from t6_notion_reports.config import load_config
+    from t6_notion_reports.snapshots import SCHEMA
+    c = sqlite3.connect(":memory:")
+    c.executescript(SCHEMA)
+    people = cfg_contacts()
+    people[0]["id"] = notion_id
+    for kind, stage, at in (("monday", "Offline", datetime(2026, 11, 9, 3, tzinfo=timezone.utc)),
+                            ("friday", "Online", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))):
+        rows = pages(stage, staffed=False)
+        rows[0]["properties"]["T6 Post Coordinator"] = relation(notion_id)
+        run_snapshot(c, FakeNotion(rows, people), PROJECTS, CONTACTS, kind, at)
+    path = write_config(tmp_path, "unused.db")
+    with open(path) as file:
+        raw = yaml.safe_load(file)
+    raw["coordinator_recipients"] = [configured]
+    with open(path, "w") as file:
+        yaml.safe_dump(raw, file)
+    settings = load_config(path, {"NOTION_TOKEN": "fake-token"}).brief
+    assert settings is not None
+    gw = FakeGateway()
+    result = run_brief(c, FakeNotion([], people), CONTACTS, settings, SUNDAY, gateway=gw, log=lambda _: None)
+    assert {m.to for m in result.messages} == {111, 999}
+    assert any(m.key == f"notion-reports-2026-11-15-{notion_id}" for m in result.messages)
+    assert "PAS" in digest_text(gw) and "DW" in digest_text(gw)
+    assert "briefing posted in the group topic" not in digest_text(gw)
+
+
 def digest_text(gw):
     return next(text for to, _, _, text in gw.sent if to == 999)
 

@@ -68,6 +68,34 @@ cyril_contact_id: "33333333-3333-3333-3333-333333333333"
 """
 
 
+@pytest.mark.parametrize("suffix, expected", [
+    ("", None),
+    ("coordinator_recipients: []\n", ()),
+    (f'coordinator_recipients: [" {ID_A} ", "{ID_B}"]\n', (ID_A, ID_B)),
+])
+def test_coordinator_recipients_config(tmp_path, suffix, expected):
+    brief = load_config(write(tmp_path, BRIEF_YAML + suffix), ENV).brief
+    assert brief is not None
+    assert brief.coordinator_recipients == expected
+    # This setting must not change identity conventions for existing config fields.
+    assert brief.cyril_contact_id == "33333333-3333-3333-3333-333333333333"
+    assert brief.digest_recipients == (brief.cyril_contact_id,)
+
+
+@pytest.mark.parametrize("bad", [
+    "null", "hunter2", "true", "false", "123", "{}",
+    "[null]", "[true]", "[false]", "[123]", "[{}]", "[[]]",
+    "['']", "[' ']", "[hunter2]", "['11111111-1111-1111-1111-11111111111z']",
+])
+def test_invalid_coordinator_recipients_fail_boot_naming_key(tmp_path, bad):
+    path = write(tmp_path, BRIEF_YAML + f"coordinator_recipients: {bad}\n")
+    with pytest.raises(ConfigError) as caught:
+        load_config(path, ENV)
+    error = str(caught.value)
+    assert "invalid config key: coordinator_recipients" in error
+    assert "hunter2" not in error
+
+
 def test_no_briefing_keys_means_no_brief_settings(tmp_path):
     assert load_config(write(tmp_path, good()), ENV).brief is None
 

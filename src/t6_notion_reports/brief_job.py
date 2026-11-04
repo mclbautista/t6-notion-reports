@@ -165,7 +165,10 @@ def run_brief(
         contacts.get(cid) or Contact(cid, cid)
         for cid in brief.digest_recipients
     ) or ((cyril,) if cyril else ())
-    settings = Settings(cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner, digest_recipients=digest_contacts)
+    settings = Settings(
+        cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner,
+        digest_recipients=digest_contacts, coordinator_recipients=brief.coordinator_recipients,
+    )
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state), first=first, notes=list(leaves.notes),

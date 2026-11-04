@@ -22,6 +22,13 @@ database_path: /app/data/psr.db
 # psr_group_chat_id: -1003261335368       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 3124                 # PSR topic: Minutes go here
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
+# Coordinator delivery only; the digest and LLM still include every eligible project.
+# Omit coordinator_recipients for all coordinators; [] disables their DMs and group fallbacks.
+# coordinator_recipients:
+#   - "00000000-0000-0000-0000-000000000000"   # FILL IN: an allowed coordinator's Contacts page id
+# Digest delivery is independent; when omitted it defaults to cyril_contact_id.
+# digest_recipients:
+#   - "00000000-0000-0000-0000-000000000000"   # FILL IN: a digest recipient's Contacts page id
 # llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for the per-project consolidation (default shown)
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged

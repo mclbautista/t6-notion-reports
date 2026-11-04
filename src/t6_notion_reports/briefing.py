@@ -42,6 +42,7 @@ class Settings:
     group_topic_id: int | None
     test_banner: bool = False
     digest_recipients: tuple[Contact, ...] = ()
+    coordinator_recipients: tuple[str, ...] | None = None
 
 
 def digest_missing(settings: Settings) -> bool:
@@ -90,7 +91,13 @@ def build_briefing(
     fallbacks: list[str] = []
     quiet: list[str] = []
 
+    # Compare only the new allowlist canonically; preserve stored/contact ids and digest lookups.
+    allowed = None if settings.coordinator_recipients is None else {
+        cid.replace("-", "").lower() for cid in settings.coordinator_recipients
+    }
     for contact_id, name in sorted(coordinators.items(), key=lambda kv: (kv[1].lower(), kv[0])):
+        if allowed is not None and contact_id.replace("-", "").lower() not in allowed:
+            continue
         projects = [
             ch for ch in groups.by_coordinator.get(contact_id, (name, []))[1] if ch.group in DM_SECTIONS
         ]
