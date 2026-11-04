@@ -147,3 +147,8 @@ def test_bad_lead_warning_days_fails_boot_naming_key_not_value(tmp_path, bad):
 def test_concern_chronic_weeks_defaults_to_4_and_is_read_from_config(tmp_path):
     assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.concern_chronic_weeks == 4
     assert load_config(write(tmp_path, BRIEF_YAML + "\nconcern_chronic_weeks: 6\n"), ENV).brief.concern_chronic_weeks == 6
+
+
+def test_pm_notes_weeks_defaults_to_52_and_is_read_from_config(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.pm_notes_weeks == 52
+    assert load_config(write(tmp_path, BRIEF_YAML + "\npm_notes_weeks: 8\n"), ENV).brief.pm_notes_weeks == 8

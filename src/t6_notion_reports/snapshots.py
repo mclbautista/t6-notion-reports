@@ -226,6 +226,14 @@ def default_diff_pair(conn: sqlite3.Connection) -> tuple[int, int] | None:
     return (monday[0], friday[0]) if monday else None
 
 
+def previous_friday(conn: sqlite3.Connection, friday_id: int) -> int | None:
+    """The Friday snapshot before ``friday_id``: the start of the "since the last brief" window."""
+    row = conn.execute(
+        "SELECT snapshot_id FROM snapshots WHERE kind = 'friday' AND snapshot_id < ? "
+        "ORDER BY snapshot_id DESC LIMIT 1", (friday_id,)).fetchone()
+    return row[0] if row else None
+
+
 def mom_diff_pair(conn: sqlite3.Connection, on_or_before: date) -> tuple[int, int] | None:
     """(old, new) for the minutes: the newest Monday snapshot taken (Manila date) on or before
     ``on_or_before``, and the Friday snapshot before it. None when either does not exist yet."""

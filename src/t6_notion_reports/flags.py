@@ -46,7 +46,7 @@ def project_flags(
 ) -> ProjectFlags:
     """Flags and date-sanity Concerns for a project's snapshot state, as of ``today`` (Manila)."""
     status = squash(str(state.get("Status") or ""))
-    dates = {name: _day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
+    dates = {name: stored_day(state.get(name)) for name in (PLAYDATE, SUBMISSION, ARCHIVAL)}
     overdue: list[str] = []
     other: list[str] = []
 
@@ -78,6 +78,18 @@ def project_flags(
     return ProjectFlags(tuple(overdue + other), tuple(_sanity(dates)))
 
 
+def relevant_dates(status: object) -> tuple[str, ...]:
+    """The date properties that matter for a Status: the ones a blank value could be filled in for."""
+    status = squash(str(status or ""))
+    if status in _DATED_IN_PROGRESS or status == _AIRING:
+        return (PLAYDATE, SUBMISSION)
+    if status == "📦 Archiving":
+        return (ARCHIVAL,)
+    if status == "🌱 Leads":
+        return (PLAYDATE,)
+    return ()
+
+
 def _sanity(dates: dict[str, date | None]) -> list[str]:
     out: list[str] = []
     playdate, submission, archival = dates[PLAYDATE], dates[SUBMISSION], dates[ARCHIVAL]
@@ -92,7 +104,7 @@ def _show(when: date) -> str:
     return f"{when:%b} {when.day}, {when.year}"
 
 
-def _day(value: object) -> date | None:
+def stored_day(value: object) -> date | None:
     """The Manila day of a stored date property ({"start": ..., "end": ...}); None when blank or unreadable."""
     start = value.get("start") if isinstance(value, dict) else None
     if not start:

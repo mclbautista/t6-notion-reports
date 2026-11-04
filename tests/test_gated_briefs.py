@@ -51,14 +51,14 @@ class Gateway:
 
 
 class Llm:
-    """Records the projects it is asked about and returns no owed items."""
+    """Records the projects it is asked about and finds nothing to report."""
 
     def __init__(self):
         self.projects = []
 
     def complete(self, system, user, schema):
-        self.projects.append(json.loads(user)["project"])
-        return schema(items=[])
+        self.projects.append(json.loads(user)["project"]["name"])
+        return schema()
 
 
 def make_db(before, after):
@@ -181,13 +181,14 @@ def test_the_first_brief_has_the_banner_and_no_changes():
     conn.executescript(SCHEMA)
     run_snapshot(conn, FakeNotion([proj("p1", "ONE", stage="Online")], contacts()), PROJECTS, CONTACTS, "friday", FRIDAY)
 
-    class OweLlm:
+    class ChangeLlm:
         def complete(self, system, user, schema):
-            return schema(items=[{"kind": "missing_date", "text": "No deadline", "empty_property": "Submission Deadline"}])
+            return schema(changes=[{"text": "Online started", "source": "snapshot"}])
 
-    gw = brief(conn, llm=OweLlm())
+    gw = brief(conn, llm=ChangeLlm())
     assert gw.sent
     for _, _, _, text in gw.sent:
         assert "First brief: no comparison yet" in text
         assert "Project Health:" not in text and "→" not in text and "No changes on any project" not in text
-    assert "No deadline" in dm(gw)
+        assert "Online started" not in text  # no earlier snapshot: even the LLM's changes are left out
+    assert "No Submission Deadline" in dm(gw)
