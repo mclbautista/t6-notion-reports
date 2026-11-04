@@ -12,6 +12,7 @@ from typing import Mapping
 import yaml
 
 from .llm import DEFAULT_MODEL
+from .people_match import MatchSettings
 
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
@@ -20,7 +21,8 @@ SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "test_banner", "llm_model"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS
+MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
+KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -65,6 +67,7 @@ class Config:
     jo_data_source: str | None = None  # Job Orders data source; needed by jo-snapshot
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
+    matching: MatchSettings = MatchSettings()  # people matching (leave names); defaults match the watchdog
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -93,7 +96,33 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
+        matching=_matching(raw),
     )
+
+
+def _matching(raw: dict) -> MatchSettings:
+    d = MatchSettings()
+    honorifics = d.honorifics
+    if "honorifics" in raw:
+        val = raw["honorifics"]
+        if (not isinstance(val, list) or not val
+                or any(not isinstance(h, str) or not h.strip() for h in val)):
+            raise ConfigError("invalid config key: honorifics (expected a non-empty list of words)")
+        honorifics = tuple(h.strip().casefold() for h in val)
+    return MatchSettings(
+        fuzzy_min_score=_percent(raw, "fuzzy_min_score", d.fuzzy_min_score),
+        fuzzy_min_lead=_percent(raw, "fuzzy_min_lead", d.fuzzy_min_lead),
+        honorifics=honorifics,
+    )
+
+
+def _percent(raw: dict, key: str, default: float) -> float:
+    if key not in raw:
+        return default
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
+        raise ConfigError(f"invalid config key: {key} (expected a number from 0 to 100)")
+    return value
 
 
 def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:

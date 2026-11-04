@@ -16,3 +16,11 @@ def test_reads_id_handle_and_name_from_number_or_text():
     assert (got["c2"].telegram_id, got["c2"].handle) == (555, None)
     assert (got["c3"].telegram_id, got["c3"].handle) == (None, "heygelica")
     assert got["c4"].telegram_id is None
+
+
+def test_loads_aliases():
+    pio = contact("c1", "Pio")
+    pio["properties"]["Aliases"] = rich("Pio, Piolo")
+    ana = contact("c2", "Ana")
+    got = load_contacts(FakeNotion(contacts=[pio, ana]), "contacts-ds")
+    assert (got["c1"].aliases, got["c2"].aliases) == ("Pio, Piolo", "")

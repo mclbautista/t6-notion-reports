@@ -32,3 +32,11 @@ database_path: /app/data/psr.db
 # shift_chat_id: -1000000000000            # FILL IN: chat for the reports (Cyril's DM for the dry run)
 # shift_topic_id: 1                        # optional topic in that chat
 # ops_chat_id: 274983989                   # optional; where the ops alert will go (later ticket)
+
+# People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,
+# then a guarded fuzzy match). Defaults shown match the JO watchdog. A fuzzy match needs fuzzy_min_score or
+# more and a lead of fuzzy_min_lead over the runner-up (both 0 to 100). Contacts with a TelegramUserID are
+# searched first, the rest of Contacts only if none of them matches.
+# fuzzy_min_score: 90
+# fuzzy_min_lead: 8
+# honorifics: [ate, kuya, sir]             # dropped from names before matching
