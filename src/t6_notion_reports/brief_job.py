@@ -16,7 +16,7 @@ from .diff import diff_snapshots, display_names, sort_projects, unchanged_projec
 from .flags import project_flags
 from .gateway import GatewayError
 from .holidays import leave_lines
-from .leaves import UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
+from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
 from .llm import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
@@ -189,13 +189,16 @@ def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days
     this run, and the digest says leaves were unavailable.
     """
     try:
-        description = "".join(t.get("plain_text", "") for t in notion.retrieve_data_source(projects_ds).get("description") or [])
+        description = notion.retrieve_data_source(projects_ds).get("description") or []
     except Exception as exc:  # type only: never the response
         log(f"brief leaves unavailable error={type(exc).__name__}")
         if not show_input:
             return {}, (UNAVAILABLE_NOTE,)
         return {}, ()
     lines = leave_lines(description)
+    if lines is None:  # the heading was renamed or removed: say so rather than read unrelated text
+        log("brief leaves unavailable no heading")
+        return {}, (() if show_input else (NO_HEADING_NOTE,))
     if not lines:
         return {}, ()
     if show_input:

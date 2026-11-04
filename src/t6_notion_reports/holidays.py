@@ -38,18 +38,51 @@ def upcoming_entries(description: str, today: date, days: int = 14) -> list[str]
     return kept
 
 
-def leave_lines(description: str) -> list[str]:
-    """Every non-empty line of the "Upcoming Holidays and Leaves" list, bullet marks dropped.
+def leave_lines(description: str | list[dict]) -> list[str] | None:
+    """The lines of the "Upcoming Holidays and Leaves" section, bullet marks dropped; None without that heading.
 
-    Lines under the heading are used (the whole text when there is no heading). Unlike
-    ``upcoming_entries`` this keeps lines without a readable date: the leave parser reads them.
+    ``description`` is the Projects database description as text, or as its rich text items, which
+    also tell bold lines apart. Unlike ``upcoming_entries`` this keeps lines without a readable date:
+    the leave parser reads them. The section ends at the next heading, so text under a later heading
+    never reaches the leave call. A heading is a bold line, a line starting with "#", a line ending
+    with ":" that holds no digit, or a dateless line after a blank line. Bold lines straight under the
+    heading (a note to the team) are skipped rather than ending the section.
     """
-    lines = [ln.strip() for ln in description.splitlines()]
-    for i, ln in enumerate(lines):
-        if HEADING in ln.lower():
-            lines = lines[i + 1:]
+    lines = _rich_lines(description)
+    start = next((i for i, (text, _) in enumerate(lines) if HEADING in text.lower()), None)
+    if start is None:
+        return None
+    out: list[str] = []
+    blank = False
+    for text, bold in lines[start + 1:]:
+        text = text.strip()
+        if not text:
+            blank = True
+            continue
+        heading = bold or text.startswith("#") or (text.endswith(":") and not re.search(r"\d", text))
+        if out and (heading or (blank and not re.search(r"\d", text))):
             break
-    return [text for ln in lines if (text := _BULLET.sub("", ln).strip())]
+        blank = False
+        if heading:
+            continue
+        if (clean := _BULLET.sub("", text).strip()):
+            out.append(clean)
+    return out
+
+
+def _rich_lines(description: str | list[dict]) -> list[tuple[str, bool]]:
+    """(text, every visible character is bold) for each line of the description."""
+    if isinstance(description, str):
+        return [(ln, False) for ln in description.splitlines()]
+    lines: list[tuple[str, bool]] = [("", True)]
+    for item in description:
+        bold = bool((item.get("annotations") or {}).get("bold"))
+        for n, piece in enumerate(str(item.get("plain_text") or "").split("\n")):
+            if n:
+                lines.append(("", True))
+            text, all_bold = lines[-1]
+            lines[-1] = (text + piece, all_bold and (bold or not piece.strip()))
+    return [(text, all_bold and bool(text.strip())) for text, all_bold in lines]
 
 
 def _month(word: str | None) -> int | None:
