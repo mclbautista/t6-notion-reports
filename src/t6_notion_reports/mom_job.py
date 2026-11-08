@@ -10,6 +10,7 @@ from .contacts import load_contacts
 from .holidays import upcoming_entries
 from .llm import LlmClient
 from .mom import build_draft, condense_draft, render_blocks
+from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
@@ -52,16 +53,18 @@ def run_draft_mom(
     old_on = _local_date(snapshot_info(conn, old_id).taken_at)
     new_on = _local_date(snapshot_info(conn, new_id).taken_at)
     new_state = load_snapshot(conn, new_id)
-    draft = build_draft(load_snapshot(conn, old_id), new_state, old_on, new_on, meeting_date)
+    old_state = load_snapshot(conn, old_id)
+    draft = build_draft(old_state, new_state, old_on, new_on, meeting_date)
+    all_contacts = load_contacts(notion, contacts_ds)
     condensed = raw = 0
     if llm is not None:
-        condensed, raw = condense_draft(draft, llm, new_state)
+        condensed, raw = condense_draft(draft, llm, new_state, Redactor.build(all_contacts.values(), (old_state, new_state)))
 
     description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
     others = upcoming_entries(description, meeting_date)
 
     people = _people(_previous_draft(notion, meeting_notes_ds, meeting_date))
-    contacts = {c.name.lower(): c for c in load_contacts(notion, contacts_ds).values()}
+    contacts = {c.name.lower(): c for c in all_contacts.values()}
     mentions = []
     for p in people:
         c = contacts.get(str(p.get("name") or "").lower())

@@ -44,11 +44,23 @@ class LeaveLlm:
         if self.fail:
             raise LlmError("down")
         entries = self.entries(payload) if callable(self.entries) else (self.entries or [])
-        return schema(entries=entries)
+        # Scripted answers quote the redacted lines the model now receives.
+        def hidden(text):
+            return text.replace("Lea", "[person 1]").replace("Ben", "[person 2]")
+        return schema(entries=[{**item, "quote": hidden(item["quote"])} for item in entries])
 
 
 def entry(who, start, end, quote, kind="leave"):
     return {"who": who, "kind": kind, "start": start, "end": end, "quote": quote}
+
+
+REDACTED_LEAVES = [
+    "[person 1] - leave Nov 20-22",
+    "[person 2] - leave Dec 20",
+    "Nov 30 - Bonifacio Day (holiday)",
+    "Zed - leave Nov 25",
+    "[person 1] - holiday Nov 21",
+]
 
 
 STANDARD = [
@@ -85,6 +97,17 @@ def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm
     for text in (dm(gw), digest(gw)):
         assert text.count("Lea Santos is on leave Nov 20–22") == 1
         assert "Playdate (Nov 28, 2026)" in text and "since Nov 14" in text  # the nearest of the dates
+
+
+def test_redacted_leave_who_is_restored_before_contacts_matching_in_the_brief():
+    conn, notion = build([team_project()])
+    def answer(payload):
+        line = payload["lines"][0]
+        assert line == "[person 1] - leave Nov 20-22"
+        assert "Lea" not in json.dumps(payload) and "Ben" not in json.dumps(payload)
+        return [entry("[PERSON 1 ]", "2026-11-20", "2026-11-22", line)]
+    gw, _ = brief(conn, notion, LeaveLlm(answer))
+    assert "Lea Santos is on leave Nov 20–22" in dm(gw)
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
@@ -190,7 +213,7 @@ def test_leaves_are_parsed_once_per_run_and_the_payload_holds_only_the_leave_lin
     assert len(llm.payloads) == 1
     payload = llm.payloads[0]
     assert set(payload) == {"today", "lines"} and payload["today"] == "2026-11-14"
-    assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]
+    assert payload["lines"] == REDACTED_LEAVES
     blob = json.dumps(payload)
     assert "Show ONE" not in blob and "c-lea" not in blob and "ONE" not in blob
 
@@ -224,7 +247,7 @@ def test_only_the_leaves_section_is_sent_and_a_later_heading_ends_it():
         conn, notion = build([team_project()], description=description)
         llm = LeaveLlm(STANDARD)
         brief(conn, notion, llm)
-        assert llm.payloads[0]["lines"] == [ln.lstrip("• ") for ln in LEAVES], description
+        assert llm.payloads[0]["lines"] == REDACTED_LEAVES, description
 
 
 def test_a_clash_concern_ages_through_the_store_and_resolves_when_the_leave_goes():
@@ -249,7 +272,7 @@ def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
     run_brief(conn, notion, CONTACTS, BRIEF, SATURDAY, llm=llm, log=lambda _: None, out=out.append,
               projects_ds=PROJECTS, show_llm_input=True)
     assert llm.payloads == []
-    assert any("llm input: leaves" in text and "Lea - leave Nov 20-22" in text for text in out)
+    assert any("llm input: leaves" in text and "[person 1] - leave Nov 20-22" in text for text in out)
 
 
 def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_it():
@@ -281,7 +304,7 @@ def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
     conn, notion = build([team_project()], description=description)
     llm = LeaveLlm(STANDARD)
     brief(conn, notion, llm)
-    assert llm.payloads[0]["lines"] == ["Lea - leave Nov 20-22", "Ben on vacation next week", "Ana on leave:", "Nov 25"]
+    assert llm.payloads[0]["lines"] == ["[person 1] - leave Nov 20-22", "[person 2] on vacation next week", "Ana on leave:", "Nov 25"]
 
 
 # ---- section boundaries when the section is empty or the heading is long (#62 item 7) ---------
@@ -314,13 +337,13 @@ def test_an_introductory_bold_note_does_not_end_an_empty_section():
         {"plain_text": "\n" + "\n".join(LEAVES), "annotations": {"bold": False}},
     ]
     (payload,) = leave_payload_for(rich_text)
-    assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]
+    assert payload["lines"] == REDACTED_LEAVES
 
 
 def test_a_long_plain_heading_after_the_entries_ends_the_section():
     description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Lea Santos on Dec 1"])
     (payload,) = leave_payload_for(description)
-    assert payload["lines"] == [ln.lstrip("• ") for ln in LEAVES]
+    assert payload["lines"] == REDACTED_LEAVES
 
 
 # ---- private unmatched names need an explicitly identified Cyril (#62 item 8) ------------------

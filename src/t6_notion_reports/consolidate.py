@@ -22,7 +22,7 @@ from .diff import FieldChange
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, relevant_dates, stored_day
 from .llm import LlmClient, LlmError
 from .pm_notes import parse_pm_notes
-from .redact import Mapping, Redactor
+from .redact import Mapping, Redactor, unresolved
 from .schedule import MANILA
 from .snapshots import squash
 
@@ -334,32 +334,56 @@ def consolidate(llm: LlmClient, payload: Payload, today: date) -> Outcome:
 
 def validate(reply: Consolidation, payload: Payload, today: date) -> Outcome:
     """Keep the items that check out; drop each failing item on its own."""
+    items, dropped = restore_consolidation(reply, payload.mapping)
     health = payload.data["project"]["project_health"]
     changes: dict[str, ChangeLine] = {}
-    for item in reply.changes:
+    for item, restored in items["changes"]:
         if not _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=True):
             continue
-        text = payload.mapping.restore(squash(item.text))
+        text = squash(restored.text)
         key = text.casefold()
         kept = changes.get(key)
         changes[key] = ChangeLine(kept.text if kept else text, item.after_psr or bool(kept and kept.after_psr))
     concerns: list[str] = []
-    for item in reply.concerns:
+    for item, restored in items["concerns"]:
         if item.kind not in CONCERN_KINDS or (item.kind == "health_vs_evidence" and not health):
             continue
         if _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=False):
-            concerns.append(payload.mapping.restore(squash(item.text)))
+            concerns.append(squash(restored.text))
+    dates = _note_dates(items["dates_from_notes"], payload)
     return Outcome(
         _last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)),
-        _note_dates(reply.dates_from_notes, payload),
+        dates, failed=dropped and not (changes or concerns or dates),
     )
 
 
-def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate, ...]:
+def restore_consolidation(reply: Consolidation, mapping: Mapping) -> tuple[dict[str, list[tuple[Any, Any]]], bool]:
+    """Restore all text fields once, retaining redacted counterparts for grounding and citations.
+
+    Pydantic has validated the reply's shape. Every string on an item goes through this boundary,
+    including future free-text fields. One unresolved field drops its whole item.
+    """
+    result: dict[str, list[tuple[Any, Any]]] = {}
+    dropped = False
+    for name in _ITEM_TYPES:
+        result[name] = []
+        for item in getattr(reply, name):
+            canonical = {key: mapping.canonicalize(value) if isinstance(value, str) else value
+                         for key, value in item.model_dump().items()}
+            restored = {key: mapping.restore(value) if isinstance(value, str) else value
+                        for key, value in canonical.items()}
+            if any(unresolved(value) for value in restored.values() if isinstance(value, str)):
+                dropped = True
+                continue
+            result[name].append((type(item)(**canonical), type(item)(**restored)))
+    return result, dropped
+
+
+def _note_dates(items: list[tuple[DateFromNotes, DateFromNotes]], payload: Payload) -> tuple[NoteDate, ...]:
     """The dates that check out: a blank, relevant property, an exact quote, and a value the quoted line holds."""
     blank = set(payload.data["blank_date_properties"])
     found: dict[str, NoteDate] = {}
-    for item in items:
+    for item, restored in items:
         name = _PROPERTY_BY_KEY.get(item.property)
         if name is None or item.property not in blank or name in found:
             continue
@@ -375,7 +399,7 @@ def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate,
                 found[name] = NoteDate(name, day=day)
         elif (item.fuzzy_text and is_period(item.fuzzy_text)
               and squash(item.fuzzy_text).casefold() in squash(line.text).casefold()):
-            found[name] = NoteDate(name, fuzzy=payload.mapping.restore(squash(item.fuzzy_text)))
+            found[name] = NoteDate(name, fuzzy=squash(restored.fuzzy_text or ""))
     return tuple(found.values())
 
 
