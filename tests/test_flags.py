@@ -16,7 +16,7 @@ from test_gated_briefs import (
 def staffed(**props):
     """A project with every role filled and sane dates, so only what a test changes can be flagged."""
     # proj() sets the coordinator itself, from its coordinator argument.
-    base = {role: relation("c-ana") for role in ROLES if role != "T6 Post Coordinator"}
+    base = {role: relation("c-ida") for role in ROLES if role != "T6 Post Coordinator"}
     base.update({"Playdate": date("2026-11-20"), "Submission Deadline": date("2026-12-20")})
     base.update(props)
     return base
@@ -188,12 +188,12 @@ def test_dates_far_in_the_future_and_ordered_dates_raise_no_concern():
 
 def test_a_project_with_no_changes_but_a_flag_counts_as_activity_for_the_coordinator():
     clean = proj("p1", "CLEAN", IN_PROGRESS, **staffed())
-    flagged = proj("p2", "FLAG", IN_PROGRESS, coordinator="c-ana", **staffed(Playdate=date(None)))
+    flagged = proj("p2", "FLAG", IN_PROGRESS, coordinator="c-ida", **staffed(Playdate=date(None)))
     gw = brief(make_db([clean, flagged], [clean, flagged]))
-    assert dm(gw, 111) == ""  # Pio: nothing to show, so no DM
+    assert dm(gw, 111) == ""  # Oto: nothing to show, so no DM
     assert "No Playdate" in dm(gw, 222)
     text = digest(gw)
-    assert "Show FLAG" in text and "No changes: Pio" in text and "No changes on any project" not in text
+    assert "Show FLAG" in text and "No changes: Oto" in text and "No changes on any project" not in text
 
 
 def test_flags_appear_in_the_digest_too():

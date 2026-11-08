@@ -31,7 +31,7 @@ def test_body_bearer_and_url():
 
 def test_topic_omitted_for_direct_messages():
     t = FakeTransport()
-    client(t).notify(274983989, "x", "k")
+    client(t).notify(100000001, "x", "k")
     assert "topic" not in t.calls[0][2]
 
 

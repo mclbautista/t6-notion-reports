@@ -23,10 +23,10 @@ def tg(handle, user_id):
 
 
 def contacts():
-    out = [contact("c-pio", "Pio"), contact(CYRIL_ID, "Cyril"), contact("c-angel", "Angel Gaas")]
-    out[0]["properties"].update(tg("pio_h", 111))
+    out = [contact("c-oto", "Oto"), contact(CYRIL_ID, "Cyril"), contact("c-juno", "Juno Vex")]
+    out[0]["properties"].update(tg("oto_h", 111))
     out[1]["properties"].update(tg("cyril_h", 999))
-    out[2]["properties"].update({"TelegramHandle": rich("@heygelica"), "TelegramUserID": {"type": "number", "number": None}})
+    out[2]["properties"].update({"TelegramHandle": rich("@heyjunebug"), "TelegramUserID": {"type": "number", "number": None}})
     return out
 
 
@@ -36,11 +36,11 @@ STAFF = [r for r in ROLES if r != "T6 Post Coordinator"]  # the coordinator is s
 def pages(stage, dubbing_status=None, staffed=True):
     extra = {"Status": select(dubbing_status)} if dubbing_status else {}
     if staffed:  # nothing to flag, so Dubbing stays quiet when unchanged
-        extra.update({role: relation("c-pio") for role in STAFF})
+        extra.update({role: relation("c-oto") for role in STAFF})
         extra.update({"Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20")})
     return [
-        project("p1", "Show", "PAS", Stage=select(stage), **{"T6 Post Coordinator": relation("c-pio")}),
-        project("p2", "Dubbing", "DW", **extra, **{"T6 Post Coordinator": relation("c-angel")}),
+        project("p1", "Show", "QAZ", Stage=select(stage), **{"T6 Post Coordinator": relation("c-oto")}),
+        project("p2", "Dubbing", "DW", **extra, **{"T6 Post Coordinator": relation("c-juno")}),
     ]
 
 
@@ -88,7 +88,7 @@ def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert res.sent == 2 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
-        (111, None, "notion-reports-2026-11-15-c-pio"),
+        (111, None, "notion-reports-2026-11-15-c-oto"),
         (999, None, "psr-digest-2026-11-15"),
     }
 
@@ -96,9 +96,9 @@ def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(
 @pytest.mark.parametrize("allowlist, targets, fallback", [
     (None, {111, -1003}, True),
     ([], set(), False),
-    (["c-pio"], {111}, False),
-    (["c-angel"], {-1003}, True),
-    (["c-pio", "c-angel"], {111, -1003}, True),
+    (["c-oto"], {111}, False),
+    (["c-juno"], {-1003}, True),
+    (["c-oto", "c-juno"], {111, -1003}, True),
     (["c-unknown"], set(), False),
 ])
 def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed, allowlist, targets, fallback):
@@ -113,20 +113,20 @@ def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed,
     for message in coordinator_messages:
         assert message.topic == (7 if message.to == -1003 else None)
     digest = digest_text(gw)
-    assert "PAS" in digest and "DW" in digest
-    assert "Pio" in digest and "Angel Gaas" in digest
+    assert "QAZ" in digest and "DW" in digest
+    assert "Oto" in digest and "Juno Vex" in digest
     assert ("briefing posted in the group topic" in digest) is fallback
     assert {p["project"]["name"] for p in llm.users} == {"Show", "Dubbing"}
     assert result.llm_failed == 2
 
 
-@pytest.mark.parametrize("allowlist, quiet", [((), False), (("c-pio",), False), (("c-angel",), True)])
+@pytest.mark.parametrize("allowlist, quiet", [((), False), (("c-oto",), False), (("c-juno",), True)])
 def test_coordinator_allowlist_quiet_line_only_names_eligible_coordinators(conn, allowlist, quiet):
     from dataclasses import replace
     gw = FakeGateway()
     run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, coordinator_recipients=allowlist),
               SUNDAY, gateway=gw, log=lambda _: None)
-    assert ("No changes: Angel Gaas" in digest_text(gw)) is quiet
+    assert ("No changes: Juno Vex" in digest_text(gw)) is quiet
 
 
 @pytest.mark.parametrize("configured, notion_id", [
@@ -157,7 +157,7 @@ def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, co
     result = run_brief(c, FakeNotion([], people), CONTACTS, settings, SUNDAY, gateway=gw, log=lambda _: None)
     assert {m.to for m in result.messages} == {111, 999}
     assert any(m.key == f"notion-reports-2026-11-15-{notion_id}" for m in result.messages)
-    assert "PAS" in digest_text(gw) and "DW" in digest_text(gw)
+    assert "QAZ" in digest_text(gw) and "DW" in digest_text(gw)
     assert "briefing posted in the group topic" not in digest_text(gw)
 
 
@@ -181,7 +181,7 @@ def test_digest_no_changes_line_skips_coordinators_with_only_standby_projects():
 def test_digest_no_changes_line_lists_active_quiet_coordinators(conn):
     gw = FakeGateway()
     run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
-    assert "No changes: Angel Gaas" in digest_text(gw)
+    assert "No changes: Juno Vex" in digest_text(gw)
 
 
 def test_dry_print_prints_and_sends_nothing(conn):
@@ -230,12 +230,12 @@ def write_config(tmp_path, db):
         "contacts_data_source": "22222222-2222-2222-2222-222222222222",
         "database_path": str(db),
         "gateway_url": "http://gw:8780", "psr_group_chat_id": -1003, "psr_group_topic_id": 7,
-        "cyril_contact_id": "33333333-3333-3333-3333-333333333333",
+        "cyril_contact_id": "11111111-1111-1111-1111-111111111111",
     }))
     return str(path)
 
 
-CFG_CYRIL = "33333333-3333-3333-3333-333333333333"
+CFG_CYRIL = "11111111-1111-1111-1111-111111111111"
 
 
 class AnyContacts(FakeNotion):
@@ -267,7 +267,7 @@ def test_cli_dry_print_needs_no_secret_and_prints_to_stdout(tmp_path, monkeypatc
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     assert main(["brief", "--dry-print", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=SUNDAY) == 0
     out = capsys.readouterr().out
-    assert "key=psr-digest-2026-11-15" in out and "PAS" in out
+    assert "key=psr-digest-2026-11-15" in out and "QAZ" in out  # gitleaks:allow (idempotency key, not a secret)
 
 
 def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys):
@@ -320,8 +320,8 @@ def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
     res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
                     llm=FakeLlm(fail_for={"Show"}), log=logs.append)
     texts = {key: text for _, _, key, text in gw.sent}
-    assert "(LLM unavailable)" in texts["notion-reports-2026-11-15-c-pio"]
-    assert "LLM unavailable: PAS" in texts["psr-digest-2026-11-15"]
+    assert "(LLM unavailable)" in texts["notion-reports-2026-11-15-c-oto"]
+    assert "LLM unavailable: QAZ" in texts["psr-digest-2026-11-15"]
     assert res.sent == 3 and res.llm_failed == 1
     assert any("llm unavailable project=p1" in line for line in logs)
 

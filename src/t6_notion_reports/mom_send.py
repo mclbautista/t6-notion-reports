@@ -1,7 +1,7 @@
 """Send the approved minutes to the PSR group (spec sections 8.5 and 9).
 
 ``run_send_ready_mom`` finds Meeting Notes pages with ``Ready to send`` ticked and ``Sent at`` empty,
-reads each page as it is now (so Leizette's edits are what goes out), converts it to Telegram HTML
+reads each page as it is now (so the minutes owner's edits are what goes out), converts it to Telegram HTML
 with the briefing renderer, and posts one message per group through the gateway. ``Sent at`` is set
 only after every part was accepted, so a failure is retried by the next check; the idempotency keys
 (``psr-mom-<date>-<part n>``) stop the gateway from sending an accepted part twice.
@@ -185,10 +185,10 @@ def _spans(blk: dict) -> list[Span]:
     body = blk.get(blk["type"]) or {}
     spans = []
     for item in body.get("rich_text") or []:
-        ann = item.get("annotations") or {}
+        marks = item.get("annotations") or {}
         text = item.get("plain_text", "")
         if text:
-            spans.append(Span(text, bool(ann.get("bold")), bool(ann.get("code")), item.get("href")))
+            spans.append(Span(text, bool(marks.get("bold")), bool(marks.get("code")), item.get("href")))
     return spans
 
 

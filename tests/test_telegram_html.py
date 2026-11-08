@@ -16,13 +16,13 @@ def test_escapes_user_text():
 
 def test_spans_links_mentions_and_expandable_quote():
     [msg] = render_messages([
-        line(bold("PAS · Show", href="https://www.notion.so/abc"), " · ", code("Nov 5")),
-        line(mention_user("Pio", 42), " ", mention_handle("@heygelica")),
+        line(bold("QAZ · Show", href="https://www.notion.so/abc"), " · ", code("Nov 5")),
+        line(mention_user("Oto", 42), " ", mention_handle("@heyjunebug")),
         quote(line("a"), line("b")),
     ])
     assert msg == (
-        '<a href="https://www.notion.so/abc"><b>PAS · Show</b></a> · <code>Nov 5</code>\n'
-        '<a href="tg://user?id=42">Pio</a> @heygelica\n'
+        '<a href="https://www.notion.so/abc"><b>QAZ · Show</b></a> · <code>Nov 5</code>\n'
+        '<a href="tg://user?id=42">Oto</a> @heyjunebug\n'
         "<blockquote expandable>a\nb</blockquote>"
     )
     assert_valid_html(msg)

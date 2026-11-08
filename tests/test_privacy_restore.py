@@ -7,14 +7,14 @@ from t6_notion_reports.redact import Mapping
 @pytest.mark.parametrize("token", ["[person 1]", "[Person 1]", "[PERSON 1]", "[person  1]", "person 1", "[person 1 ]", "[ person1 ]"])
 def test_issued_placeholder_variants_restore_the_original(token):
     mapping = Mapping()
-    mapping.placeholder("person", "Marco")
-    assert mapping.restore(f"Waiting for {token}") == "Waiting for Marco"
+    mapping.placeholder("person", "Dario")
+    assert mapping.restore(f"Waiting for {token}") == "Waiting for Dario"
 
 
 def test_shared_placeholder_restores_first_written_casing():
     mapping = Mapping()
-    assert mapping.placeholder("person", "Marco") == mapping.placeholder("person", "MARCO")
-    assert mapping.restore("[person 1]") == "Marco"
+    assert mapping.placeholder("person", "Dario") == mapping.placeholder("person", "DARIO")
+    assert mapping.restore("[person 1]") == "Dario"
 
 
 def test_unknown_id_is_not_silently_accepted():
@@ -43,14 +43,14 @@ def test_condense_redacts_payload_and_restores_output():
     from t6_notion_reports.contacts import Contact
     from t6_notion_reports.redact import Redactor
 
-    redactor = Redactor.build([Contact("c", "Marco")], [{"other": {"Name": "Other Show"}}])
+    redactor = Redactor.build([Contact("c", "Dario")], [{"other": {"Name": "Other Show"}}])
     class Llm:
         def complete(self, system, user, schema):
-            assert "Marco" not in user and "Other Show" not in user and "123456789" not in user
+            assert "Dario" not in user and "Other Show" not in user and "123456789" not in user
             return schema(bullets=[json.loads(user)["new_blocks"][0].replace("person", "PERSON")])
-    source = ["Marco confirmed Other Show 123456789"]
+    source = ["Dario confirmed Other Show 123456789"]
     result = condense_bullets(Llm(), "Own", source[0], source, date(2026, 11, 8), redactor=redactor)
-    assert result.bullets == ["Marco confirmed Other Show [id]"]
+    assert result.bullets == ["Dario confirmed Other Show [id]"]
     assert not result.raw
 
 
@@ -61,16 +61,16 @@ def test_leaves_redacts_payload_and_restores_before_contact_matching():
     from t6_notion_reports.leaves import parse_leaves
     from t6_notion_reports.redact import Redactor
 
-    redactor = Redactor.build([Contact("c", "Marco")], [{"other": {"Name": "Other Show"}}])
+    redactor = Redactor.build([Contact("c", "Dario")], [{"other": {"Name": "Other Show"}}])
     class Llm:
         def complete(self, system, user, schema):
-            assert "Marco" not in user and "Other Show" not in user and "123456789" not in user
+            assert "Dario" not in user and "Other Show" not in user and "123456789" not in user
             line = json.loads(user)["lines"][0]
             return schema(entries=[{"who": "[PERSON 1 ]", "quote": line, "kind": "leave",
                                     "start": "2026-11-09", "end": "2026-11-09"}])
-    result = parse_leaves(Llm(), ["Marco leave Nov 9 (Other Show 123456789)"], date(2026, 11, 8), redactor=redactor)
+    result = parse_leaves(Llm(), ["Dario leave Nov 9 (Other Show 123456789)"], date(2026, 11, 8), redactor=redactor)
     assert not result.failed
-    assert result.entries[0].who == "Marco"
+    assert result.entries[0].who == "Dario"
 
 
 @pytest.mark.parametrize("variant", ["[Person 1]", "[PERSON 1]", "[person  1]", "person 1", "[person 1 ]"])
@@ -79,15 +79,15 @@ def test_consolidation_restores_variants_in_changes_concerns_and_quotes(variant)
     from t6_notion_reports.consolidate import Change, Concern, Consolidation, Payload, SourceLine, validate
 
     mapping = Mapping()
-    mapping.placeholder("person", "Marco")
+    mapping.placeholder("person", "Dario")
     line = "Pending [person 1]"
     payload = Payload({"today": "2026-11-08", "project": {"project_health": None}, "blank_date_properties": []},
                       {1: SourceLine("pm_notes", line)}, line, mapping)
     cite = {"text": f"Pending {variant}", "quote": f"Pending {variant}", "source": "pm_notes", "line_id": 1}
     result = validate(Consolidation(changes=[Change(**cite)], concerns=[Concern(kind="open_item", **cite)]),
                       payload, date(2026, 11, 8))
-    assert result.changes[0].text == "Pending Marco"
-    assert result.concerns == ("Pending Marco",)
+    assert result.changes[0].text == "Pending Dario"
+    assert result.concerns == ("Pending Dario",)
     assert not result.failed
 
 

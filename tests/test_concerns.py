@@ -124,12 +124,12 @@ def test_a_dry_run_shows_ages_but_stores_nothing():
 
 def test_a_project_with_only_a_concern_counts_as_activity_for_the_quiet_coordinator_rule():
     quiet = proj("p0", "QUIET", IN_PROGRESS, **staffed(**LATER))
-    noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ana", **staffed(**SLIP))
+    noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ida", **staffed(**SLIP))
     conn = make_db([quiet, noisy], [quiet, noisy])
     gw = run(conn)
-    assert dm(gw, 111) == ""  # Pio has nothing to show
+    assert dm(gw, 111) == ""  # Oto has nothing to show
     assert "since Nov 14" in dm(gw, 222)
-    assert "No changes: Pio" in digest(gw)
+    assert "No changes: Oto" in digest(gw)
 
 
 def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_show():

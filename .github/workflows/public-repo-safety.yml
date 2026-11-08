@@ -1,0 +1,27 @@
+# This repo is public. Block secrets, real config, data files and real client, show or
+# coordinator names on every push and pull request (shared check from t6-core#27).
+# Run it by hand with "full-history" ticked to rescan every commit.
+name: Public repo safety
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full-history:
+        description: Scan every commit for secrets
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    # Pin both refs to the same t6-core tag once one exists.
+    uses: mclbautista/t6-core/.github/workflows/public-repo-safety.yml@main
+    with:
+      t6-core-ref: main
+      full-history: ${{ github.event_name == 'workflow_dispatch' && inputs.full-history }}
+    secrets:
+      T6_NAMES_DENYLIST: ${{ secrets.T6_NAMES_DENYLIST }}

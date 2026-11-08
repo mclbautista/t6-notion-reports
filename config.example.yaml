@@ -7,20 +7,20 @@ projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projec
 contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
 database_path: /app/data/psr.db
 
-# Job Orders (optional). Needed by `jo-snapshot`. Job Orders: collection://3d8fb4d5-9e59-8073-a0d0-000b77632947
-# jo_data_source: "3d8fb4d5-9e59-8073-a0d0-000b77632947"
+# Job Orders (optional). Needed by `jo-snapshot`. Job Orders: collection://33333333-3333-3333-3333-333333333333
+# jo_data_source: "33333333-3333-3333-3333-333333333333"
 
 # Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
-# Meeting Notes, and `draft-mom` works. Meeting Notes: collection://e77662de-dbca-47c3-80ac-355716f6fe43
-# meeting_notes_data_source: "e77662de-dbca-47c3-80ac-355716f6fe43"
+# Meeting Notes, and `draft-mom` works. Meeting Notes: collection://22222222-2222-2222-2222-222222222222
+# meeting_notes_data_source: "22222222-2222-2222-2222-222222222222"
 
 # Saturday briefing (optional; leave all of these out to run snapshots only).
 # When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
 # The secret PSR_SECRET goes in .env. Briefings fire Saturday 12:00 Asia/Manila (Friday snapshot at 23:30).
-# The Minutes go to the same chat and topic: PSR group -1003261335368, topic 3124.
-# gateway_url: "http://192.168.88.151:8780"
-# psr_group_chat_id: -1003261335368       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
-# psr_group_topic_id: 3124                 # PSR topic: Minutes go here
+# The Minutes go to the same chat and topic: PSR group -1000000000001, topic 1.
+# gateway_url: "http://192.0.2.10:8780"
+# psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
+# psr_group_topic_id: 1                    # PSR topic: Minutes go here
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
 # Coordinator delivery only; the digest and LLM still include every eligible project.
 # Omit coordinator_recipients for all coordinators; [] disables their DMs and group fallbacks.
@@ -43,7 +43,7 @@ database_path: /app/data/psr.db
 # shift_reports_enabled: true
 # shift_chat_id: -1000000000000            # FILL IN: chat for the reports (Cyril's DM for the dry run)
 # shift_topic_id: 1                        # optional topic in that chat
-# ops_chat_id: 274983989                   # optional; where the ops alert will go (later ticket)
+# ops_chat_id: 100000001                   # optional; where the ops alert will go (later ticket)
 
 # People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,
 # then a guarded fuzzy match). Defaults shown match the JO watchdog. A fuzzy match needs fuzzy_min_score or

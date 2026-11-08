@@ -11,7 +11,7 @@ from t6_notion_reports.snapshot_job import run_snapshot
 
 T1 = datetime(2026, 11, 9, 11, tzinfo=timezone.utc)
 T2 = datetime(2026, 11, 13, 18, tzinfo=timezone.utc)
-CONTACTS_LIST = [contact("c1", "Pio"), contact("c2", "Tim"), contact("c3", "Jason")]
+CONTACTS_LIST = [contact("c1", "Oto"), contact("c2", "Rex"), contact("c3", "Milo")]
 
 
 def snap(conn, notion, kind="manual", at=T1):
@@ -31,13 +31,13 @@ def test_stores_exactly_tracked_fields_and_never_reads_formulas(tmp_path):
 
 def test_field_values_parsed():
     conn = connect()
-    p = project("p1", name="Bawod", code="BW", **{"Project Health": select("At Risk"),
+    p = project("p1", name="Kestrel", code="BW", **{"Project Health": select("At Risk"),
                    "PM Notes": rich("As of Oct 26,\n  • Delay"),
                    "Playdate": date("2026-11-20"), "Submission Deadline": date("2026-11-22"),
                    "Archival Deadline": date("2026-12-01")})
     sid = snap(conn, FakeNotion([p], CONTACTS_LIST)).snapshot_id
     s = load_snapshot(conn, sid)["p1"]
-    assert (s["Name"], s["Project Code"], s["Project Health"]) == ("Bawod", "BW", "At Risk")
+    assert (s["Name"], s["Project Code"], s["Project Health"]) == ("Kestrel", "BW", "At Risk")
     assert s["PM Notes"] == "As of Oct 26,\n  • Delay"
     assert s["Playdate"] == {"start": "2026-11-20", "end": None}
     assert s["Submission Deadline"] == {"start": "2026-11-22", "end": None}
@@ -84,8 +84,8 @@ def test_relations_keep_ids_and_names_and_status_keeps_raw_value():
                 **{"T6 Post Coordinator": relation("c1")})
     sid = snap(conn, FakeNotion([p], CONTACTS_LIST)).snapshot_id
     s = load_snapshot(conn, sid)["p1"]
-    assert s["T6 Post Coordinator"] == [{"id": "c1", "name": "Pio"}]
-    assert s["Editors"] == [{"id": "c1", "name": "Pio"}, {"id": "c2", "name": "Tim"}]
+    assert s["T6 Post Coordinator"] == [{"id": "c1", "name": "Oto"}]
+    assert s["Editors"] == [{"id": "c1", "name": "Oto"}, {"id": "c2", "name": "Rex"}]
     assert s["Online Editor"] == []
     assert s["Status"] == "🚨  In-Progress "
 

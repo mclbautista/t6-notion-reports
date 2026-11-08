@@ -7,15 +7,15 @@ SUNDAY = date(2026, 11, 15)
 
 def test_multiple_digest_recipients():
     cyril = Contact("c-cyril", "Cyril", telegram_id=999)
-    jam = Contact("c-jam", "Jam", telegram_id=777)
-    leizette = Contact("c-leiz", "Leizette", telegram_id=888)
-    pio = Contact("c-pio", "Pio", telegram_id=666)
+    kit = Contact("c-kit", "Kit", telegram_id=777)
+    quilla = Contact("c-quil", "Quilla", telegram_id=888)
+    oto = Contact("c-oto", "Oto", telegram_id=666)
 
     settings = Settings(
         cyril=cyril,
         group_chat_id=-1001,
         group_topic_id=None,
-        digest_recipients=(cyril, jam, leizette, pio),
+        digest_recipients=(cyril, kit, quilla, oto),
     )
 
     changes = [
@@ -33,11 +33,11 @@ def test_multiple_digest_recipients():
         )
     ]
     coordinators = {"c-cyril": "Cyril"}
-    contacts = {"c-cyril": cyril, "c-jam": jam, "c-leiz": leizette, "c-pio": pio}
+    contacts = {"c-cyril": cyril, "c-kit": kit, "c-quil": quilla, "c-oto": oto}
 
     msgs = build_briefing(changes, coordinators, contacts, settings, SUNDAY)
 
-    # 1 coordinator DM (Cyril) + 4 digest DMs (Cyril, Jam, Leizette, Pio)
+    # 1 coordinator DM (Cyril) + 4 digest DMs (Cyril, Kit, Quilla, Oto)
     assert len(msgs) == 5
     recipients = {m.to for m in msgs}
     assert recipients == {999, 777, 888, 666}

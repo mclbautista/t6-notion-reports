@@ -11,7 +11,7 @@ PLAY_QUOTE = "• Playdate is Q2 2027"
 
 
 def staffed(**props):
-    base = {r: relation("c-ana") for r in ROLES if r != "T6 Post Coordinator"}
+    base = {r: relation("c-ida") for r in ROLES if r != "T6 Post Coordinator"}
     base.update(props)
     return base
 

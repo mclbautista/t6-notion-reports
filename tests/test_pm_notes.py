@@ -48,7 +48,7 @@ def test_year_is_closest_not_after_snapshot_plus_seven_days():
     assert future.header_date == date(2025, 11, 5)  # 10 days ahead: not allowed
 
 
-def test_ria_oct28_in_oct26_snapshot_is_accepted_within_window():
+def test_nim_oct28_in_oct26_snapshot_is_accepted_within_window():
     assert parse_pm_notes("As of Oct 28\n- x", SNAP).blocks[0].header_date == date(2026, 10, 28)
 
 

@@ -25,7 +25,7 @@ def test_client_paginates_and_sends_auth():
 
 def test_cli_snapshot_writes_db_and_logs_counts_only(tmp_path, capsys):
     db = tmp_path / "psr.db"
-    notion = FakeNotion([project("p1", name="Secret Show")], [contact("c1", "Pio")])
+    notion = FakeNotion([project("p1", name="Secret Show")], [contact("c1", "Oto")])
     code = cli.main(["snapshot", "--kind", "monday", "--db", str(db),
                      "--projects-ds", PROJECTS, "--contacts-ds", CONTACTS],
                     notion=notion, now=datetime(2026, 11, 9, 11, tzinfo=timezone.utc))

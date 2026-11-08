@@ -47,8 +47,8 @@ def conn():
 
 
 def contacts():
-    out = [contact("c-leiz", "Leizette"), contact("c-pio", "Pio")]
-    out[0]["properties"]["TelegramHandle"] = rich("@leiz")
+    out = [contact("c-quil", "Quilla"), contact("c-oto", "Oto")]
+    out[0]["properties"]["TelegramHandle"] = rich("@quil")
     return out
 
 
@@ -133,24 +133,24 @@ def test_unchanged_leads_only_in_unchanged_list(conn):
 
 def test_others_prefilled_from_description_next_14_days(conn):
     desc = ("Notes about the db\nUpcoming Holidays and Leaves\n"
-            "• Nov 20 - Pio on leave\n- Nov 30 Bonifacio Day\n• Nov 17-18: Tim leave\n• Nov 2 Old holiday")
+            "• Nov 20 - Oto on leave\n- Nov 30 Bonifacio Day\n• Nov 17-18: Rex leave\n• Nov 2 Old holiday")
     n, _ = draft(conn, description=desc)
     t = texts(all_blocks(n))
     flat = [x for _, x in t]
     i = flat.index("⚫️ Others")
-    assert flat[i + 1:i + 4] == ["Leaves and holidays (next 14 days)", "Nov 20 - Pio on leave", "Nov 17-18: Tim leave"]
+    assert flat[i + 1:i + 4] == ["Leaves and holidays (next 14 days)", "Nov 20 - Oto on leave", "Nov 17-18: Rex leave"]
     assert "Heavy workloads" in flat and "Reminders" in flat
     assert "Bonifacio" not in " ".join(flat)
 
 
 def test_header_attendees_copied_from_last_week_and_footer_mentions(conn):
-    last = meeting_page("m0", "PSR MOM 2026-11-09", "2026-11-09", [("u1", "Leizette"), ("u2", "Pio")])
+    last = meeting_page("m0", "PSR MOM 2026-11-09", "2026-11-09", [("u1", "Quilla"), ("u2", "Oto")])
     n, _ = draft(conn, meetings=[last])
     assert n.created[0]["properties"]["Team Attendees"]["people"] == [
         {"object": "user", "id": "u1"}, {"object": "user", "id": "u2"}]
     flat = [x for _, x in texts(all_blocks(n))]
-    assert "Attendees: Leizette, Pio" in flat
-    assert "@leiz Pio" in flat  # Pio has no handle: name is used
+    assert "Attendees: Quilla, Oto" in flat
+    assert "@quil Oto" in flat  # Oto has no handle: name is used
 
 
 def test_header_present(conn):
@@ -205,7 +205,7 @@ def cli_setup(tmp_path, conn_path, meeting=True, monkeypatch=None):
            "contacts_data_source": "22222222-2222-2222-2222-222222222222",
            "database_path": str(conn_path)}
     if meeting:
-        cfg["meeting_notes_data_source"] = "33333333-3333-3333-3333-333333333333"
+        cfg["meeting_notes_data_source"] = "11111111-1111-1111-1111-111111111111"
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(cfg))
     monkeypatch.setenv("NOTION_TOKEN", "tok")
@@ -217,7 +217,7 @@ class Routed(FakeNotion):
     def query_data_source(self, ds, filter=None):
         return super().query_data_source({"11111111-1111-1111-1111-111111111111": PROJECTS,
                                           "22222222-2222-2222-2222-222222222222": CONTACTS,
-                                          "33333333-3333-3333-3333-333333333333": MEETING}[ds])
+                                          "11111111-1111-1111-1111-111111111111": MEETING}[ds])
 
     def create_page(self, ds, properties, children):
         return super().create_page(MEETING, properties, children)
@@ -284,8 +284,8 @@ def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
 
 def test_holidays_window_and_year_wrap():
     d = date(2026, 12, 28)
-    got = upcoming_entries("Upcoming Holidays and Leaves\n- Dec 30 Rizal Day\n- Dec 31 - Jan 2: Pio\n- Jan 20 later\n- no date here", d)
-    assert got == ["Dec 30 Rizal Day", "Dec 31 - Jan 2: Pio"]
+    got = upcoming_entries("Upcoming Holidays and Leaves\n- Dec 30 Rizal Day\n- Dec 31 - Jan 2: Oto\n- Jan 20 later\n- no date here", d)
+    assert got == ["Dec 30 Rizal Day", "Dec 31 - Jan 2: Oto"]
 
 
 def test_failed_create_keeps_the_old_unsent_draft(conn):

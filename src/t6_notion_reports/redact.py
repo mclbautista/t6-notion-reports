@@ -15,7 +15,7 @@ full stop or comma follows, and every known TelegramUserID wherever it stands as
 Matching is by whole word, longest first.
 
 Exposure boundary (#62): a name word or a project code that is not an ordinary word is hidden in any
-case ("marco", "MARCO", "ab"). One that is an ordinary word ("Will", "Joy", a code such as "TWO") is hidden
+case ("dario", "DARIO", "ab"). One that is an ordinary word ("Will", "Joy", a code such as "TWO") is hidden
 only as written capitalised or in capitals, since hiding "will" or "two" everywhere would blank the notes.
 The ordinary words are the lists in ``condense`` plus ``EXTRA_ORDINARY``.
 """
