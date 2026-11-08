@@ -25,6 +25,7 @@ from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .llm import LlmClient, LlmError
 from .people_match import MatchSettings, match_person
+from .redact import Mapping, Redactor, unresolved
 from .snapshots import RELATION_FIELDS, squash
 
 DEFAULT_CLASH_DAYS = 14
@@ -70,30 +71,39 @@ class LeaveResult:
     failed: bool = False
 
 
-def payload(lines: Iterable[str], today: date) -> dict:
+def payload(lines: Iterable[str], today: date, redactor: Redactor = Redactor(), mapping: Mapping | None = None) -> dict:
     """What leaves the machine: the leave lines and today's date, and nothing about projects."""
-    return {"today": today.isoformat(), "lines": list(lines)}
+    mapping = mapping if mapping is not None else Mapping()
+    return {"today": today.isoformat(), "lines": [redactor.redact(line, "", mapping) for line in lines]}
 
 
-def parse_leaves(llm: LlmClient, lines: list[str], today: date) -> LeaveResult:
+def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Redactor = Redactor()) -> LeaveResult:
     """One call. Never raises: a failed call is ``failed``; an entry that fails its checks is dropped."""
+    mapping = Mapping()
+    data = payload(lines, today, redactor, mapping)
     try:
-        reply = llm.complete(SYSTEM, json.dumps(payload(lines, today), ensure_ascii=False), LeaveParse)
+        reply = llm.complete(SYSTEM, json.dumps(data, ensure_ascii=False), LeaveParse)
     except LlmError:
         return LeaveResult(failed=True)
     # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
-    exact = {_BULLET.sub("", ln.strip()) for ln in lines}
+    exact = {_BULLET.sub("", ln.strip()) for ln in data["lines"]}
     kept: list[Leave] = []
+    dropped = False
     for item in reply.entries:
-        if item.kind not in KINDS or not squash(item.who) or _BULLET.sub("", item.quote.strip()) not in exact:
+        who, quote = mapping.restore(item.who), mapping.restore(item.quote)
+        if unresolved(who) or unresolved(quote):
+            dropped = True
+            continue
+        if (item.kind not in KINDS or not squash(who)
+                or _BULLET.sub("", mapping.canonicalize(item.quote).strip()) not in exact):
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)
         except ValueError:
             continue
         if start <= end:
-            kept.append(Leave(squash(item.who), item.kind, start, end))
-    return LeaveResult(tuple(dict.fromkeys(kept)))
+            kept.append(Leave(squash(who), item.kind, start, end))
+    return LeaveResult(tuple(dict.fromkeys(kept)), failed=dropped and not kept)
 
 
 @dataclass(frozen=True)

@@ -123,7 +123,7 @@ def run_brief(
     if (llm is not None or show_llm_input) and projects_ds:
         leaves = leave_concerns(
             notion, projects_ds, llm, today, new_state, contacts,
-            brief.leave_clash_days, matching, show_llm_input, out, log,
+            brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
@@ -211,7 +211,10 @@ class Leaves:
     available: bool = True
 
 
-def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log) -> Leaves:
+def leave_concerns(
+    notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log,
+    redactor: Redactor = Redactor(),
+) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
 
     No leave lines under the heading means no call and nothing to clash. A failed call, an unreadable
@@ -230,9 +233,9 @@ def leave_concerns(notion, projects_ds, llm, today, states, contacts, clash_days
     if not lines:
         return Leaves()
     if show_input:
-        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
+        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today, redactor), ensure_ascii=False, indent=2)}\n")
         return Leaves(available=False)
-    result = parse_leaves(llm, lines, today)
+    result = parse_leaves(llm, lines, today, redactor=redactor)
     if result.failed:
         log("brief leaves unavailable")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)

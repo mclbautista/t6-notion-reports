@@ -180,3 +180,25 @@ def test_ungrounded_or_failed_projects_keep_raw_bullets_marked_raw():
 def test_echoing_the_meeting_date_does_not_use_up_the_older_date_allowance():
     out, _ = run(["Ep 3 locked Oct 26", "QCinema submission on Nov 6"])
     assert not out.raw
+
+
+def test_minutes_job_redacts_contacts_other_projects_and_ids_then_restores_bullets():
+    from fake_notion import contact
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    people = [contact("person-page", "Marco Santos")]
+    before = [project("own", "OWN", "Own Show"), project("other", "OTH", "Other Show")]
+    after = [project("own", "OWN", "Own Show", **{"PM Notes": rich(
+        "As of Oct 26\n• Marco confirmed Other Show 123456789")}), before[1]]
+    run_snapshot(conn, FakeNotion(before, people), PROJECTS, CONTACTS, "friday", FRI)
+    run_snapshot(conn, FakeNotion(after, people), PROJECTS, CONTACTS, "monday", MON)
+    notion = FakeNotion(after, people)
+    class Llm:
+        def complete(self, system, user, schema):
+            assert all(private not in user for private in ("Marco", "Other Show", "123456789", "person-page"))
+            return schema(bullets=json.loads(user)["new_blocks"])
+    run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, MEET, log=lambda _: None, llm=Llm())
+    blocks = notion.created[0]["children"]
+    lines = [text for text, _ in flat(project_block(blocks, "OWN"))]
+    assert "Marco confirmed Other Show [id]" in lines
+    assert "(raw)" not in lines[0]

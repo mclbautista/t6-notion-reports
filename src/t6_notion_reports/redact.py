@@ -49,7 +49,9 @@ _IDS = re.compile(
     r"|(?<!\d)(?<!\d[.,])\d{7,}(?!\d)(?![.,]\d)",
     re.I,
 )
-_PLACEHOLDER = re.compile(r"\[(?:person|project|id) \d+\]")
+_PLACEHOLDER = re.compile(
+    r"(?<!\w)(?:\[\s*)?(person|project|id)\s*(\d+)\b(?:\s*\])?", re.I,
+)
 
 
 @dataclass
@@ -71,9 +73,24 @@ class Mapping:
     def restore(self, text: str) -> str:
         """Put people and projects back. Ids stay hidden as "[id]": briefs carry no links or ids."""
         def back(m: re.Match) -> str:
-            token = m.group(0)
-            return "[id]" if token.startswith("[id") else self.originals.get(token, token)
+            kind, number = m.group(1).lower(), m.group(2)
+            token = f"[{kind} {number}]"
+            if token not in self.originals:
+                return m.group(0)
+            return "[id]" if kind == "id" else self.originals[token]
         return _PLACEHOLDER.sub(back, text)
+
+    def canonicalize(self, text: str) -> str:
+        """Use issued token spelling for grounding and quote checks before restoring names."""
+        def canonical(m: re.Match) -> str:
+            token = f"[{m.group(1).lower()} {m.group(2)}]"
+            return token if token in self.originals else m.group(0)
+        return _PLACEHOLDER.sub(canonical, text)
+
+
+def unresolved(text: str) -> bool:
+    """Numbered placeholders must never survive the local restore boundary; ``[id]`` may."""
+    return _PLACEHOLDER.search(text) is not None
 
 
 @dataclass(frozen=True)
