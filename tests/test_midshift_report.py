@@ -73,8 +73,8 @@ def test_line_fields_link_escape_and_empty_relations():
     _, text, _ = mid(jo("abcd-1234", "48", "TOC", task="Export <v2> & sons", health="🔥 Urgent",
                         Assigned=relation("c1", "c2"), Projects=relation("pr1")))
     row = next(l for l in text.splitlines() if "Export" in l)
-    assert row == ('TWBTY · <a href="https://www.notion.so/abcd1234">Export &lt;v2&gt; &amp; sons</a> · TOC · '
-                   "Tue Nov 3 18:00 · Pio, Tim · 🔥 Urgent")
+    assert row == ('FAKEX · <a href="https://www.notion.so/abcd1234">Export &lt;v2&gt; &amp; sons</a> · TOC · '
+                   "Tue Nov 3 18:00 · Oto, Rex · 🔥 Urgent")
     _, text, _ = mid(jo("j1", "1", None, deadline=None))
     assert "no project · " in text and " · no department · no deadline · unassigned · 🔵 On Track" in text
     assert_valid_html(text)

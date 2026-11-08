@@ -61,10 +61,10 @@ def test_serve_fails_boot_with_key_name_on_stderr(tmp_path, capsys, monkeypatch)
 BRIEF_YAML = """
 projects_data_source: "11111111-1111-1111-1111-111111111111"
 contacts_data_source: "22222222222222222222222222222222"
-gateway_url: "http://192.168.88.151:8780"
-psr_group_chat_id: -1003261335368
+gateway_url: "http://192.0.2.10:8780"
+psr_group_chat_id: -1000000000001
 psr_group_topic_id: 1
-cyril_contact_id: "33333333-3333-3333-3333-333333333333"
+cyril_contact_id: "11111111-1111-1111-1111-111111111111"
 """
 
 
@@ -78,7 +78,7 @@ def test_coordinator_recipients_config(tmp_path, suffix, expected):
     assert brief is not None
     assert brief.coordinator_recipients == expected
     # This setting must not change identity conventions for existing config fields.
-    assert brief.cyril_contact_id == "33333333-3333-3333-3333-333333333333"
+    assert brief.cyril_contact_id == "11111111-1111-1111-1111-111111111111"
     assert brief.digest_recipients == (brief.cyril_contact_id,)
 
 
@@ -104,14 +104,14 @@ def test_loads_briefing_settings_and_secret(tmp_path):
     cfg = load_config(write(tmp_path, BRIEF_YAML + "test_banner: true\n"), {**ENV, "PSR_SECRET": " hunter2 "})
     b = cfg.brief
     assert (b.gateway_url, b.group_chat_id, b.group_topic_id, b.test_banner, b.psr_secret) == (
-        "http://192.168.88.151:8780", -1003261335368, 1, True, "hunter2")
+        "http://192.0.2.10:8780", -1000000000001, 1, True, "hunter2")
     assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.psr_secret is None
 
 
 @pytest.mark.parametrize("line,key", [
-    ('gateway_url: "http://192.168.88.151:8780"', "gateway_url"),
-    ("psr_group_chat_id: -1003261335368", "psr_group_chat_id"),
-    ('cyril_contact_id: "33333333-3333-3333-3333-333333333333"', "cyril_contact_id"),
+    ('gateway_url: "http://192.0.2.10:8780"', "gateway_url"),
+    ("psr_group_chat_id: -1000000000001", "psr_group_chat_id"),
+    ('cyril_contact_id: "11111111-1111-1111-1111-111111111111"', "cyril_contact_id"),
 ])
 def test_partial_briefing_config_names_the_missing_key(tmp_path, line, key):
     with pytest.raises(ConfigError, match=key):

@@ -1,8 +1,16 @@
 __pycache__/
 *.egg-info/
-*.db
 .venv/
 .pytest_cache/
+.DS_Store
+
+# Never commit secrets, real config or data (this repo is public).
 .env
-data/
+.env.*
+!.env.example
 config.yaml
+config.yml
+data/
+*.db
+*.sqlite
+*.sqlite3

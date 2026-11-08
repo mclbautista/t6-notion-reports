@@ -16,11 +16,11 @@ def who(name, contacts, settings=S):
 
 
 CONTACTS = [
-    c("majo", "Maria Josefa Cruz", "Majo, Ate Majo", tg=1),
-    c("deb", "Debbie Santos", "Debbie,  Debz , KUYA debs,,", tg=2),
-    c("paul", "Paul Reyes", tg=3),
-    c("kim1", "Kimberly Lim", "Kim", tg=4),
-    c("kim2", "Kim Tan", "kim", tg=5),
+    c("vedo", "Velma Odette Belk", "Vedo, Ate Vedo", tg=1),
+    c("tib", "Tibbie Varnel", "Tibbie,  Tibz , KUYA tibs,,", tg=2),
+    c("ravn", "Ravn Pardo", tg=3),
+    c("lor1", "Lorraine Ung", "Lor", tg=4),
+    c("lor2", "Lor Dov", "lor", tg=5),
 ]
 
 
@@ -29,19 +29,19 @@ def test_defaults_match_the_watchdog():
 
 
 def test_alias_with_honorifics_on_both_sides():
-    for raw in ("Majo", "ate Majo", "Ate MAJO", "sir majo", "kuya  Majo", "Debz", "kuya debs", "sir Debbie"):
-        assert who(raw, CONTACTS) in {"majo", "deb"}, raw
-    assert who("ate Majo", CONTACTS) == "majo"
-    assert who("kuya debs", CONTACTS) == "deb"
+    for raw in ("Vedo", "ate Vedo", "Ate VEDO", "sir vedo", "kuya  Vedo", "Tibz", "kuya tibs", "sir Tibbie"):
+        assert who(raw, CONTACTS) in {"vedo", "tib"}, raw
+    assert who("ate Vedo", CONTACTS) == "vedo"
+    assert who("kuya tibs", CONTACTS) == "tib"
 
 
 def test_alias_collision_is_unresolved_and_never_guessed():
-    assert who("Kim", CONTACTS) is None
+    assert who("Lor", CONTACTS) is None
 
 
 def test_fuzzy_pass():
-    assert who("Paul", CONTACTS + [c("x", "Zed Quill")]) == "paul"
-    assert who("Pual Reyes", CONTACTS) == "paul"
+    assert who("Ravn", CONTACTS + [c("x", "Zed Quill")]) == "ravn"
+    assert who("Rvan Pardo", CONTACTS) == "ravn"
 
 
 def test_fuzzy_fails_on_low_score():
@@ -49,41 +49,41 @@ def test_fuzzy_fails_on_low_score():
 
 
 def test_fuzzy_fails_on_insufficient_lead():
-    crowd = [c("a", "Paul Garcia", tg=1), c("b", "Paula Garcia", tg=2)]
-    assert who("Paul Garcia", crowd) is None
+    crowd = [c("a", "Ravn Hollis", tg=1), c("b", "Ravna Hollis", tg=2)]
+    assert who("Ravn Hollis", crowd) is None
 
 
 def test_thresholds_are_configurable():
-    assert who("Pual Reyes", CONTACTS, MatchSettings(fuzzy_min_score=99)) is None
-    crowd = [c("a", "Paul Garcia", tg=1), c("b", "Paula Garcia", tg=2)]
-    assert who("Paul Garcia", crowd, MatchSettings(fuzzy_min_lead=0)) == "a"
+    assert who("Rvan Pardo", CONTACTS, MatchSettings(fuzzy_min_score=99)) is None
+    crowd = [c("a", "Ravn Hollis", tg=1), c("b", "Ravna Hollis", tg=2)]
+    assert who("Ravn Hollis", crowd, MatchSettings(fuzzy_min_lead=0)) == "a"
 
 
 def test_honorifics_are_configurable():
-    cs = [c("a", "Boss Dan", "Dan")]
-    assert who("boss dan", cs, MatchSettings(honorifics=("boss",))) == "a"
+    cs = [c("a", "Boss Gus", "Gus")]
+    assert who("boss gus", cs, MatchSettings(honorifics=("boss",))) == "a"
 
 
 def test_empty_and_blank_names_are_unresolved():
     assert who("", CONTACTS) is None
     assert who("  ate  ", CONTACTS) is None
-    assert who("Majo", []) is None
+    assert who("Vedo", []) is None
 
 
 def test_onboarded_wins_over_namesake_for_alias_and_fuzzy():
-    cs = [c("off", "Paul Reyes", "Paulo"), c("on", "Paul Reyes", "Paulo", tg=9)]
-    assert who("Paulo", cs) == "on"
-    assert who("Paul Reyes", cs) == "on"
+    cs = [c("off", "Ravn Pardo", "Ravno"), c("on", "Ravn Pardo", "Ravno", tg=9)]
+    assert who("Ravno", cs) == "on"
+    assert who("Ravn Pardo", cs) == "on"
 
 
 def test_no_onboarded_match_falls_through_with_same_thresholds():
-    cs = [c("on", "Debbie Santos", tg=1), c("off", "Alec Gaba", "Alec")]
-    assert who("Alec", cs) == "off"
-    assert who("Alec Gabba", cs) == "off"
-    assert who("Alec Gabba", cs, MatchSettings(fuzzy_min_score=99)) is None
+    cs = [c("on", "Tibbie Varnel", tg=1), c("off", "Ivor Mora", "Ivor")]
+    assert who("Ivor", cs) == "off"
+    assert who("Ivor Morra", cs) == "off"
+    assert who("Ivor Morra", cs, MatchSettings(fuzzy_min_score=99)) is None
     assert who("Zzyzx", cs) is None
 
 
 def test_ambiguous_onboarded_alias_does_not_fall_through_to_a_namesake():
-    cs = [c("a", "Kim Lim", "kim", tg=1), c("b", "Kim Tan", "kim", tg=2), c("c", "Kim Off", "kim")]
-    assert who("Kim", cs) is None
+    cs = [c("a", "Lor Ung", "lor", tg=1), c("b", "Lor Dov", "lor", tg=2), c("c", "Lor Off", "lor")]
+    assert who("Lor", cs) is None

@@ -38,7 +38,7 @@ def formula(value):
     return {"type": "formula", "formula": {"type": "string", "string": value}}
 
 
-def project(page_id, name="Show", code="PAS", **props):
+def project(page_id, name="Show", code="QAZ", **props):
     base = {
         "Name": title(name), "Project Code": select(code), "Stage": select("Offline"),
         "Status": select("🚨 In-Progress"), "Project Health": select("On Track"), "PM Notes": rich(""),
@@ -57,7 +57,7 @@ def status(name):
     return {"type": "status", "status": {"name": name} if name else None}
 
 
-def job_order(page_id, name="TWBTY - AE - JO #48", edited="2026-11-03T10:00:00.000Z", **props):
+def job_order(page_id, name="FAKEX - AE - JO #48", edited="2026-11-03T10:00:00.000Z", **props):
     """A Job Orders page as the API returns it. Note the trailing space in "Blocker "."""
     base = {
         "Name": title(name), "JO Number": rich("48"), "Task": rich("Export"),

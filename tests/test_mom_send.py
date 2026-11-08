@@ -31,7 +31,7 @@ def full_page():
     return [
         block("heading_1", "PSR MOM"),
         block("paragraph", "Monday, Nov 16, 2026"),
-        block("paragraph", "Attendees: Leizette, Pio"),
+        block("paragraph", "Attendees: Quilla, Oto"),
         block("heading_2", "🔴 Critical / off track"),
         bullet("CR", bullet("Delay in Mixing"), bullet("VBM & Co will <haggle>")),
         block("heading_2", "🟡 On track"),
@@ -41,7 +41,7 @@ def full_page():
         block("heading_2", "⚫️ Others"),
         bullet("Leaves and holidays: none in the next 14 days"),
         bullet("Heavy workloads"),
-        block("paragraph", "@leiz Pio"),
+        block("paragraph", "@quil Oto"),
         block("heading_2", "Unchanged (Notion only, not sent)"),
         bullet("IDL - no notes yet"),
     ]
@@ -69,7 +69,7 @@ def test_ticked_page_is_sent_once_in_group_order_and_sent_at_set():
     texts = [t for *_, t in gw.sent]
     heads = ["Critical", "On track", "Archiving", "Others"]
     assert all(h in t for h, t in zip(heads, texts))
-    assert "PSR MOM" in texts[0] and "Attendees: Leizette, Pio" in texts[0]  # header first
+    assert "PSR MOM" in texts[0] and "Attendees: Quilla, Oto" in texts[0]  # header first
     assert n.sent_marked == [("m1", {"Sent at": {"date": {"start": "2026-11-16T14:05:00+08:00"}}})]
 
 
@@ -94,10 +94,10 @@ def test_unticked_sent_and_other_pages_are_skipped():
 
 def test_edits_in_the_page_are_what_gets_sent():
     blocks = full_page()
-    blocks[4] = bullet("CR", bullet("Edited by Leizette"))
+    blocks[4] = bullet("CR", bullet("Edited by Quilla"))
     gw, _ = send(setup(blocks))
     body = gw.sent[0][3]
-    assert "Edited by Leizette" in body and "Delay in Mixing" not in body
+    assert "Edited by Quilla" in body and "Delay in Mixing" not in body
 
 
 def test_unchanged_list_and_raw_toggles_never_sent():
@@ -116,7 +116,7 @@ def test_messages_are_valid_html_escaped_with_expandable_quotes_and_mentions():
         assert len(text) <= LIMIT
         assert_valid_html(text)
     assert "VBM &amp; Co will &lt;haggle&gt;" in first and "<blockquote expandable>" in first
-    assert "@leiz" in gw.sent[-1][3]
+    assert "@quil" in gw.sent[-1][3]
 
 
 def test_rich_text_formatting_is_kept():

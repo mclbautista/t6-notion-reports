@@ -11,8 +11,8 @@ from t6_notion_reports.jo_snapshots import (TRACKED_FIELDS, connect, load_boundi
 
 T1 = datetime(2026, 11, 3, 5, tzinfo=timezone(timedelta(hours=8)))
 T2 = T1 + timedelta(hours=7)
-PEOPLE = [contact("c1", "Pio"), contact("c2", "Tim")]
-PROJS = [project("pr1", name="Twenty Beauty", code="TWBTY"), project("pr2", name="No Code Show", code=None)]
+PEOPLE = [contact("c1", "Oto"), contact("c2", "Rex")]
+PROJS = [project("pr1", name="Fake Expo", code="FAKEX"), project("pr2", name="No Code Show", code=None)]
 
 
 def notion(*jos):
@@ -33,11 +33,11 @@ def test_round_trips_every_field_with_ids_and_names():
     assert set(page) == set(TRACKED_FIELDS)
     assert page["Blocker "] == "waiting on rushes"
     assert page["Health"] == "🔴 Blocked"
-    assert (page["Name"], page["JO Number"], page["Task"]) == ("TWBTY - AE - JO #48", "48", "Export")
+    assert (page["Name"], page["JO Number"], page["Task"]) == ("FAKEX - AE - JO #48", "48", "Export")
     assert (page["Status"], page["Department"]) == ("In progress", "VFX")
-    assert page["Assigned"] == [{"id": "c1", "name": "Pio"}, {"id": "c2", "name": "Tim"}]
+    assert page["Assigned"] == [{"id": "c1", "name": "Oto"}, {"id": "c2", "name": "Rex"}]
     # Project code if there is one, else name.
-    assert page["Projects"] == [{"id": "pr1", "name": "TWBTY"}, {"id": "pr2", "name": "No Code Show"}]
+    assert page["Projects"] == [{"id": "pr1", "name": "FAKEX"}, {"id": "pr2", "name": "No Code Show"}]
     assert page["last_edited_time"] == "2026-11-03T10:00:00.000Z"
 
 
@@ -154,6 +154,6 @@ def test_cli_requires_jo_data_source(tmp_path, capsys, monkeypatch):
     assert "jo_data_source" in capsys.readouterr().err
 
 
-PROJECTS_ID = "11111111-1111-1111-1111-111111111111"
+PROJECTS_ID = "33333333-3333-3333-3333-333333333333"
 CONTACTS_ID = "22222222-2222-2222-2222-222222222222"
-JO_ID = "3d8fb4d5-9e59-8073-a0d0-000b77632947"
+JO_ID = "33333333-3333-3333-3333-333333333333"

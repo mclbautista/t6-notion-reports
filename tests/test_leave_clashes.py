@@ -13,21 +13,21 @@ from test_gated_briefs import BRIEF, FRIDAY, IN_PROGRESS, MONDAY, SATURDAY, STAN
 
 HEADING = "Upcoming Holidays and Leaves"
 LEAVES = [
-    "• Lea - leave Nov 20-22",
-    "• Ben - leave Dec 20",
+    "• Nia - leave Nov 20-22",
+    "• Cal - leave Dec 20",
     "• Nov 30 - Bonifacio Day (holiday)",
     "• Zed - leave Nov 25",
-    "• Lea - holiday Nov 21",
+    "• Nia - holiday Nov 21",
 ]
 
 
 def contacts():
-    people = [contact("c-pio", "Pio"), contact("c-cyril", "Cyril"), contact("c-lea", "Lea Santos"),
-              contact("c-ben", "Ben Reyes"), contact("c-ann", "Ann Cruz")]
-    for page, (h, i) in zip(people[:4], (("pio_h", 111), ("cyril_h", 999), ("lea_h", 333), ("ben_h", 444))):
+    people = [contact("c-oto", "Oto"), contact("c-cyril", "Cyril"), contact("c-nia", "Nia Varnel"),
+              contact("c-cal", "Cal Pardo"), contact("c-uma", "Uma Belk")]
+    for page, (h, i) in zip(people[:4], (("oto_h", 111), ("cyril_h", 999), ("nia_h", 333), ("cal_h", 444))):
         page["properties"].update(tg(h, i))
-    people[2]["properties"]["Aliases"] = rich("Lei")
-    return people  # Ann has no TelegramUserID
+    people[2]["properties"]["Aliases"] = rich("Nio")
+    return people  # Uma has no TelegramUserID
 
 
 class LeaveLlm:
@@ -46,7 +46,7 @@ class LeaveLlm:
         entries = self.entries(payload) if callable(self.entries) else (self.entries or [])
         # Scripted answers quote the redacted lines the model now receives.
         def hidden(text):
-            return text.replace("Lea", "[person 1]").replace("Ben", "[person 2]")
+            return text.replace("Nia", "[person 1]").replace("Cal", "[person 2]")
         return schema(entries=[{**item, "quote": hidden(item["quote"])} for item in entries])
 
 
@@ -64,8 +64,8 @@ REDACTED_LEAVES = [
 
 
 STANDARD = [
-    entry("Lea Santos", "2026-11-20", "2026-11-22", "Lea - leave Nov 20-22"),
-    entry("Ben Reyes", "2026-12-20", "2026-12-20", "Ben - leave Dec 20"),
+    entry("Nia Varnel", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22"),
+    entry("Cal Pardo", "2026-12-20", "2026-12-20", "Cal - leave Dec 20"),
     entry("ALL", "2026-11-30", "2026-11-30", "Nov 30 - Bonifacio Day (holiday)", "holiday"),
 ]
 
@@ -79,7 +79,7 @@ def build(projects, description="\n".join([HEADING, *LEAVES])):
 
 
 def team_project(status=IN_PROGRESS, **props):
-    base = {"Submission Deadline": date("2026-11-30"), "Playdate": date("2026-11-28"), "Editors": relation("c-lea")}
+    base = {"Submission Deadline": date("2026-11-30"), "Playdate": date("2026-11-28"), "Editors": relation("c-nia")}
     base.update(props)
     return proj("p1", "ONE", status, **base)
 
@@ -95,7 +95,7 @@ def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     for text in (dm(gw), digest(gw)):
-        assert text.count("Lea Santos is on leave Nov 20–22") == 1
+        assert text.count("Nia Varnel is on leave Nov 20–22") == 1
         assert "Playdate (Nov 28, 2026)" in text and "since Nov 14" in text  # the nearest of the dates
 
 
@@ -104,26 +104,26 @@ def test_redacted_leave_who_is_restored_before_contacts_matching_in_the_brief():
     def answer(payload):
         line = payload["lines"][0]
         assert line == "[person 1] - leave Nov 20-22"
-        assert "Lea" not in json.dumps(payload) and "Ben" not in json.dumps(payload)
+        assert "Nia" not in json.dumps(payload) and "Cal" not in json.dumps(payload)
         return [entry("[PERSON 1 ]", "2026-11-20", "2026-11-22", line)]
     gw, _ = brief(conn, notion, LeaveLlm(answer))
-    assert "Lea Santos is on leave Nov 20–22" in dm(gw)
+    assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
-    conn, notion = build([team_project(Editors=relation("c-ben"))])
+    conn, notion = build([team_project(Editors=relation("c-cal"))])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     assert "on leave" not in dm(gw) + digest(gw)
 
 
 def test_a_leave_outside_the_window_of_every_project_date_produces_nothing():
     late = {"Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-05")}
-    conn, notion = build([team_project(Editors=relation("c-ben"), **late)])  # Ben's leave is Dec 20: 15 days after Dec 5
+    conn, notion = build([team_project(Editors=relation("c-cal"), **late)])  # Cal's leave is Dec 20: 15 days after Dec 5
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Ben" not in dm(gw)
-    conn, notion = build([team_project(Editors=relation("c-ben"), **{**late, "Submission Deadline": date("2026-12-06")})])
+    assert "Cal" not in dm(gw)
+    conn, notion = build([team_project(Editors=relation("c-cal"), **{**late, "Submission Deadline": date("2026-12-06")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Ben Reyes is on leave Dec 20" in dm(gw)  # 14 days: inside
+    assert "Cal Pardo is on leave Dec 20" in dm(gw)  # 14 days: inside
 
 
 def test_the_window_comes_from_config():
@@ -133,8 +133,8 @@ def test_the_window_comes_from_config():
 
 
 def test_holidays_and_office_closures_produce_no_clash():
-    everyone = [entry("ALL", "2026-11-20", "2026-11-22", "Lea - holiday Nov 21", "holiday"),
-                entry("Lea", "2026-11-21", "2026-11-21", "Lea - holiday Nov 21", "holiday")]
+    everyone = [entry("ALL", "2026-11-20", "2026-11-22", "Nia - holiday Nov 21", "holiday"),
+                entry("Nia", "2026-11-21", "2026-11-21", "Nia - holiday Nov 21", "holiday")]
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(everyone))
     assert "on leave" not in dm(gw) + digest(gw)
@@ -142,16 +142,16 @@ def test_holidays_and_office_closures_produce_no_clash():
 
 def test_an_entry_whose_quote_is_not_an_exact_line_or_whose_dates_are_invalid_is_dropped():
     bad = [
-        entry("Lea", "2026-11-20", "2026-11-22", "Lea is away around Nov 20"),  # not a line of the input
-        entry("Lea", "2026-11-31", "2026-11-31", "Lea - leave Nov 20-22"),  # no such day
-        entry("Lea", "2026-11-22", "2026-11-20", "Lea - leave Nov 20-22"),  # ends before it starts
-        entry("Lea", "soon", "later", "Lea - leave Nov 20-22"),
+        entry("Nia", "2026-11-20", "2026-11-22", "Nia is away around Nov 20"),  # not a line of the input
+        entry("Nia", "2026-11-31", "2026-11-31", "Nia - leave Nov 20-22"),  # no such day
+        entry("Nia", "2026-11-22", "2026-11-20", "Nia - leave Nov 20-22"),  # ends before it starts
+        entry("Nia", "soon", "later", "Nia - leave Nov 20-22"),
     ]
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(bad))
     assert "on leave" not in dm(gw)
     assert "Unmatched" not in digest(gw) and "Leaves unavailable" not in digest(gw)
-    good = entry("Lea", "2026-11-20", "2026-11-22", "Lea - leave Nov 20-22")
+    good = entry("Nia", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(bad + [good]))
     assert dm(gw).count("on leave") == 1  # one bad entry does not void the rest
@@ -159,34 +159,34 @@ def test_an_entry_whose_quote_is_not_an_exact_line_or_whose_dates_are_invalid_is
 
 def test_a_quote_may_carry_the_bullet_mark_but_not_altered_spacing_inside_the_line():
     conn, notion = build([team_project()])
-    gw, _ = brief(conn, notion, LeaveLlm([entry("Lea", "2026-11-20", "2026-11-22", "•  Lea - leave Nov 20-22 ")]))
-    assert "Lea Santos is on leave" in dm(gw)
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Nia", "2026-11-20", "2026-11-22", "•  Nia - leave Nov 20-22 ")]))
+    assert "Nia Varnel is on leave" in dm(gw)
     conn, notion = build([team_project()])
-    gw, _ = brief(conn, notion, LeaveLlm([entry("Lea", "2026-11-20", "2026-11-22", "Lea -  leave Nov 20-22")]))
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Nia", "2026-11-20", "2026-11-22", "Nia -  leave Nov 20-22")]))
     assert "on leave" not in dm(gw)
 
 
 def test_a_nickname_is_matched_through_the_contacts_alias():
     conn, notion = build([team_project()])
-    gw, _ = brief(conn, notion, LeaveLlm([entry("Lei", "2026-11-20", "2026-11-22", "Lea - leave Nov 20-22")]))
-    assert "Lea Santos is on leave" in dm(gw)
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Nio", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")]))
+    assert "Nia Varnel is on leave" in dm(gw)
 
 
 def test_an_onboarded_contact_wins_over_a_namesake_without_a_telegram_id():
-    people = contacts() + [contact("c-lea2", "Lea Santos")]
-    conn, _ = build([team_project(Editors=relation("c-lea2"))])
+    people = contacts() + [contact("c-nia2", "Nia Varnel")]
+    conn, _ = build([team_project(Editors=relation("c-nia2"))])
     notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "on leave" not in dm(gw)  # the match is the onboarded Lea, who is not on this project
-    conn, _ = build([team_project(Editors=relation("c-lea"))])
+    assert "on leave" not in dm(gw)  # the match is the onboarded Nia, who is not on this project
+    conn, _ = build([team_project(Editors=relation("c-nia"))])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Lea Santos is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" in dm(gw)
 
 
 def test_a_name_with_no_onboarded_match_falls_through_to_the_rest_of_contacts():
-    conn, notion = build([team_project(Editors=relation("c-ann"))])
-    gw, _ = brief(conn, notion, LeaveLlm([entry("Ann Cruz", "2026-11-20", "2026-11-22", "Lea - leave Nov 20-22")]))
-    assert "Ann Cruz is on leave" in dm(gw)
+    conn, notion = build([team_project(Editors=relation("c-uma"))])
+    gw, _ = brief(conn, notion, LeaveLlm([entry("Uma Belk", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")]))
+    assert "Uma Belk is on leave" in dm(gw)
 
 
 def test_unmatched_names_appear_only_in_the_digest():
@@ -207,7 +207,7 @@ def test_a_failed_parse_blocks_nothing_and_the_digest_says_so():
 
 
 def test_leaves_are_parsed_once_per_run_and_the_payload_holds_only_the_leave_lines_and_the_date():
-    conn, notion = build([team_project(), proj("p2", "TWO", Editors=relation("c-lea"))])
+    conn, notion = build([team_project(), proj("p2", "TWO", Editors=relation("c-nia"))])
     llm = LeaveLlm(STANDARD)
     brief(conn, notion, llm)
     assert len(llm.payloads) == 1
@@ -215,7 +215,7 @@ def test_leaves_are_parsed_once_per_run_and_the_payload_holds_only_the_leave_lin
     assert set(payload) == {"today", "lines"} and payload["today"] == "2026-11-14"
     assert payload["lines"] == REDACTED_LEAVES
     blob = json.dumps(payload)
-    assert "Show ONE" not in blob and "c-lea" not in blob and "ONE" not in blob
+    assert "Show ONE" not in blob and "c-nia" not in blob and "ONE" not in blob
 
 
 def test_there_is_no_leave_call_without_leave_lines_and_no_note():
@@ -227,7 +227,7 @@ def test_there_is_no_leave_call_without_leave_lines_and_no_note():
 
 
 def test_without_the_heading_nothing_is_sent_and_the_digest_says_leaves_are_unavailable():
-    conn, notion = build([team_project()], description="Notes about the db\n• Lea - leave Nov 20-22")
+    conn, notion = build([team_project()], description="Notes about the db\n• Nia - leave Nov 20-22")
     llm = LeaveLlm(STANDARD)
     gw, _ = brief(conn, notion, llm)
     assert llm.payloads == []
@@ -236,7 +236,7 @@ def test_without_the_heading_nothing_is_sent_and_the_digest_says_leaves_are_unav
 
 
 def test_only_the_leaves_section_is_sent_and_a_later_heading_ends_it():
-    plain = "\n".join([HEADING, *LEAVES, "", "Project planning", "• ONE needs Lea Santos on Dec 1 for the online"])
+    plain = "\n".join([HEADING, *LEAVES, "", "Project planning", "• ONE needs Nia Varnel on Dec 1 for the online"])
     rich_text = [
         {"plain_text": HEADING + "\n\nDon't forget the onboarding projects", "annotations": {"bold": True}},
         {"plain_text": "\n" + "\n".join(LEAVES) + "\n", "annotations": {"bold": False}},
@@ -257,13 +257,13 @@ def test_a_clash_concern_ages_through_the_store_and_resolves_when_the_leave_goes
     assert dm(first[0]).count("since Nov 14") == 1
     notion.description = HEADING
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Resolved last week: Lea Santos is on leave" in dm(gw)
+    assert "Resolved last week: Nia Varnel is on leave" in dm(gw)
 
 
 def test_a_standby_project_is_still_checked_for_its_dates():
     conn, notion = build([team_project(status=STANDBY)])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Lea Santos is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" in dm(gw)
 
 
 def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
@@ -280,17 +280,17 @@ def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_
     brief(conn, notion, LeaveLlm(STANDARD))
     gw, _ = brief(conn, notion, LeaveLlm(fail=True))
     text = dm(gw)
-    assert "Lea Santos is on leave Nov 20–22" in text and "Resolved last week" not in text
+    assert "Nia Varnel is on leave Nov 20–22" in text and "Resolved last week" not in text
     assert "Leaves unavailable" in digest(gw)
 
 
 def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipients():
     from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-jam", "Jam")]
-    people[-1]["properties"].update(tg("jam_h", 777))
+    people = contacts() + [page_of("c-kit", "Kit")]
+    people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
     notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
-    settings = replace(BRIEF, digest_recipients=("c-cyril", "c-jam"))
+    settings = replace(BRIEF, digest_recipients=("c-cyril", "c-kit"))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
     by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
     assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
@@ -299,12 +299,12 @@ def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipient
 
 
 def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
-    description = "\n".join([HEADING, "• Lea - leave Nov 20-22", "", "• Ben on vacation next week", "Ana on leave:",
+    description = "\n".join([HEADING, "• Nia - leave Nov 20-22", "", "• Cal on vacation next week", "Ida on leave:",
                              "• Nov 25"])
     conn, notion = build([team_project()], description=description)
     llm = LeaveLlm(STANDARD)
     brief(conn, notion, llm)
-    assert llm.payloads[0]["lines"] == ["[person 1] - leave Nov 20-22", "[person 2] on vacation next week", "Ana on leave:", "Nov 25"]
+    assert llm.payloads[0]["lines"] == ["[person 1] - leave Nov 20-22", "[person 2] on vacation next week", "Ida on leave:", "Nov 25"]
 
 
 # ---- section boundaries when the section is empty or the heading is long (#62 item 7) ---------
@@ -317,7 +317,7 @@ def leave_payload_for(description):
 
 
 def test_an_empty_leave_section_stops_at_a_markdown_heading_and_sends_nothing():
-    description = HEADING + "\n\n# Project planning\n• ONE needs Lea Santos on Dec 1"
+    description = HEADING + "\n\n# Project planning\n• ONE needs Nia Varnel on Dec 1"
     assert leave_payload_for(description) == []
 
 
@@ -325,10 +325,10 @@ def test_an_empty_leave_section_stops_at_a_rich_text_heading_and_an_end_marker()
     rich_text = [
         {"plain_text": HEADING + "\n\n", "annotations": {"bold": True}},
         {"plain_text": "Staffing", "annotations": {"bold": True}},
-        {"plain_text": "\nONE needs Lea Santos on Dec 1", "annotations": {"bold": False}},
+        {"plain_text": "\nONE needs Nia Varnel on Dec 1", "annotations": {"bold": False}},
     ]
     assert leave_payload_for(rich_text) == []
-    assert leave_payload_for(HEADING + "\n---\n• ONE needs Lea Santos on Dec 1") == []
+    assert leave_payload_for(HEADING + "\n---\n• ONE needs Nia Varnel on Dec 1") == []
 
 
 def test_an_introductory_bold_note_does_not_end_an_empty_section():
@@ -341,7 +341,7 @@ def test_an_introductory_bold_note_does_not_end_an_empty_section():
 
 
 def test_a_long_plain_heading_after_the_entries_ends_the_section():
-    description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Lea Santos on Dec 1"])
+    description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Nia Varnel on Dec 1"])
     (payload,) = leave_payload_for(description)
     assert payload["lines"] == REDACTED_LEAVES
 
@@ -350,8 +350,8 @@ def test_a_long_plain_heading_after_the_entries_ends_the_section():
 
 def _unmatched_run(recipients, cyril_id):
     from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-jam", "Jam")]
-    people[-1]["properties"].update(tg("jam_h", 777))
+    people = contacts() + [page_of("c-kit", "Kit")]
+    people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
     notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
     settings = replace(BRIEF, cyril_contact_id=cyril_id, digest_recipients=recipients)
@@ -360,13 +360,13 @@ def _unmatched_run(recipients, cyril_id):
 
 
 def test_unmatched_names_reach_only_the_explicit_cyril_whatever_the_recipient_order():
-    for recipients in (("c-cyril", "c-jam"), ("c-jam", "c-cyril")):
+    for recipients in (("c-cyril", "c-kit"), ("c-kit", "c-cyril")):
         by = _unmatched_run(recipients, "c-cyril")
         assert "Zed" in by(999) and "Zed" not in by(777), recipients
 
 
 def test_without_an_explicit_cyril_unmatched_names_are_withheld_and_a_configuration_warning_is_shown():
-    for recipients in (("c-jam", "c-cyril"), ("c-cyril", "c-jam"), ("c-jam",)):
+    for recipients in (("c-kit", "c-cyril"), ("c-cyril", "c-kit"), ("c-kit",)):
         by = _unmatched_run(recipients, None)
         for who in (999, 777):
             assert "Zed" not in by(who), recipients
@@ -375,5 +375,5 @@ def test_without_an_explicit_cyril_unmatched_names_are_withheld_and_a_configurat
 
 
 def test_cyril_outside_the_recipient_list_never_gets_a_private_digest_and_names_stay_withheld():
-    by = _unmatched_run(("c-jam", "c-pio"), "c-cyril")
+    by = _unmatched_run(("c-kit", "c-oto"), "c-cyril")
     assert "Zed" not in by(777) and "Zed" not in by(111) and "cyril_contact_id" in by(777)

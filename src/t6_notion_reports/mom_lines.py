@@ -1,6 +1,6 @@
 """The latest PSR minutes page, read as it is now, for the lines about one project (spec #40, ticket #47).
 
-The page is the one the Monday job drafted (``mom.py``) and Leizette may have edited, so what is read
+The page is the one the Monday job drafted (``mom.py``) and the minutes owner may have edited, so what is read
 here is her version. A project's entry is the top-level bullet that starts with its label; the lines
 are that bullet's children, with the "Raw source" toggle left out.
 """

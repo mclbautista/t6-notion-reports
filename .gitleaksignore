@@ -1,0 +1,4 @@
+# Reviewed gitleaks findings that are not secrets. One fingerprint per line.
+# Both are a made-up idempotency key in a test ("psr-digest-2026-11-15"), not a credential.
+a8d187533abf6407c016189accada194bff20c52:tests/test_gateway.py:generic-api-key:29
+a8d187533abf6407c016189accada194bff20c52:tests/test_brief_job.py:generic-api-key:156

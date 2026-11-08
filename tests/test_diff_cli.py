@@ -5,8 +5,8 @@ from t6_notion_reports.snapshots import ProjectRecord, connect, default_diff_pai
 
 
 def rec(stage, notes=""):
-    return ProjectRecord("p1", {"Name": "Ria", "Project Code": "RIA", "Stage": stage, "PM Notes": notes,
-                                "T6 Post Coordinator": [{"id": "c1", "name": "Pio"}]})
+    return ProjectRecord("p1", {"Name": "Nim", "Project Code": "NIM", "Stage": stage, "PM Notes": notes,
+                                "T6 Post Coordinator": [{"id": "c1", "name": "Oto"}]})
 
 
 def at(d):
@@ -33,7 +33,7 @@ def test_diff_command_prints_summary(tmp_path, capsys):
     conn.close()
     assert main(["diff", "--db", db]) == 0
     out = capsys.readouterr().out
-    assert "== Pio ==" in out and "Stage: Offline → Online" in out and "Online booked" in out
+    assert "== Oto ==" in out and "Stage: Offline → Online" in out and "Online booked" in out
 
 
 def test_diff_with_explicit_ids_and_baseline_message(tmp_path, capsys):

@@ -5,9 +5,29 @@ Snapshots the Notion **Projects** and **Job Orders** databases into SQLite, draf
 delivery goes through the Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
-briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed when `OPENROUTER_API_KEY` is set, and stay raw PM Notes otherwise. The briefing consolidates each project's week with an LLM when that key is set. Approved minutes are sent to the PSR group (chat -1003261335368, topic 3124) when Leizette ticks **Ready to send**.
+briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed when `OPENROUTER_API_KEY` is set, and stay raw PM Notes otherwise. The briefing consolidates each project's week with an LLM when that key is set. Approved minutes are sent to the PSR group topic set in `config.yaml` when the minutes owner ticks **Ready to send**.
 
     pip install -e '.[dev]' && pytest
+
+## This repository is public
+
+Anyone can read this repo and its whole history. Never commit:
+
+- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET` or any other token or key. They go in `.env` only.
+- real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
+- data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
+- real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
+
+The **Public repo safety** workflow (`.github/workflows/public-repo-safety.yml`, shared from t6-core) runs on every
+push and pull request. It fails on tracked forbidden paths, on gitleaks findings and on any name from the
+`T6_NAMES_DENYLIST` Actions secret (real names, one per line; the list itself is never committed). If it
+finds a real secret, rotate it first, then remove it. Reviewed false positives go in `.gitleaksignore`.
+
+Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secrets`):
+
+    curl -fsSL -o /tmp/public_repo_safety.py \
+      https://raw.githubusercontent.com/mclbautista/t6-core/main/scripts/public_repo_safety.py
+    python3 /tmp/public_repo_safety.py --names-file ~/t6-names.txt
 
 ## Commands
 
@@ -138,7 +158,7 @@ that date and makes a new one, and exits 1 without touching a page whose `Sent a
 
 ## Sending the approved minutes
 
-Leizette edits the draft in Notion and ticks `Ready to send`. Every 5 minutes (when the briefing keys
+The minutes owner edits the draft in Notion and ticks `Ready to send`. Every 5 minutes (when the briefing keys
 and `meeting_notes_data_source` are in `config.yaml`) the scheduler looks for `PSR MOM` pages with
 `Ready to send` ticked and `Sent at` empty, reads each page as it is now, and sends it to the PSR group
 topic: one message per group (header first, 🔴 🟠 🟡 🔵 🟢, ⚫️ Others last), split on bullet boundaries
@@ -159,11 +179,11 @@ Three Job Orders reports go to one group topic every day (weekends and holidays 
 Job Orders snapshot (kind `0500`, `1200` or `1800`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     jo_data_source: "…"
-    gateway_url: "http://192.168.88.151:8780"
+    gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
     shift_chat_id: -1000000000000    # required
     shift_topic_id: 1                # optional
-    ops_chat_id: 274983989           # optional; the Notion-outage alert goes here (else to shift_chat_id)
+    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to shift_chat_id)
     test_banner: true                # 🧪 TEST on every part
 
 `SHIFT_SECRET` goes in `.env`. The shift reports authenticate to the gateway as the `shift` module with that

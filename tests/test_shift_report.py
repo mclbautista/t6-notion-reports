@@ -32,8 +32,8 @@ def jo(page_id, number="48", dept="AE", st="Pending", deadline=at(3, 18), posted
     return job_order(page_id, edited=edited, **base)
 
 
-PEOPLE = [contact("c1", "Pio"), contact("c2", "Tim")]
-PROJS = [project("pr1", name="Twenty Beauty", code="TWBTY")]
+PEOPLE = [contact("c1", "Oto"), contact("c2", "Rex")]
+PROJS = [project("pr1", name="Fake Expo", code="FAKEX")]
 
 
 def world(*jos):
@@ -94,8 +94,8 @@ def test_unfinished_line_fields_link_and_deadline_format():
                     Assigned=relation("c1", "c2"), Projects=relation("pr1")))
     _, text, _ = run(conn, fake, "1800", PM)
     row = next(l for l in text.splitlines() if "JO #48" in l)
-    assert row == ('<a href="https://www.notion.so/abcd1234">JO #48</a> · TWBTY · Export &lt;v2&gt; &amp; sons · '
-                   "In progress · 🔥 Urgent · Tue Nov 3 18:00 · Pio, Tim")
+    assert row == ('<a href="https://www.notion.so/abcd1234">JO #48</a> · FAKEX · Export &lt;v2&gt; &amp; sons · '
+                   "In progress · 🔥 Urgent · Tue Nov 3 18:00 · Oto, Rex")
     assert_valid_html(text)
 
 
@@ -214,7 +214,7 @@ def test_run_logs_one_counts_line_with_no_text():
 
 # ---- CLI ----------------------------------------------------------------------------------------
 
-JO_ID = "3d8fb4d5-9e59-8073-a0d0-000b77632947"
+JO_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def cli_config(tmp_path, monkeypatch):

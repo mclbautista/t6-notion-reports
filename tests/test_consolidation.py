@@ -84,7 +84,7 @@ def conn_one(notes=NOTES):
 # ---- payload --------------------------------------------------------------------------------
 
 def test_the_payload_holds_only_the_listed_fields_for_gated_projects():
-    done = proj("p2", "DONE", "✅ Done", coordinator="c-ana")
+    done = proj("p2", "DONE", "✅ Done", coordinator="c-ida")
     conn = make_db([page(stage="Offline"), done], [page(stage="Offline"), done], [page(), done])
     llm = Llm()
     run(conn, llm)
@@ -98,7 +98,7 @@ def test_the_payload_holds_only_the_listed_fields_for_gated_projects():
     assert payload["dates"] == {"playdate": None, "submission_deadline": None, "archival_deadline": None}
     assert payload["blank_date_properties"] == ["playdate", "submission_deadline"]  # relevant for In-Progress
     text = json.dumps(payload, ensure_ascii=False)
-    for private in ("Pio", "Ana", "c-pio", "c-ana", "p1", "p2", "9999", "111"):
+    for private in ("Oto", "Ida", "c-oto", "c-ida", "p1", "p2", "9999", "111"):
         assert private not in text
 
 
@@ -204,7 +204,7 @@ def test_an_item_that_fails_validation_is_dropped_and_the_rest_of_the_reply_stil
         {"text": "Wrong line", "source": "pm_notes", "line_id": 99, "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "Wrong source", "source": "minutes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC moved to Dec 9", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
-        {"text": "QC with Jam", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
+        {"text": "QC with Kit", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC after 3 days", "source": "pm_notes", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"text": "QC invented", "source": "invented", "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         snapshot_change(p, text="Stage Offline to Online"),
@@ -215,7 +215,7 @@ def test_an_item_that_fails_validation_is_dropped_and_the_rest_of_the_reply_stil
     gw, _ = run(conn_one(), Llm(reply_with(changes=changes)))
     text = dm(gw)
     assert "• QC on Nov 20" in text and "• Online started" in text and "• Stage Offline to Online" in text
-    for dropped in ("Wrong", "Dec 9", "Jam", "3 days", "invented", "Snapshot"):
+    for dropped in ("Wrong", "Dec 9", "Kit", "3 days", "invented", "Snapshot"):
         assert dropped not in text
 
 
@@ -224,7 +224,7 @@ def test_a_hallucinated_name_in_a_concern_drops_only_that_concern():
     concerns = lambda p: [
         {"kind": "open_item", "text": "QC on Nov 20 still waits for client notes", "source": "pm_notes",
          "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
-        {"kind": "open_item", "text": "QC on Nov 20 still waits for Marco", "source": "pm_notes",
+        {"kind": "open_item", "text": "QC on Nov 20 still waits for Dario", "source": "pm_notes",
          "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
         {"kind": "mystery", "text": "QC on Nov 20 is odd", "source": "pm_notes",
          "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
@@ -232,7 +232,7 @@ def test_a_hallucinated_name_in_a_concern_drops_only_that_concern():
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
     text = dm(gw)
     assert "QC on Nov 20 still waits for client notes · since Nov 14 (0 wks)" in text
-    assert "Marco" not in text and "is odd" not in text
+    assert "Dario" not in text and "is odd" not in text
 
 
 def test_health_vs_evidence_is_dropped_when_project_health_is_blank():
@@ -331,8 +331,8 @@ def test_minutes_changes_list_a_project_that_has_no_snapshot_change():
 # ---- failure --------------------------------------------------------------------------------
 
 def two_projects():
-    a, b = page("p1", "ONE", stage="Offline"), page("p2", "TWO", stage="Offline", coordinator="c-ana")
-    a2, b2 = page("p1", "ONE"), page("p2", "TWO", coordinator="c-ana")
+    a, b = page("p1", "ONE", stage="Offline"), page("p2", "TWO", stage="Offline", coordinator="c-ida")
+    a2, b2 = page("p1", "ONE"), page("p2", "TWO", coordinator="c-ida")
     return make_db([a, b], [a, b], [a2, b2])
 
 
@@ -433,31 +433,31 @@ def test_a_malformed_item_is_dropped_without_losing_its_valid_siblings():
 
 # ---- free-text privacy (#60) ----------------------------------------------------------------
 
-LEAKY = ("As of Nov 9\n• Pio to send the files to ana, see notion.so/0123456789abcdef0123456789abcdef"
-         "\n• Ping @ana_h or tg 123456789\n• Same colorist as Show TWO, TWO needs her first")
+LEAKY = ("As of Nov 9\n• Oto to send the files to ida, see notion.so/0123456789abcdef0123456789abcdef"
+         "\n• Ping @ida_h or tg 123456789\n• Same colorist as Show TWO, TWO needs her first")
 
 
 def leaky_db():
-    one, two = page("p1", "ONE", notes=LEAKY), page("p2", "TWO", coordinator="c-ana")
+    one, two = page("p1", "ONE", notes=LEAKY), page("p2", "TWO", coordinator="c-ida")
     return make_db([one, two], [one, two], [one, two])
 
 
 def test_names_ids_and_other_projects_in_free_text_never_reach_the_llm():
     llm = Llm()
-    run(leaky_db(), llm, notion=minutes_notion("Pio confirmed with Ana, same as TWO"), meeting_notes_ds=MEETING)
+    run(leaky_db(), llm, notion=minutes_notion("Oto confirmed with Ida, same as TWO"), meeting_notes_ds=MEETING)
     payload = next(p for p in llm.payloads if p["project"]["name"] == "Show ONE")
     blob = json.dumps(payload, ensure_ascii=False)
-    for private in ("Pio", "ana", "Ana", "notion.so", "0123456789abcdef", "@ana_h", "ana_h", "123456789",
-                    "Show TWO", "TWO", "c-pio", "c-ana", "p1", "p2"):
+    for private in ("Oto", "ida", "Ida", "notion.so", "0123456789abcdef", "@ida_h", "ida_h", "123456789",
+                    "Show TWO", "TWO", "c-oto", "c-ida", "p1", "p2"):
         assert private not in blob, private
     texts = [r["text"] for r in payload["pm_notes"]]
-    pio, ana = ("[person 1]", "[person 2]") if texts[1].startswith("• [person 1]") else ("[person 2]", "[person 1]")
-    assert texts[1] == f"• {pio} to send the files to {ana}, see [id 1]"
+    oto, ida = ("[person 1]", "[person 2]") if texts[1].startswith("• [person 1]") else ("[person 2]", "[person 1]")
+    assert texts[1] == f"• {oto} to send the files to {ida}, see [id 1]"
     assert texts[2] == "• Ping [id 2] or tg [id 3]"
     assert texts[3] in ("• Same colorist as [project 1], [project 2] needs her first",
                         "• Same colorist as [project 2], [project 1] needs her first")
     two = texts[3].split(", ")[1].split(" needs")[0]
-    assert payload["minutes"]["lines"][0]["text"] == f"• {pio} confirmed with {ana}, same as {two}"  # one mapping
+    assert payload["minutes"]["lines"][0]["text"] == f"• {oto} confirmed with {ida}, same as {two}"  # one mapping
     assert payload["project"]["name"] == "Show ONE"  # the project's own name stays
 
 
@@ -465,28 +465,28 @@ def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name
     def row(p):
         return next(r for r in p["pm_notes"] if "send the files" in r["text"])
 
-    def placeholders(p):  # (Pio's, Ana's), as this payload numbered them
+    def placeholders(p):  # (Oto's, Ida's), as this payload numbered them
         text = row(p)["text"]
         return text[2:12], text.split("files to ")[1][:10]
 
     def reply(p):
         if p["project"]["name"] != "Show ONE":
             return {}
-        pio, ana = placeholders(p)
+        oto, ida = placeholders(p)
         cite = {"source": "pm_notes", "line_id": row(p)["line_id"], "quote": row(p)["text"]}
-        return {"concerns": [{"kind": "open_item", "text": f"{pio} still has to send the files to {ana}", **cite}],
-                "changes": [{"text": "files go to ana", **cite}, {"text": "files sent by pio", **cite},
+        return {"concerns": [{"kind": "open_item", "text": f"{oto} still has to send the files to {ida}", **cite}],
+                "changes": [{"text": "files go to ida", **cite}, {"text": "files sent by oto", **cite},
                             {"text": "files to send", **cite}]}
     gw, _ = run(leaky_db(), Llm(reply))
     text = dm(gw)
-    assert "Pio still has to send the files to ana" in text
+    assert "Oto still has to send the files to ida" in text
     assert "• files to send" in text
-    assert "files go to ana" not in text and "files sent by pio" not in text
+    assert "files go to ida" not in text and "files sent by oto" not in text
 
 
 def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
     from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-will", "Will Santos")]
+    people = contacts() + [page_of("c-will", "Will Varnel")]
     notes = "As of Nov 9\n• Will sends the grade, we will wait"
     one = page(notes=notes)
     conn = sqlite3.connect(":memory:")
@@ -546,9 +546,9 @@ def test_a_year_recombined_from_another_date_is_dropped():
 
 
 def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
-    concerns = lambda p: [_concern("QC waiting for marco", p), _concern("QC waiting for janice", p)]
+    concerns = lambda p: [_concern("QC waiting for dario", p), _concern("QC waiting for janice", p)]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
-    assert "marco" not in dm(gw) and "janice" not in dm(gw)
+    assert "dario" not in dm(gw) and "janice" not in dm(gw)
 
 
 # ---- redaction contract: identity and id variants (#62 item 4) --------------------------------
@@ -558,8 +558,8 @@ def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
 
 def variants_db(notes, extra_people=()):
     from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-marco", "Marco Reyes"), *extra_people]
-    done = proj("p3", "AB", "✅ Done", coordinator="c-ana")
+    people = contacts() + [page_of("c-dario", "Dario Pardo"), *extra_people]
+    done = proj("p3", "AB", "✅ Done", coordinator="c-ida")
     one = page(notes=notes)
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
@@ -576,15 +576,15 @@ def outbound(notes, **kw):
 
 
 def test_name_and_code_variants_never_reach_the_llm():
-    blob = outbound("As of Nov 9\n• marco will ask Reyes, and MARCO again\n• AB is wrapped, ab too")
-    for private in ("marco", "Marco", "MARCO", "Reyes", "reyes", "AB", "ab too"):
+    blob = outbound("As of Nov 9\n• dario will ask Pardo, and DARIO again\n• AB is wrapped, ab too")
+    for private in ("dario", "Dario", "DARIO", "Pardo", "pardo", "AB", "ab too"):
         assert private not in blob, private
     assert "will ask" in blob  # ordinary words stay
 
 
 def test_punctuated_ids_telegram_links_and_known_telegram_ids_never_reach_the_llm():
     notes = ("As of Nov 9\n• Telegram 123456789.\n• Link tg://user?id=123456789.\n"
-             "• Pio is user 111 and Ana is 222, call 1234567.89 later")
+             "• Oto is user 111 and Ida is 222, call 1234567.89 later")
     blob = outbound(notes)
     for private in ("123456789", "tg://", "111", "222"):
         assert private not in blob, private
@@ -594,12 +594,12 @@ def test_punctuated_ids_telegram_links_and_known_telegram_ids_never_reach_the_ll
 
 def test_an_ordinary_word_name_or_code_is_hidden_only_as_written_capitalised():
     from fake_notion import contact as page_of
-    conn, people = variants_db("As of Nov 9\n• Will plans it, we will wait, Sunday two, then TWO", [page_of("c-will", "Will Tan")])
+    conn, people = variants_db("As of Nov 9\n• Will plans it, we will wait, Sunday two, then TWO", [page_of("c-will", "Will Dov")])
     llm = Llm()
     run(conn, llm, notion=FakeNotion([], people))
     texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
     assert texts[1].startswith("• [person 1] plans it, we will wait")
-    assert "Tan" not in json.dumps(llm.payloads[0])
+    assert "Dov" not in json.dumps(llm.payloads[0])
 
 
 def test_a_block_whose_header_has_no_date_is_kept_only_among_the_latest_blocks():

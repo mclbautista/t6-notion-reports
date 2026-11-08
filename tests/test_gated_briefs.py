@@ -25,13 +25,13 @@ def tg(handle, user_id):
 
 
 def contacts():
-    out = [contact("c-pio", "Pio"), contact("c-ana", "Ana"), contact("c-cyril", "Cyril")]
-    for page, (h, i) in zip(out, (("pio_h", 111), ("ana_h", 222), ("cyril_h", 999))):
+    out = [contact("c-oto", "Oto"), contact("c-ida", "Ida"), contact("c-cyril", "Cyril")]
+    for page, (h, i) in zip(out, (("oto_h", 111), ("ida_h", 222), ("cyril_h", 999))):
         page["properties"].update(tg(h, i))
     return out
 
 
-def proj(page_id, code, status=IN_PROGRESS, coordinator="c-pio", stage="Offline", health="ON TRACK",
+def proj(page_id, code, status=IN_PROGRESS, coordinator="c-oto", stage="Offline", health="ON TRACK",
          edited="2026-11-13T09:00:00.000Z", **props):
     page = project(
         page_id, f"Show {code}", code, Status=select(status), Stage=select(stage),
@@ -124,13 +124,13 @@ def test_dm_shows_on_hold_before_in_progress_with_airing_and_tvc_under_in_progre
 
 
 def test_digest_groups_by_coordinator_alphabetically_with_sections_and_no_empty_ones():
-    rows = [("p1", "PIO1", IN_PROGRESS, {}), ("p2", "PIO2", STANDBY, {}),
-            ("p3", "ANA1", LEADS, {"coordinator": "c-ana"}), ("p4", "ANA2", IN_PROGRESS, {"coordinator": "c-ana"})]
+    rows = [("p1", "OTO1", IN_PROGRESS, {}), ("p2", "OTO2", STANDBY, {}),
+            ("p3", "IDA1", LEADS, {"coordinator": "c-ida"}), ("p4", "IDA2", IN_PROGRESS, {"coordinator": "c-ida"})]
     text = digest(brief(make_db(*changed(rows))))
-    assert text.index("<b>Ana</b>") < text.index("<b>Pio</b>")
-    ana, pio = text[text.index("<b>Ana</b>"):text.index("<b>Pio</b>")], text[text.index("<b>Pio</b>"):]
-    assert ana.index("<b>In-Progress</b>") < ana.index("<b>Leads</b>") and "On-Hold" not in ana
-    assert pio.index("<b>On-Hold</b>") < pio.index("<b>In-Progress</b>") and "Leads" not in pio
+    assert text.index("<b>Ida</b>") < text.index("<b>Oto</b>")
+    ida, oto = text[text.index("<b>Ida</b>"):text.index("<b>Oto</b>")], text[text.index("<b>Oto</b>"):]
+    assert ida.index("<b>In-Progress</b>") < ida.index("<b>Leads</b>") and "On-Hold" not in ida
+    assert oto.index("<b>On-Hold</b>") < oto.index("<b>In-Progress</b>") and "Leads" not in oto
 
 
 def test_a_section_is_sorted_by_project_health_then_name_with_blank_last():
@@ -198,7 +198,7 @@ def staffed(**props):
     """Every role filled and both dates set: nothing to flag, so an unchanged project stays quiet."""
     from fake_notion import date
     from t6_notion_reports.flags import ROLES
-    return {**{r: relation("c-ana") for r in ROLES if r != "T6 Post Coordinator"},
+    return {**{r: relation("c-ida") for r in ROLES if r != "T6 Post Coordinator"},
             "Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20"), **props}
 
 
@@ -210,7 +210,7 @@ def test_an_unchanged_staffed_project_with_blank_health_reaches_its_coordinator_
         assert "Show NOHEALTH" in text
         assert text.count("missing health update") == 1
         assert digest(gw).count("missing health update") == 1
-        assert "No changes: Pio" not in digest(gw)
+        assert "No changes: Oto" not in digest(gw)
 
 
 def test_the_project_line_shows_the_current_dates_even_when_they_did_not_change():

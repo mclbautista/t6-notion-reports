@@ -11,9 +11,9 @@ def take_snapshot(conn, records, at):
 
 
 def rec(page_id, **fields):
-    base = {"Name": "Show", "Project Code": "PAS", "Stage": "Offline",
+    base = {"Name": "Show", "Project Code": "QAZ", "Stage": "Offline",
             "Status": "In-Progress", "PM Notes": "", "Playdate": None,
-            "T6 Post Coordinator": [{"id": "c1", "name": "Pio"}], "Editors": []}
+            "T6 Post Coordinator": [{"id": "c1", "name": "Oto"}], "Editors": []}
     base.update(fields)
     return ProjectRecord(page_id, base)
 
@@ -56,8 +56,8 @@ def test_whitespace_only_change_is_not_a_change():
 
 def test_relation_order_is_ignored():
     conn, a, b = two_snapshots(
-        [rec("p1", Editors=[{"id": "t", "name": "Tim"}, {"id": "j", "name": "Jason"}])],
-        [rec("p1", Editors=[{"id": "j", "name": "Jason"}, {"id": "t", "name": "Tim"}])])
+        [rec("p1", Editors=[{"id": "t", "name": "Rex"}, {"id": "j", "name": "Milo"}])],
+        [rec("p1", Editors=[{"id": "j", "name": "Milo"}, {"id": "t", "name": "Rex"}])])
     assert diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b)) == []
 
 
