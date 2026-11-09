@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS jo_page_state (
     value_json  TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, page_id, field)
 );
+CREATE TABLE IF NOT EXISTS jo_task_summaries (
+    page_id      TEXT NOT NULL,
+    task_hash    TEXT NOT NULL,
+    summary      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,
+    PRIMARY KEY (page_id, task_hash)
+);
 """
 
 
@@ -197,6 +205,8 @@ def prune(conn: sqlite3.Connection, now: datetime) -> int:
     Returns how many snapshots were deleted outright. Call inside a transaction.
     """
     cutoff = now - timedelta(days=RETENTION_DAYS)
+    # Task summaries not used by any report for 90 days go with the snapshots.
+    conn.execute("DELETE FROM jo_task_summaries WHERE last_used_at < ?", (cutoff.isoformat(),))
     old = [sid for sid, taken_at in conn.execute("SELECT snapshot_id, taken_at FROM jo_snapshots")
            if datetime.fromisoformat(taken_at) < cutoff]
     if not old:

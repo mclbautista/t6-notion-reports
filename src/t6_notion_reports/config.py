@@ -64,6 +64,8 @@ class ShiftSettings:
     ops_chat_id: int | None  # where the Notion-outage alert goes; unset: it goes to the shift group
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
+    openrouter_api_key: str | None = None  # unset: task summaries are the first three words, no LLM call
+    llm_model: str = DEFAULT_MODEL
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,8 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         ops_chat_id=ops,
         test_banner=_banner(raw),
         shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
+        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
+        llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
     )
 
 
