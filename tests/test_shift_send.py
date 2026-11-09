@@ -197,23 +197,12 @@ def test_a_rejected_destination_does_not_stop_the_others_and_is_recorded():
     assert len(logs) == 1 and "destinations=3" in logs[0]
 
 
-def test_results_per_destination_for_the_delivery_check():
-    t = SelectiveTransport({USER})
-    tgt = multi(t, (DM1, GROUP))
-    send("1900", many(40), tgt)
-    first, second = tgt.results["1900"]
-    assert first.destination == DM1 and first.rejected and first.refs == ()
-    assert second.destination == GROUP and not second.rejected
-    assert list(second.refs) == [t.queued[c[2]["idempotency_key"]] for c in t.calls if c[2]["to"] == CHAT
-                                  and not c[2]["idempotency_key"].endswith("-undelivered")]
-
-
-def test_whole_gateway_down_still_raises_after_recording_every_destination():
+def test_whole_gateway_down_still_raises_after_trying_every_destination():
     t = FakeTransport(fail=True)
     tgt = multi(t, (DM1, GROUP))
     with pytest.raises(GatewayError):
         send("1900", [jo("j1", "48", "TOC")], tgt)
-    assert len([c for c in t.calls if not c[2]["idempotency_key"].endswith("-undelivered")]) == 8 and all(r.rejected for r in tgt.results["1900"])
+    assert len([c for c in t.calls if not c[2]["idempotency_key"].endswith("-undelivered")]) == 8
 
 
 # ---- delivery check and undelivered alert (#88) -------------------------------------------------

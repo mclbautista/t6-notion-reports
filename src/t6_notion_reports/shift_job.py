@@ -14,10 +14,9 @@ from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .contacts import load_contacts
 from .llm import LlmClient
 from .redact import Redactor
-from .shift_report import is_active
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
-from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
+from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
 
 # Notion unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
 # are at least six hours apart, so a retrying slot is always done before the next one is due.
@@ -80,8 +79,6 @@ class ShiftTarget:
 
     def __init__(self, gateway, destinations: Mapping[str, Sequence[Destination]], ops_chat_id: int | None = None):
         self.gateway, self.destinations, self.ops_chat_id = gateway, destinations, ops_chat_id
-        # Slot code -> what the last send of that slot did, one entry per destination (for the delivery check, #88).
-        self.results: dict[str, tuple[DestinationResult, ...]] = {}
 
     def first_group(self, slot: str) -> Destination | None:
         return next((d for d in self.destinations.get(slot, ()) if not d.dm), None)
@@ -178,7 +175,6 @@ def run_shift_report(
         log(f"shift slot={slot} has no destinations; not sent")
         return report
     results = tuple(_send_to(target.gateway, d, report.messages, shift_keys(now, slot, parts, d)) for d in destinations)
-    target.results[slot] = results
     undelivered = _check_delivery(target, results, clock, sleep)
     if undelivered:
         _send_undelivered_alert(target, slot, now, undelivered, log)
