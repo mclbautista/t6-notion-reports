@@ -42,7 +42,7 @@ class Outage:
 def tgt(transport, ops=OPS):
     dest = (Destination(CHAT, TOPIC),)
     return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
-                       {"0500": dest, "1200": dest, "1800": dest}, ops)
+                       {"0500": dest, "1130": dest, "1900": dest}, ops)
 
 
 def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):

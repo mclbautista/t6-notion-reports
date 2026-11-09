@@ -32,15 +32,15 @@ def test_valid_mixed_lists_load_per_slot_in_config_order(tmp_path):
         "day": [USER_A, USER_B, {"chat": GROUP}],
         "night": [USER_A],
     }).shift
-    assert s.destinations["1200"] == (Destination(GROUP, TOPIC),)
-    assert s.destinations["1800"] == (Destination(USER_A, None, dm=True), Destination(USER_B, None, dm=True),
+    assert s.destinations["1130"] == (Destination(GROUP, TOPIC),)
+    assert s.destinations["1900"] == (Destination(USER_A, None, dm=True), Destination(USER_B, None, dm=True),
                                       Destination(GROUP, None))
     assert s.destinations["0500"] == (Destination(USER_A, None, dm=True),)
 
 
 def test_names_are_optional_and_empty_or_missing_lists_are_allowed(tmp_path):
     s = load(tmp_path, shift_destinations={"day": [USER_A], "night": []}).shift
-    assert s.destinations == {"1200": (), "1800": (Destination(USER_A, None, dm=True),), "0500": ()}
+    assert s.destinations == {"1130": (), "1900": (Destination(USER_A, None, dm=True),), "0500": ()}
 
 
 @pytest.mark.parametrize("bad", [
@@ -73,7 +73,7 @@ def test_error_names_the_report_and_entry_number(tmp_path):
 
 def test_same_chat_with_different_topics_or_a_dm_is_not_a_duplicate(tmp_path):
     s = load(tmp_path, shift_destinations={"day": [GROUP, {"chat": GROUP, "topic": 1}, {"chat": GROUP, "topic": 2}]}).shift
-    assert len(s.destinations["1800"]) == 3
+    assert len(s.destinations["1900"]) == 3
 
 
 @pytest.mark.parametrize("old", [{"shift_chat_id": GROUP}, {"shift_topic_id": TOPIC}])

@@ -39,7 +39,7 @@ class FakeTransport:
 def target(transport, secret="shift-s3cret", topic=TOPIC):
     dest = (Destination(CHAT, topic),)
     return ShiftTarget(GatewayClient("http://gw:8780", secret, transport, sleep=lambda _: None),
-                       {"0500": dest, "1200": dest, "1800": dest})
+                       {"0500": dest, "1130": dest, "1900": dest})
 
 
 def many(n):
@@ -143,7 +143,7 @@ def write(tmp_path, **cfg):
 def test_shift_settings_load_without_the_briefing_keys(tmp_path):
     cfg = load_config(write(tmp_path, **SHIFT, ops_chat_id=5, test_banner=True), ENV)
     s = cfg.shift
-    assert (s.gateway_url, s.destinations["1800"], s.ops_chat_id, s.test_banner, s.shift_secret) == (
+    assert (s.gateway_url, s.destinations["1900"], s.ops_chat_id, s.test_banner, s.shift_secret) == (
         "http://gw:8780", (Destination(CHAT, TOPIC),), 5, True, "shift-s3cret")
     assert cfg.brief is None
 

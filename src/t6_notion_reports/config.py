@@ -24,7 +24,7 @@ OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
-SHIFT_REPORT_SLOTS = {"mid": "1200", "day": "1800", "night": "0500"}
+SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
@@ -70,7 +70,7 @@ class ShiftSettings:
     """JO shift report settings. Present only when ``shift_reports_enabled`` is true."""
 
     gateway_url: str
-    destinations: Mapping[str, tuple[Destination, ...]]  # keyed by slot ("1200", "1800", "0500"); () skips that slot
+    destinations: Mapping[str, tuple[Destination, ...]]  # keyed by slot ("1130", "1900", "0500"); () skips that slot
     ops_chat_id: int | None  # where the Notion-outage alert goes; unset: the first group entry of the slot's list
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
