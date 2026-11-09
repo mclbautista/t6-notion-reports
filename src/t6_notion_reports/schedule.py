@@ -36,7 +36,7 @@ class Daily:
 
 # JO shift reports: snapshot Job Orders, then build and send that slot's report. Kind "shift<slot>".
 # The Friday Projects snapshot (23:30) no longer shares a minute with the 18:00 slot.
-SHIFT_SLOTS = [Daily(time(5, 0), "shift0500"), Daily(time(12, 0), "shift1200"), Daily(time(18, 0), "shift1800")]
+SHIFT_SLOTS = [Daily(time(5, 0), "shift0500"), Daily(time(11, 30), "shift1130"), Daily(time(19, 0), "shift1900")]
 
 
 def next_batch(after: datetime, slots=SLOTS) -> tuple[datetime, list[str]]:

@@ -36,8 +36,8 @@ Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secret
 
 - `serve`: the scheduler. This is the container's default command.
 - `snapshot --kind monday|friday|manual`: one Projects snapshot.
-- `jo-snapshot --kind 0500|1200|1800|manual`: one Job Orders snapshot.
-- `shift-report --slot 0500|1200|1800 [--dry-print]`: one shift report.
+- `jo-snapshot --kind 0500|1130|1900|manual`: one Job Orders snapshot.
+- `shift-report --slot 0500|1130|1900 [--dry-print]`: one shift report.
 - `brief [--dry-print] [--show-llm-input]`: the Saturday briefing now.
 - `draft-mom [--date YYYY-MM-DD]`: re-draft the minutes in Notion.
 - `send-ready-mom [--dry-print]`: send the approved minutes once.
@@ -175,8 +175,8 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
 ## JO shift reports
 
 Three Job Orders reports go to one group topic every day (weekends and holidays included), Asia/Manila:
-05:00 night end of shift, 12:00 day midshift, 18:00 day end of shift. At each slot the scheduler takes a
-Job Orders snapshot (kind `0500`, `1200` or `1800`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
+05:00 night end of shift, 11:30 day midshift, 19:00 day end of shift. At each slot the scheduler takes a
+Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     jo_data_source: "…"
     gateway_url: "http://192.0.2.10:8780"
@@ -197,8 +197,8 @@ slot logs `job failed kind=shift<slot> error=GatewayError` and the scheduler car
 made up. Each run logs one line with counts only (slot, snapshot, baseline, unfinished, received, processed,
 accomplished, parts).
 
-    docker compose run --rm notion-reports shift-report --slot 1800 --config /app/config.yaml --dry-print   # print, send nothing
-    docker compose run --rm notion-reports shift-report --slot 1800 --config /app/config.yaml               # send one slot now
+    docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing
+    docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml               # send one slot now
 
 If Notion cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
 alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from Notion) to `ops_chat_id`,

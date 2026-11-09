@@ -1,4 +1,4 @@
-"""Build the 12:00 day-shift midshift report as Telegram HTML (spec 6.1, 6.2, 6.4).
+"""Build the 11:30 day-shift midshift report as Telegram HTML (spec 6.1, 6.2, 6.4).
 
 Pure: no network, no clock, no database. Reuses the line pieces, deadline sort and footer from
 ``shift_report``. No window counts, so no older snapshot is needed.

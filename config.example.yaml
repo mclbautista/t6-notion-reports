@@ -37,7 +37,7 @@ database_path: /app/data/psr.db
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 
 # JO shift reports (optional). Needs jo_data_source above. When true, the scheduler snapshots Job Orders
-# and sends the 05:00, 12:00 and 18:00 reports every day, Asia/Manila. The secret SHIFT_SECRET goes in .env
+# and sends the 05:00, 11:30 and 19:00 reports every day, Asia/Manila. The secret SHIFT_SECRET goes in .env
 # (never PSR_SECRET). gateway_url and test_banner are shared with the briefing keys above; gateway_url is
 # required here, and so is shift_chat_id. Leave shift_reports_enabled false (or out) and nothing is scheduled.
 # shift_reports_enabled: true

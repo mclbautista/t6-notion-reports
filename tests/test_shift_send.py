@@ -16,7 +16,7 @@ from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
 from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 
 MNL = timezone(timedelta(hours=8))
-PM = datetime(2026, 11, 3, 18, tzinfo=MNL)
+PM = datetime(2026, 11, 3, 19, tzinfo=MNL)
 CHAT, TOPIC = -100777, 9
 PROJECTS_ID = "1" * 8 + "-1111-1111-1111-" + "1" * 12
 CONTACTS_ID = "2" * 8 + "-2222-2222-2222-" + "2" * 12
@@ -58,12 +58,12 @@ def send(slot, jos, tgt, banner=False, when=PM, conn=None, logs=None):
 
 def test_bearer_chat_topic_and_part_keys():
     t = FakeTransport()
-    send("1800", many(40), target(t))
+    send("1900", many(40), target(t))
     assert len(t.calls) > 2
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
     assert {(c[2]["to"], c[2]["topic"]) for c in t.calls} == {(CHAT, TOPIC)}
     keys = [c[2]["idempotency_key"] for c in t.calls]
-    assert keys == ["shift-2026-11-03-1800"] + [f"shift-2026-11-03-1800-{n}" for n in range(2, len(keys) + 1)]
+    assert keys == ["shift-2026-11-03-1900"] + [f"shift-2026-11-03-1900-{n}" for n in range(2, len(keys) + 1)]
     for c in t.calls:
         assert c[2]["format"] == "html" and len(c[2]["text"]) <= 4096
         assert_valid_html(c[2]["text"])
@@ -84,22 +84,22 @@ def test_key_date_is_asia_manila_not_utc():
 
 def test_midshift_goes_through_the_same_path():
     t = FakeTransport()
-    send("1200", [jo("j1", "1", "AE")], target(t), when=datetime(2026, 11, 3, 12, tzinfo=MNL))
-    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1200"]
+    send("1130", [jo("j1", "1", "AE")], target(t), when=datetime(2026, 11, 3, 11, 30, tzinfo=MNL))
+    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1130"]
 
 
 def test_sending_the_same_slot_twice_queues_nothing_new():
     t = FakeTransport()
-    conn, _ = send("1800", many(40), target(t))
+    conn, _ = send("1900", many(40), target(t))
     first = dict(t.queued)
-    send("1800", many(40), target(t), conn=conn)
+    send("1900", many(40), target(t), conn=conn)
     assert t.queued == first and len(t.calls) == 2 * len(first)
 
 
 def test_gateway_failure_raises_after_retries_and_names_no_text_or_secret():
     t = FakeTransport(fail=True)
     with pytest.raises(GatewayError) as err:
-        send("1800", [jo("j1", "48", "TOC", task="Secret task")], target(t))
+        send("1900", [jo("j1", "48", "TOC", task="Secret task")], target(t))
     assert len(t.calls) == 4  # the client's own retries
     assert "shift-s3cret" not in str(err.value) and "Secret task" not in str(err.value)
 
@@ -109,15 +109,15 @@ def test_gateway_failure_raises_after_retries_and_names_no_text_or_secret():
 @pytest.mark.parametrize("banner", [True, False])
 def test_banner_on_every_part_only_when_on(banner):
     t = FakeTransport()
-    send("1800", many(40), target(t), banner=banner)
+    send("1900", many(40), target(t), banner=banner)
     assert len(t.calls) > 1
     assert all(("🧪 TEST" in c[2]["text"]) is banner for c in t.calls)
 
 
 def test_log_line_has_counts_only():
     t, logs = FakeTransport(), []
-    send("1800", [jo("j1", "48", "TOC", task="Secret task")], target(t), logs=logs)
-    assert len(logs) == 1 and logs[0].startswith("shift slot=1800 snapshot=")
+    send("1900", [jo("j1", "48", "TOC", task="Secret task")], target(t), logs=logs)
+    assert len(logs) == 1 and logs[0].startswith("shift slot=1900 snapshot=")
     for field in ("baseline=", "unfinished=1", "received=", "processed=", "accomplished=", "parts=1"):
         assert field in logs[0]
     assert "Secret task" not in logs[0] and "shift-s3cret" not in logs[0]
@@ -200,18 +200,18 @@ def test_slots_only_include_shift_when_enabled(tmp_path):
     assert cli._slots(on) == SLOTS + SHIFT_SLOTS and cli._slots(off) == SLOTS
 
 
-def test_fake_clock_fires_all_three_every_day_and_friday_1800_fires_on_its_own():
+def test_fake_clock_fires_all_three_every_day_and_friday_1900_fires_on_its_own():
     fake, fired = FakeClock(manila(2026, 11, 12, 0)), []
     end = manila(2026, 11, 15, 0)
     Scheduler(lambda k: fired.append((fake.now, k)), fake.clock, fake.sleep, log=lambda _: None,
               slots=SLOTS + SHIFT_SLOTS).run(stop=lambda: fake.now >= end)
     assert fired == [
-        (manila(2026, 11, 12, 5), "shift0500"), (manila(2026, 11, 12, 12), "shift1200"),
-        (manila(2026, 11, 12, 18), "shift1800"),
-        (manila(2026, 11, 13, 5), "shift0500"), (manila(2026, 11, 13, 12), "shift1200"),
-        (manila(2026, 11, 13, 18), "shift1800"), (manila(2026, 11, 13, 23, 30), "friday"),
-        (manila(2026, 11, 14, 5), "shift0500"), (manila(2026, 11, 14, 12), "shift1200"),
-        (manila(2026, 11, 14, 18), "shift1800"),
+        (manila(2026, 11, 12, 5), "shift0500"), (manila(2026, 11, 12, 11, 30), "shift1130"),
+        (manila(2026, 11, 12, 19), "shift1900"),
+        (manila(2026, 11, 13, 5), "shift0500"), (manila(2026, 11, 13, 11, 30), "shift1130"),
+        (manila(2026, 11, 13, 19), "shift1900"), (manila(2026, 11, 13, 23, 30), "friday"),
+        (manila(2026, 11, 14, 5), "shift0500"), (manila(2026, 11, 14, 11, 30), "shift1130"),
+        (manila(2026, 11, 14, 19), "shift1900"),
     ]
 
 
@@ -220,11 +220,11 @@ def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_t
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     t, logs, now = FakeTransport(), [], [PM]
     job = cli.make_job(None, fake, cfg, None, lambda: now[0], shift_target=target(t))
-    job("shift1800")
-    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1800"]
+    job("shift1900")
+    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1900"]
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
     # Same slot again on the same day: same key, nothing new queued.
-    job("shift1800")
+    job("shift1900")
     assert len(t.queued) == 1
     # Down gateway: the job raises, the scheduler logs the type and keeps going.
     down = cli.make_job(None, fake, cfg, None, lambda: PM, shift_target=target(FakeTransport(fail=True)))
@@ -232,8 +232,8 @@ def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_t
     ran = []
     Scheduler(lambda k: (ran.append(k), down(k)), clock.clock, clock.sleep, log=logs.append,
               slots=SHIFT_SLOTS).run(stop=lambda: clock.now >= manila(2026, 11, 4, 5, 1))
-    assert ran == ["shift1800", "shift0500"]
-    assert any("job failed kind=shift1800 error=GatewayError" in line for line in logs)
+    assert ran == ["shift1900", "shift0500"]
+    assert any("job failed kind=shift1900 error=GatewayError" in line for line in logs)
     assert not any("shift-s3cret" in line for line in logs)
 
 
@@ -246,7 +246,7 @@ def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, cap
     t = FakeTransport()
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, t, sleep=lambda _: None))
-    assert cli.main(["shift-report", "--slot", "1800", "--config", path], notion=fake, now=PM) == 0
+    assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=fake, now=PM) == 0
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
     assert capsys.readouterr().out == ""  # nothing printed when sent
 
@@ -254,14 +254,14 @@ def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, cap
 def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)
-    assert cli.main(["shift-report", "--slot", "1800", "--config", write(tmp_path)]) == 2
+    assert cli.main(["shift-report", "--slot", "1900", "--config", write(tmp_path)]) == 2
     assert "shift_reports_enabled" in capsys.readouterr().err
-    assert cli.main(["shift-report", "--slot", "1800", "--config", write(tmp_path, **SHIFT)]) == 2
+    assert cli.main(["shift-report", "--slot", "1900", "--config", write(tmp_path, **SHIFT)]) == 2
     assert "SHIFT_SECRET" in capsys.readouterr().err
     monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, FakeTransport(fail=True), sleep=lambda _: None))
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[])
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
-    assert cli.main(["shift-report", "--slot", "1800", "--config", path], notion=fake, now=PM) == 1
+    assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=fake, now=PM) == 1
     assert "shift-s3cret" not in capsys.readouterr().err

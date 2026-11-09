@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
-from test_shift_report import PM, PREV_1800, at, jo, prior, world
+from test_shift_report import PM, PREV_1900, at, jo, prior, world
 from test_shift_send import CHAT, TOPIC, FakeTransport
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.jo_snapshots import connect
@@ -42,7 +42,7 @@ def tgt(transport, ops=OPS):
     return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None), CHAT, TOPIC, ops)
 
 
-def go(conn, notion, clock, transport, slot="1800", when=PM, ops=OPS):
+def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):
     logs = []
     try:
         run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, log=logs.append,
@@ -67,9 +67,9 @@ def test_down_for_good_retries_about_30_minutes_then_one_alert_and_no_report():
     assert notion.reads > 5
     assert len(transport.calls) == 1
     url, headers, body = transport.calls[0]
-    assert (body["to"], body["idempotency_key"]) == (OPS, "shift-2026-11-03-1800-alert")
+    assert (body["to"], body["idempotency_key"]) == (OPS, "shift-2026-11-03-1900-alert")
     assert "topic" not in body
-    assert "1800" in body["text"] and "URLError" in body["text"]
+    assert "1900" in body["text"] and "URLError" in body["text"]
     assert "secret notion text" not in body["text"]
     assert snapshot_count(conn) == before
 
@@ -80,7 +80,7 @@ def test_recovery_inside_the_window_sends_the_normal_report_and_no_alert():
     notion = Outage(world(jo("j1")), clock, recover_at=PM + timedelta(minutes=10))
     skipped, _ = go(conn, notion, clock, transport)
     assert skipped is None
-    assert [c[2]["idempotency_key"] for c in transport.calls] == ["shift-2026-11-03-1800"]
+    assert [c[2]["idempotency_key"] for c in transport.calls] == ["shift-2026-11-03-1900"]
     assert transport.calls[0][2]["to"] == CHAT
     assert PM + timedelta(minutes=10) <= clock.now < PM + timedelta(minutes=12)
 
@@ -89,13 +89,13 @@ def test_the_slot_keeps_its_own_time_even_when_notion_recovers_late():
     clock, transport, conn = Clock(PM), FakeTransport(), connect()
     prior(conn)
     go(conn, Outage(world(jo("j1")), clock, recover_at=PM + timedelta(minutes=10)), clock, transport)
-    assert conn.execute("SELECT kind FROM jo_snapshots ORDER BY snapshot_id DESC").fetchone()[0] == "1800"
+    assert conn.execute("SELECT kind FROM jo_snapshots ORDER BY snapshot_id DESC").fetchone()[0] == "1900"
 
 
 def test_next_slot_after_a_skipped_one_compares_with_the_latest_earlier_snapshot():
     clock, transport, conn = Clock(PM), FakeTransport(), connect()
-    prior(conn, when=PREV_1800 - timedelta(days=1))
-    go(conn, Outage(world(jo("j1")), clock), clock, transport)  # 18:00 skipped
+    prior(conn, when=PREV_1900 - timedelta(days=1))
+    go(conn, Outage(world(jo("j1")), clock), clock, transport)  # 19:00 skipped
     nxt = datetime(2026, 11, 4, 5, tzinfo=MNL)
     clock.now = nxt
     skipped, _ = go(conn, world(jo("j1")), clock, transport, slot="0500", when=nxt)
@@ -135,7 +135,7 @@ def test_dry_print_does_not_retry_or_alert():
     clock, conn = Clock(PM), connect()
     notion = Outage(world(), clock)
     with pytest.raises(urllib.error.URLError):
-        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, "1800", PM, out=lambda _: None,
+        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, out=lambda _: None,
                          log=lambda _: None, clock=lambda: clock.now, sleep=clock.sleep)
     assert notion.reads == 1 and clock.now == PM
 
