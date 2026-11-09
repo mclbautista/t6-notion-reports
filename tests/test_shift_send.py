@@ -9,7 +9,7 @@ from html_check import assert_valid_html
 from test_schedule import FakeClock, manila
 from test_shift_report import JO_ID, PEOPLE, PROJS, RoutedNotion, at, jo, prior, world
 from t6_notion_reports import cli
-from t6_notion_reports.config import ConfigError, load_config
+from t6_notion_reports.config import ConfigError, Destination, load_config
 from t6_notion_reports.gateway import GatewayClient, GatewayError
 from t6_notion_reports.jo_snapshots import connect
 from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
@@ -37,7 +37,9 @@ class FakeTransport:
 
 
 def target(transport, secret="shift-s3cret", topic=TOPIC):
-    return ShiftTarget(GatewayClient("http://gw:8780", secret, transport, sleep=lambda _: None), CHAT, topic)
+    dest = (Destination(CHAT, topic),)
+    return ShiftTarget(GatewayClient("http://gw:8780", secret, transport, sleep=lambda _: None),
+                       {"0500": dest, "1200": dest, "1800": dest})
 
 
 def many(n):
@@ -126,7 +128,9 @@ def test_log_line_has_counts_only():
 # ---- config -------------------------------------------------------------------------------------
 
 BASE = {"projects_data_source": PROJECTS_ID, "contacts_data_source": CONTACTS_ID, "jo_data_source": JO_ID}
-SHIFT = {"shift_reports_enabled": True, "shift_chat_id": CHAT, "shift_topic_id": TOPIC, "gateway_url": "http://gw:8780"}
+SHIFT = {"shift_reports_enabled": True, "gateway_url": "http://gw:8780",
+         "shift_destinations": {"mid": [{"chat": CHAT, "topic": TOPIC}], "day": [{"chat": CHAT, "topic": TOPIC}],
+                                "night": [{"chat": CHAT, "topic": TOPIC}]}}
 ENV = {"NOTION_TOKEN": "tok", "SHIFT_SECRET": " shift-s3cret "}
 
 
@@ -139,8 +143,8 @@ def write(tmp_path, **cfg):
 def test_shift_settings_load_without_the_briefing_keys(tmp_path):
     cfg = load_config(write(tmp_path, **SHIFT, ops_chat_id=5, test_banner=True), ENV)
     s = cfg.shift
-    assert (s.gateway_url, s.chat_id, s.topic_id, s.ops_chat_id, s.test_banner, s.shift_secret) == (
-        "http://gw:8780", CHAT, TOPIC, 5, True, "shift-s3cret")
+    assert (s.gateway_url, s.destinations["1800"], s.ops_chat_id, s.test_banner, s.shift_secret) == (
+        "http://gw:8780", (Destination(CHAT, TOPIC),), 5, True, "shift-s3cret")
     assert cfg.brief is None
 
 
@@ -152,9 +156,7 @@ def test_briefing_and_shift_can_share_gateway_and_banner(tmp_path):
 
 
 @pytest.mark.parametrize("over,key", [
-    ({"shift_chat_id": None}, "shift_chat_id"),
-    ({"shift_chat_id": "abc"}, "shift_chat_id"),
-    ({"shift_topic_id": "x"}, "shift_topic_id"),
+    ({"shift_destinations": None}, "shift_destinations"),
     ({"ops_chat_id": 1.5}, "ops_chat_id"),
     ({"shift_reports_enabled": "yes"}, "shift_reports_enabled"),
     ({"gateway_url": None}, "gateway_url"),
@@ -179,7 +181,7 @@ def test_disabled_shift_reports_change_nothing(tmp_path):
 
 
 def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tmp_path):
-    cfg = load_config(write(tmp_path, shift_reports_enabled=False, shift_chat_id="junk"), ENV)
+    cfg = load_config(write(tmp_path, shift_reports_enabled=False, shift_chat_id="junk", shift_destinations="junk"), ENV)
     assert cfg.shift is None
     with pytest.raises(ConfigError, match="psr_group_chat_id"):  # gateway_url alone still means "briefing"
         load_config(write(tmp_path, shift_reports_enabled=False, gateway_url="http://gw:8780"), ENV)

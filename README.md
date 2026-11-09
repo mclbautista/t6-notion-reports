@@ -181,10 +181,20 @@ Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's r
     jo_data_source: "…"
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
-    shift_chat_id: -1000000000000    # required
-    shift_topic_id: 1                # optional
-    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to shift_chat_id)
+    shift_destinations:              # at least one destination in total
+      mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
+      day:   [100000001, 100000002]               # a bare number is a user id (a DM)
+      night: [100000001, {chat: -1000000000001, topic: 2}]
+    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)
     test_banner: true                # 🧪 TEST on every part
+
+`shift_destinations` lists where each report goes: `mid` (the midshift report), `day` (end of day shift) and
+`night` (end of night shift). An entry is an integer user id (a DM) or a mapping with an integer `chat` and an
+optional integer `topic`. All three names are optional and a missing or empty list means that report is not sent.
+Unknown names, non-integer ids, extra mapping keys and a repeated destination in one list stop boot with a
+message naming the key and entry number, never the id. `shift_chat_id` and `shift_topic_id` were replaced by
+`shift_destinations` and stop boot if they are still present. Put real ids only in the deployed `config.yaml`.
+Until the per-destination send lands, a report goes to the first destination of its list.
 
 `SHIFT_SECRET` goes in `.env`. The shift reports authenticate to the gateway as the `shift` module with that
 secret, never `PSR_SECRET`, so the gateway needs `modules: shift: { secret_env: SHIFT_SECRET }`. A bad or
@@ -202,7 +212,7 @@ accomplished, parts).
 
 If Notion cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
 alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from Notion) to `ops_chat_id`,
-or to the shift group marked 🚨 when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
+or to the first chat entry of that report's list, marked 🚨, when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
 catch-up. The next slot compares with the latest earlier snapshot and says so.
 
-Do not send by hand before the dry-run go-ahead: it posts to `shift_chat_id`.
+Do not send by hand before the dry-run go-ahead: it posts to the first destination of the slot's list.

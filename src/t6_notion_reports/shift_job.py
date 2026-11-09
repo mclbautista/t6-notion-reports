@@ -4,8 +4,9 @@ from __future__ import annotations
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 
+from .config import Destination
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .contacts import load_contacts
@@ -59,10 +60,18 @@ def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
 
 
 class ShiftTarget:
-    """Where a slot's report goes: a gateway client authenticated with SHIFT_SECRET, a chat and a topic."""
+    """Where reports go: a gateway client authenticated with SHIFT_SECRET, the destinations per slot, ``ops_chat_id``."""
 
-    def __init__(self, gateway, chat_id: int, topic_id: int | None, ops_chat_id: int | None = None):
-        self.gateway, self.chat_id, self.topic_id, self.ops_chat_id = gateway, chat_id, topic_id, ops_chat_id
+    def __init__(self, gateway, destinations: Mapping[str, Sequence[Destination]], ops_chat_id: int | None = None):
+        self.gateway, self.destinations, self.ops_chat_id = gateway, destinations, ops_chat_id
+
+    def first_destination(self, slot: str) -> Destination | None:
+        """Interim until the per-destination send (#86): the report goes to the first destination of the slot only."""
+        dests = self.destinations.get(slot, ())
+        return dests[0] if dests else None
+
+    def first_group(self, slot: str) -> Destination | None:
+        return next((d for d in self.destinations.get(slot, ()) if not d.dm), None)
 
 
 def shift_keys(now: datetime, slot: str, parts: int) -> list[str]:
@@ -128,8 +137,12 @@ def run_shift_report(
         for number, text in enumerate(report.messages, 1):
             out(f"--- part {number}/{parts} ---\n{text}\n")
         return report
+    first = target.first_destination(slot)
+    if first is None:
+        log(f"shift slot={slot} has no destinations; not sent")
+        return report
     for key, text in zip(shift_keys(now, slot, parts), report.messages):
-        target.gateway.notify(target.chat_id, text, key, target.topic_id)
+        target.gateway.notify(first.chat, text, key, first.topic)
     return report
 
 
@@ -167,7 +180,7 @@ def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, no
 def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> None:
     """One ops alert per slot (key ``shift-<date>-<slot>-alert``). Names the slot and the error type only.
 
-    Without ``ops_chat_id`` it goes to the shift group instead, marked as an alert, so it is not lost.
+    Without ``ops_chat_id`` it goes to the first group entry of the slot's list; with none, it is not sent.
     """
     minutes = int(RETRY_FOR.total_seconds() // 60)
     text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
@@ -175,4 +188,6 @@ def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> No
     if target.ops_chat_id is not None:
         target.gateway.notify(target.ops_chat_id, text, key)
     else:
-        target.gateway.notify(target.chat_id, text, key, target.topic_id)
+        group = target.first_group(slot)
+        if group is not None:
+            target.gateway.notify(group.chat, text, key, group.topic)

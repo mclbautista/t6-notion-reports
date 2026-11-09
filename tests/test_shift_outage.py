@@ -7,6 +7,7 @@ import pytest
 from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
 from test_shift_report import PM, PREV_1900, at, jo, prior, world
 from test_shift_send import CHAT, TOPIC, FakeTransport
+from t6_notion_reports.config import Destination
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.jo_snapshots import connect
 from t6_notion_reports.shift_job import NotionUnavailable, ShiftTarget, run_shift_report
@@ -39,7 +40,9 @@ class Outage:
 
 
 def tgt(transport, ops=OPS):
-    return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None), CHAT, TOPIC, ops)
+    dest = (Destination(CHAT, TOPIC),)
+    return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
+                       {"0500": dest, "1200": dest, "1800": dest}, ops)
 
 
 def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):
@@ -113,7 +116,7 @@ def test_rerunning_the_alerted_slot_queues_no_second_alert():
     assert len(transport.queued) == 1 and len(transport.calls) == 2
 
 
-def test_missing_ops_chat_id_sends_the_alert_to_the_shift_group_marked_alert():
+def test_missing_ops_chat_id_sends_the_alert_to_the_first_group_entry_marked_alert():
     clock, transport, conn = Clock(PM), FakeTransport(), connect()
     prior(conn)
     go(conn, Outage(world(), clock), clock, transport, ops=None)
