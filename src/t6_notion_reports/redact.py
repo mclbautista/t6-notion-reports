@@ -8,8 +8,9 @@ afterwards so the brief reads normally.
 
 What counts as a person: every Contacts name, each word of it (three letters or more, and not a month
 name), each alias, and each Telegram handle. What counts as a project, other than the one the payload
-is about: the name and code of any project in the snapshots, including short values.
-Ids: known contact/project page ids, Notion links and page ids, Telegram links
+is about: the name of any project in the snapshots (four letters or more, ignoring case, and not an
+ordinary English word such as "Home" or "Live", so those stay readable), and the code of any project in
+them (two characters or more). Ids: known contact/project page ids, Notion links and page ids, Telegram links
 (t.me and tg://), any @handle, runs of seven or more digits (Telegram ids, phone numbers) even when a
 full stop or comma follows, and every known TelegramUserID wherever it stands as a number.
 Matching is by whole word, longest first.
@@ -36,6 +37,13 @@ from .snapshots import squash
 EXTRA_ORDINARY = frozenset("""
 one two three four five six seven eight nine ten zero joy grace hope faith mark rose art bill dawn june
 april may will wade dean earl frank grant hunter lane max miles pat peace rich sky summer victor
+""".split())
+
+# Ordinary English words a project may be named after. A project name that is only one of these is not
+# hidden, since "home" or "live" are far more often plain words in the notes than the other project.
+PROJECT_PLAIN_WORDS = frozenset("""
+home live show news work play life world time game night light spring winter autumn fall water fire
+earth stone river ocean story tale road city town farm park club team crew talk radio kids family
 """.split())
 
 
@@ -134,9 +142,11 @@ class Redactor:
         people.update((name, True) for name in full_names)
         states = list(states)
         ids.update(p for state in states for p in state)
-        names = {(p, v) for state in states for p, s in state.items() if (v := squash(str(s.get("Name") or "")))}
+        names = {(p, v) for state in states for p, s in state.items()
+                 if len(v := squash(str(s.get("Name") or ""))) >= 4
+                 and v.casefold() not in PROJECT_PLAIN_WORDS and not ordinary(v)}
         codes = {(p, v) for state in states for p, s in state.items()
-                 if (v := squash(str(s.get("Project Code") or "")))}
+                 if len(v := squash(str(s.get("Project Code") or ""))) >= 2}
         return cls(
             tuple(sorted(people.items(), key=lambda kv: len(kv[0]), reverse=True)),
             tuple(sorted(names, key=lambda pair: len(pair[1]), reverse=True)),

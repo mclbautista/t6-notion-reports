@@ -89,10 +89,21 @@ def test_known_full_names_and_aliases_are_hidden_in_all_casing(name, alias, text
         "[person 1] [person 1] [person 1]", "[[person 1]] ([person 1]) [person 1]")
 
 
-def test_known_short_project_references_and_page_ids_are_protected():
+def test_known_short_project_codes_and_page_ids_are_protected():
     from t6_notion_reports.redact import Mapping
-    redactor = Redactor.build([], [{"p-other": {"Name": "Up", "Project Code": "X"}}])
-    assert redactor.redact("[Up] (X) p-other", "p-own", Mapping()) == "[[project 1]] ([project 2]) [id 1]"
+    redactor = Redactor.build([], [{"p-other": {"Name": "Zephyr Hour", "Project Code": "ZH"}}])
+    assert redactor.redact("[Zephyr Hour] (ZH) p-other", "p-own", Mapping()) == "[[project 1]] ([project 2]) [id 1]"
+
+
+def test_ordinary_and_short_project_names_stay_visible_but_page_ids_and_codes_do_not():
+    from t6_notion_reports.redact import Mapping
+    states = [{"p-home": {"Name": "Home", "Project Code": "HM"}, "p-day": {"Name": "Day", "Project Code": "D"},
+               "p-live": {"Name": "Live"}, "p-real": {"Name": "Zephyr"}}]
+    redactor = Redactor.build([], states)
+    text = "Home and home, Day, Live; Zephyr; HM; D; p-home"
+    assert redactor.redact(text, "p-own", Mapping()) == (
+        "Home and home, Day, Live; [project 1]; [project 2]; D; [id 1]")
+    assert redactor.names_in("Home Day Live D", "p-own") is None
 
 
 def test_all_textual_project_properties_except_own_identity_are_protected():
