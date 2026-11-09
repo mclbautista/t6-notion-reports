@@ -40,7 +40,7 @@ def test_four_word_reply_and_error_become_fallbacks_and_are_not_cached():
     for transport in (Transport('{"summary": "one two three four"}'), Transport(status=500)):
         lookup, stats = summarize_tasks(conn, summarizer(transport), {"p1": "Color grade the final cut"}, NOW)
         assert (stats.new, stats.cached, stats.fallback) == (0, 0, 1)
-        assert lookup.summarize("Color grade the final cut") is None
+        assert lookup.for_page("p1").summarize("Color grade the final cut") is None
     assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 0
 
 
@@ -52,10 +52,45 @@ def test_cached_jo_makes_no_call_and_a_changed_task_is_summarised_again():
     assert (stats.new, stats.cached) == (1, 0)
     lookup, stats = summarize_tasks(conn, s, {"p1": "Color grade the final cut"}, NOW)
     assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.bodies) == 1
-    assert lookup.summarize("Color grade the final cut") == "Color grade"
+    assert lookup.for_page("p1").summarize("Color grade the final cut") == "Color grade"
     _, stats = summarize_tasks(conn, s, {"p1": "Fix the audio sync"}, NOW)
     assert stats.new == 1 and len(t.bodies) == 2
-    assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 2  # the old Task's summary stays cached
+
+
+def test_task_a_then_b_then_a_again_reuses_the_cached_summary_of_a():
+    conn = connect()
+    t = Transport()
+    s = summarizer(t)
+    for task in ("Color grade the final cut", "Fix the audio sync"):
+        summarize_tasks(conn, s, {"p1": task}, NOW)
+    assert len(t.bodies) == 2
+    lookup, stats = summarize_tasks(conn, s, {"p1": "Color grade the final cut"}, NOW)
+    assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.bodies) == 2
+    assert lookup.for_page("p1").summarize("Color grade the final cut") == "Color grade"
+
+
+class FirstOnly:
+    """Succeeds on the first call, fails on every later one."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def summarize(self, task_text):
+        self.calls += 1
+        return "Color grade" if self.calls == 1 else None
+
+
+def test_one_jos_fallback_does_not_borrow_another_jos_summary_for_identical_task_text():
+    db = connect()
+    prior(db)
+    fake = world(jo("j1", "1", "TOC", task="Export the final cut"), jo("j2", "2", "TOC", task="Export the final cut"))
+    log, out = [], []
+    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+                     summarizer=FirstOnly())
+    assert log[0].endswith("summaries=1 cached=0 fallback=1")
+    labels = re.findall(r"#(\d+)</a> - (.+?) - Pending", "\n".join(out))
+    assert sorted(label for _, label in labels) == ["Color grade", "Export the final"]
 
 
 def test_names_in_the_task_are_masked_on_the_way_out_and_restored():

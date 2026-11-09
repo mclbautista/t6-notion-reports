@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS jo_page_state (
     value_json  TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, page_id, field)
 );
+CREATE TABLE IF NOT EXISTS shift_report_parts (
+    report_date TEXT NOT NULL,
+    slot        TEXT NOT NULL,
+    parts_json  TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (report_date, slot)
+);
 CREATE TABLE IF NOT EXISTS jo_task_summaries (
     page_id      TEXT NOT NULL,
     task_hash    TEXT NOT NULL,
@@ -62,6 +69,30 @@ CREATE TABLE IF NOT EXISTS jo_task_summaries (
     PRIMARY KEY (page_id, task_hash)
 );
 """
+
+
+def instant(text: str) -> datetime:
+    """An ISO timestamp as an aware instant, so values written at different offsets compare by time.
+    A value with no offset is read as UTC."""
+    moment = datetime.fromisoformat(text)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def manila_day(moment: datetime) -> str:
+    """The Asia/Manila calendar date of an instant, as ISO text."""
+    return moment.astimezone(MANILA).date().isoformat()
+
+
+def keep_report_parts(conn: sqlite3.Connection, now: datetime, slot: str, parts: list[str]) -> list[str]:
+    """The parts a slot sends for its Manila date: the first run's, which stay in the database. Later runs
+    of the same date and slot get those back, whatever ``parts`` they just built."""
+    day = manila_day(now)
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO shift_report_parts VALUES (?, ?, ?, ?)",
+                     (day, slot, json.dumps(parts, ensure_ascii=False), now.isoformat()))
+        (stored,) = conn.execute("SELECT parts_json FROM shift_report_parts WHERE report_date = ? AND slot = ?",
+                                 (day, slot)).fetchone()
+    return json.loads(stored)
 
 
 def manila_instant(start: str | None, as_deadline: bool, time_zone: str | None = None) -> str | None:
@@ -206,9 +237,13 @@ def prune(conn: sqlite3.Connection, now: datetime) -> int:
     """
     cutoff = now - timedelta(days=RETENTION_DAYS)
     # Task summaries not used by any report for 90 days go with the snapshots.
-    conn.execute("DELETE FROM jo_task_summaries WHERE last_used_at < ?", (cutoff.isoformat(),))
+    # Compared as instants: the stamps are ISO strings that can carry different offsets.
+    stale = [(page_id, task_hash) for page_id, task_hash, used in conn.execute(
+        "SELECT page_id, task_hash, last_used_at FROM jo_task_summaries") if instant(used) < cutoff]
+    conn.executemany("DELETE FROM jo_task_summaries WHERE page_id = ? AND task_hash = ?", stale)
+    conn.execute("DELETE FROM shift_report_parts WHERE report_date < ?", (manila_day(cutoff),))
     old = [sid for sid, taken_at in conn.execute("SELECT snapshot_id, taken_at FROM jo_snapshots")
-           if datetime.fromisoformat(taken_at) < cutoff]
+           if instant(taken_at) < cutoff]
     if not old:
         return 0
     marks = ",".join("?" * len(old))
@@ -250,15 +285,13 @@ def load_latest(conn: sqlite3.Connection) -> JoSnapshot | None:
 def load_bounding(
     conn: sqlite3.Connection, at_or_before: datetime, kinds: tuple[str, ...] | None = None,
 ) -> JoSnapshot | None:
-    """The newest snapshot taken at or before ``at_or_before``: the one that bounds a window.
+    """The latest snapshot (by time, not insertion order) taken at or before ``at_or_before``: the one that bounds a window.
 
     ``kinds`` narrows it (e.g. ``("1900",)``). None when there is no such snapshot.
     """
-    for sid, taken_at, kind in conn.execute(
-        "SELECT snapshot_id, taken_at, kind FROM jo_snapshots ORDER BY snapshot_id DESC"
-    ):
-        if kinds is not None and kind not in kinds:
-            continue
-        if datetime.fromisoformat(taken_at) <= at_or_before:
-            return load_snapshot(conn, sid)
-    return None
+    eligible = [
+        (instant(taken_at), sid) for sid, taken_at, kind in conn.execute(
+            "SELECT snapshot_id, taken_at, kind FROM jo_snapshots")
+        if (kinds is None or kind in kinds) and instant(taken_at) <= at_or_before]
+    # Latest by actual time (offsets differ, rows can be inserted out of order); the id breaks ties.
+    return load_snapshot(conn, max(eligible)[1]) if eligible else None

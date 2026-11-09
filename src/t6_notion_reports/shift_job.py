@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Sequence
 
 from .config import Destination
 from .gateway import GatewayError
 from .jo_snapshot_job import Notion, run_jo_snapshot
-from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
+from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, load_latest
 from .contacts import load_contacts
 from .llm import LlmClient
 from .redact import Redactor
@@ -158,6 +158,11 @@ def run_shift_report(
     received, processed, accomplished = report.counts.received, report.counts.processed, report.counts.accomplished
     unfinished = report.unfinished
     parts = len(report.messages)
+    if target is not None:
+        # A rerun reuses the first run's parts, so changed data never adds parts to a report already (partly)
+        # sent; keys are the same, the gateway drops accepted parts, and a part it rejected earlier is queued now.
+        report = replace(report, messages=keep_report_parts(conn, now, slot, report.messages))
+        parts = len(report.messages)
     destinations = () if target is None else tuple(target.destinations.get(slot) or ())
     # One line per run: counts only, never message text, ids, keys or secrets.
     head = (f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
