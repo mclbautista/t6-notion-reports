@@ -82,6 +82,19 @@ class ShiftTarget:
     def first_group(self, slot: str) -> Destination | None:
         return next((d for d in self.destinations.get(slot, ()) if not d.dm), None)
 
+    def send_alert(self, slot: str, text: str, key: str, log=print) -> bool:
+        """The one alert-destination rule: ``ops_chat_id``, else the slot's first group entry (with its topic),
+        else nothing is sent and a log line (slot only, no ids, keys or text) says so. True if it was sent."""
+        if self.ops_chat_id is not None:
+            self.gateway.notify(self.ops_chat_id, text, key)
+            return True
+        group = self.first_group(slot)
+        if group is None:
+            log(f"shift slot={slot} alert not sent: no ops_chat_id and no group entry")
+            return False
+        self.gateway.notify(group.chat, text, key, group.topic)
+        return True
+
 
 def destination_tag(dest: Destination) -> str:
     """``u<user id>`` for a DM, ``c<chat>`` or ``c<chat>t<topic>`` for a group. Only ever sent to the gateway."""
@@ -203,11 +216,11 @@ def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, no
                 break
             sleep(RETRY_EVERY.total_seconds())
     log(f"shift slot={slot} notion unavailable attempts={attempts} error={error}; skipping the slot")
-    _send_alert(target, slot, now, error)
+    _send_alert(target, slot, now, error, log)
     raise NotionUnavailable(f"slot {slot} skipped after {attempts} attempts ({error})")
 
 
-def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> None:
+def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=print) -> None:
     """One ops alert per slot (key ``shift-<date>-<slot>-alert``). Names the slot and the error type only.
 
     Without ``ops_chat_id`` it goes to the first group entry of the slot's list; with none, it is not sent.
@@ -215,9 +228,4 @@ def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> No
     minutes = int(RETRY_FOR.total_seconds() // 60)
     text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
     key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-alert"
-    if target.ops_chat_id is not None:
-        target.gateway.notify(target.ops_chat_id, text, key)
-    else:
-        group = target.first_group(slot)
-        if group is not None:
-            target.gateway.notify(group.chat, text, key, group.topic)
+    target.send_alert(slot, text, key, log)
