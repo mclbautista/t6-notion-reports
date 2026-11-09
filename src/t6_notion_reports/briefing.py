@@ -203,6 +203,8 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
 def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[str]:
     """Render the head, the projects and the tail into messages, splitting between projects.
 
+    Policy: README's "PSR message splitting policy" records the owner's #96 approval of oversized
+    project continuation as the exception to #40's project-only split rule.
     A part that is full starts the next one with the section heading "(cont.)". A project too long for
     a message of its own goes on in the next part under the section and its own name, both marked
     "(cont.)", so no part has lines without the project they belong to; nothing is dropped. A tail

@@ -259,3 +259,73 @@ def test_a_single_oversized_digest_warning_keeps_the_digest_title():
     for m in digest[1:]:
         assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
     assert _all_words([m.text for m in digest], "z") >= {f"z{i}" for i in range(2500)}
+
+
+@pytest.mark.parametrize("recipient", ["Oto", "Cyril"])
+def test_normal_project_boundaries_preserve_whole_projects_and_section_context(recipient):
+    before = [rec(f"p{i}", f"C{i:03d}") for i in range(20)]
+    after = [rec(f"p{i}", f"C{i:03d}",
+                 **{"PM Notes": "As of Nov 12,\n  • " + " ".join(f"project{i}_item{n}" for n in range(40))})
+             for i in range(20)]
+    messages = [m for m in run(before, after) if m.recipient == recipient]
+    assert len(messages) > 1
+    for message in messages:
+        assert_valid_html(message.text)
+        assert len(message.text) <= 4096
+        assert any(f"C{i:03d} · Show C{i:03d}" in _plain(message.text) for i in range(20))
+    for message in messages[1:]:
+        expected = ["Oto", "In-Progress (cont.)"] if recipient == "Cyril" else ["In-Progress (cont.)"]
+        assert _plain(message.text).splitlines()[:len(expected)] == expected
+    for i in range(20):
+        title = f"C{i:03d} · Show C{i:03d}"
+        carrying = [m for m in messages if title in _plain(m.text)]
+        assert len(carrying) == 1
+        for n in range(40):
+            marker = f"project{i}_item{n}"
+            assert marker in _plain(carrying[0].text)
+            assert sum(marker in _plain(m.text) for m in messages) == 1
+
+
+@pytest.mark.parametrize("single_line", [False, True])
+def test_oversized_digest_project_repeats_coordinator_section_and_identity(single_line):
+    if single_line:
+        body = _words(2500, "atom")
+    else:
+        body = "\n  • ".join(f"atom{i} " + "x" * 100 for i in range(120))
+    messages = [m for m in run([rec("p1", "BIG")],
+                [rec("p1", "BIG", **{"PM Notes": "As of Nov 12,\n  • " + body})])
+                if m.recipient == "Cyril"]
+    assert len(messages) > 2
+    for i, message in enumerate(messages):
+        assert_valid_html(message.text)
+        assert len(message.text) <= 4096
+        assert "BIG · Show BIG" in _plain(message.text)
+        if i:
+            assert _plain(message.text).splitlines()[:3] == [
+                "Oto", "In-Progress (cont.)", "BIG · Show BIG (cont.)"]
+    assert _all_words([m.text for m in messages], "atom") >= {
+        f"atom{i}" for i in range(2500 if single_line else 120)}
+
+
+
+def test_oversized_tail_after_projects_keeps_title_banner_and_every_warning_atom():
+    from dataclasses import replace
+    settings = replace(SETTINGS, test_banner=True)
+    # Include a project so the tail must leave the final project part and resume independently.
+    conn = connect()
+    a = take_snapshot(conn, [rec("p1", "ONE")], datetime(2026, 11, 9, 3, tzinfo=timezone.utc), "monday").snapshot_id
+    b = take_snapshot(conn, [rec("p1", "ONE", Stage="Online")], datetime(2026, 11, 13, 10, tzinfo=timezone.utc), "friday").snapshot_id
+    changes = diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13))
+    warnings = ["⚠️ " + _words(2500, "warning"), "⚠️ final warning"]
+    messages = [m for m in build_briefing(changes, {OTO: "Oto"}, CONTACTS, settings, TODAY, notes=warnings)
+                if m.recipient == "Cyril"]
+    assert len(messages) >= 3
+    assert "ONE · Show ONE" in messages[0].text
+    for i, message in enumerate(messages):
+        assert_valid_html(message.text)
+        assert len(message.text) <= 4096
+        assert message.text.startswith("🧪 TEST\n")
+        if i:
+            assert _plain(message.text).splitlines()[1] == "PSR digest · Sun Nov 15 (cont.)"
+    assert _all_words([m.text for m in messages], "warning") >= {f"warning{i}" for i in range(2500)}
+    assert sum("final warning" in m.text for m in messages) == 1

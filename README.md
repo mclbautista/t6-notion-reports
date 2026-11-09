@@ -104,6 +104,15 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   prefixed with their @handle, and the digest says so.
 - Idempotency keys are `notion-reports-<date>-<contact id>` for each coordinator and `psr-digest-<date>` for the digest (`psr-digest-<date>-<contact id>` when there is more than one digest recipient), so a same-day rerun
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
+- **PSR message splitting policy (owner approved for #96):** normal messages split only between
+  complete projects. A new part repeats the coordinator (in the digest) and section heading, marking
+  an already-started section `(cont.)`. The approved exception to #40's project-only boundary rule
+  is a single project that exceeds the message limit: preserve all content and continue it under its
+  project identity and section, both marked `(cont.)`, plus its coordinator in the digest. Split at
+  lines first; an oversized line splits at words, or characters for an unbroken word, preserving valid
+  HTML and the same context on every fragment. Digest warnings and tails continue under the digest
+  title `(cont.)`, never as untitled messages. Every part, including repeated context and any test
+  banner, stays within Telegram's 4096-character limit.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
 - **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
