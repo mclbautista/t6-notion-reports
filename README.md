@@ -134,8 +134,13 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   Local numbered placeholders protect outbound text; grounding checks the exact protected source quotes,
   then accepted output restores names locally (identifiers stay hidden). The reply is structured: `last_update`, `changes` and
   `concerns`. Code checks each item on its own: the quote must be the cited line (ignoring bullet marks and
-  whitespace) and every date, number, episode and capitalised word must be in the payload; a failing item is
-  dropped. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
+  whitespace) and facts must be grounded in that cited line; a failing item is dropped.
+  A `source_conflict` or `health_vs_evidence` Concern may include `supporting_citations` with exact source,
+  line id and quote for each additional evidence line (including snapshot lines). Only those explicitly
+  cited lines may supply comparison facts; health comparisons may also use `project_health`. Other
+  Concern kinds and changes remain scoped to their primary line. ISO dates may be paraphrased with month
+  names while preserving their written year. These checks enforce evidence provenance, not the semantic
+  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
   the Concern store. A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
   update; otherwise Notion's last-edited time does.
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",

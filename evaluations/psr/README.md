@@ -53,8 +53,9 @@ run the actual configured model/version with the exported production prompt, sch
   reject stale values asserted as current and reject source_conflict. For ambiguity, require a grounded
   source_conflict from PM Notes or Minutes and reject an unsupported definitive winner.
 
-The automated validator allows only PM Notes/Minutes citations for Concerns, so a snapshot winner
-should be cited in a change. The snapshot field uses ISO dates while other lines use month names;
+The automated validator requires a PM Notes/Minutes primary citation for Concerns. Comparison Concerns
+may explicitly cite additional PM Notes, Minutes or snapshot lines through `supporting_citations`; every
+supporting source, line id and exact quote must validate. A snapshot winner should be cited in a change. The snapshot field uses ISO dates while other lines use month names;
 review equivalent dates semantically. Source timestamps, not source category or sent_at, decide recency.
 
 For every failure, retain the failed output and a limitation or remediation note. Re-run a versioned

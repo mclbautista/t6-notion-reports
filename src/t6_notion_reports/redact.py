@@ -161,6 +161,14 @@ class Redactor:
             patterns.append(r"(?<!\w)" + decimal + re.escape(value) + r"(?!\w)" + end)
         return re.compile("|".join(patterns), re.I)
 
+    def _identity_candidates(self, own_page_id: str):
+        """Shared identity boundary for outgoing redaction and returned-name checks."""
+        own = self._own(own_page_id)
+        candidates = [("project", v, True) for p, v in self.projects if p != own_page_id]
+        candidates += [("project", v, loose) for p, v, loose in self.codes if p != own_page_id]
+        candidates += [("person", v, loose) for v, loose in self.people]
+        return [(kind, value, loose) for kind, value, loose in candidates if value.casefold() not in own]
+
     def redact(self, text: str, own_page_id: str, mapping: Mapping) -> str:
         """``text`` with every identity outside the project ``own_page_id`` replaced by a placeholder."""
         own = self._own(own_page_id)
@@ -170,12 +178,9 @@ class Redactor:
         ids = [f"(?i:{_IDS.pattern})"]
         if (known := self._id_pattern(own)) is not None:
             ids.append(f"(?i:{known.pattern})")
-        projects = [_word(v).pattern for p, v in self.projects
-                    if p != own_page_id and v.casefold() not in own]
-        projects += [_word(v, loose).pattern for p, v, loose in self.codes
-                     if p != own_page_id and v.casefold() not in own]
-        people = [_word(v, loose).pattern for v, loose in self.people if v.casefold() not in own]
-        patterns = {"id": ids, "project": projects, "person": people}
+        patterns = {"id": ids, "project": [], "person": []}
+        for kind, value, loose in self._identity_candidates(own_page_id):
+            patterns[kind].append(_word(value, loose).pattern)
         matchers = [(kind, re.compile("|".join(values))) for kind, values in patterns.items() if values]
         pieces: list[str] = []
         cursor = 0
@@ -190,12 +195,8 @@ class Redactor:
 
     def names_in(self, text: str, own_page_id: str) -> str | None:
         """The first person or other-project name ``text`` holds, as ``redact`` would find it, or an id."""
-        own = self._own(own_page_id)
-        candidates = [(v, loose) for v, loose in self.people]
-        candidates += [(v, True) for p, v in self.projects if p != own_page_id]
-        candidates += [(v, loose) for p, v, loose in self.codes if p != own_page_id]
-        for value, loose in candidates:
-            if value.casefold() not in own and _word(value, loose).search(text):
+        for _, value, loose in self._identity_candidates(own_page_id):
+            if _word(value, loose).search(text):
                 return value
         return None
 
