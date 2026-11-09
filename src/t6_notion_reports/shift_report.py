@@ -1,8 +1,8 @@
-"""Build the end-of-shift Job Orders reports (19:00 and 05:00) as Telegram HTML (#73, replaces #20 section 6).
+"""Build the turnover Job Orders reports (11:30, 19:00 and 05:00) as Telegram HTML (#73, replaces #20 section 6).
 
 Pure: no network, no clock, no database. ``build_end_of_shift`` takes the snapshot just taken and the
 older snapshot that bounds the window, and returns the messages. Task text goes through a
-``TaskSummarizer``. The deadline sort, footer and small helpers are public so the 11:30 report can reuse them.
+``TaskSummarizer``.
 """
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ class Slot(NamedTuple):
 
 
 SLOTS = {
+    "1130": Slot("MID SHIFT DAY REPORT", "🔵 For TOC (Day Shift)", "0500"),
     "1900": Slot("END OF SHIFT REPORT (DAY SHIFT)", "🔵 For TOC (Night Shift)", "1130"),
     "0500": Slot("END OF SHIFT REPORT (NIGHT SHIFT)", "🔵 For TOC (Day Shift)", "1900"),
 }
@@ -54,7 +55,7 @@ AE_HEADING = "🟢 For AE"
 Fields = dict[str, object]
 
 
-# ---- reusable pieces (the 11:30 report builds on these) ----------------------------------------
+# ---- reusable pieces ----------------------------------------
 
 def parse_instant(value: object) -> datetime | None:
     return datetime.fromisoformat(value) if isinstance(value, str) and value else None
