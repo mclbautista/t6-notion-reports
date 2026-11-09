@@ -174,35 +174,53 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
 
 ## JO shift reports
 
-Three Job Orders reports go to one group topic every day (weekends and holidays included), Asia/Manila:
+Three Job Orders reports go to their configured destinations every day (weekends and holidays included), Asia/Manila:
 05:00 night end of shift, 11:30 day mid shift, 19:00 day end of shift. At each slot the scheduler takes a
 Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     jo_data_source: "…"
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
-    shift_chat_id: -1000000000000    # required
-    shift_topic_id: 1                # optional
-    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to shift_chat_id)
+    shift_destinations:              # at least one destination in total
+      mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
+      day:   [100000001, 100000002]               # a bare positive number is a user id (a DM)
+      night: [100000001, {chat: -1000000000001, topic: 2}]
+    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)
     test_banner: true                # 🧪 TEST on every part
+
+`shift_destinations` lists where each report goes: `mid` (the midshift report), `day` (end of day shift) and
+`night` (end of night shift). An entry is an integer user id (a DM) or a mapping with an integer `chat` and an
+optional integer `topic`. A group chat id (negative) must use the mapping form; a zero or negative bare number stops boot. All three names are optional and a missing or empty list means that report is not sent.
+Unknown names, non-integer ids, extra mapping keys and a repeated destination in one list stop boot with a
+message naming the key and entry number, never the id. `shift_chat_id` and `shift_topic_id` were replaced by
+`shift_destinations` and stop boot if they are still present. Put real ids only in the deployed `config.yaml`.
+Every part of a report goes to every destination of its list, in config order.
 
 `SHIFT_SECRET` goes in `.env`. The shift reports authenticate to the gateway as the `shift` module with that
 secret, never `PSR_SECRET`, so the gateway needs `modules: shift: { secret_env: SHIFT_SECRET }`. A bad or
 missing shift key stops boot with a message naming the key. With `shift_reports_enabled` false or absent,
 nothing about the shift reports is scheduled and the other jobs behave as before.
 
-Idempotency keys are `shift-<YYYY-MM-DD>-<slot>` for part 1, then `-2`, `-3`…, with the date in Asia/Manila,
-so a rerun of the same slot and day queues nothing new. If the gateway fails after the client's retries, the
+Idempotency keys are `shift-<YYYY-MM-DD>-<slot>-<dest>` for part 1, then `-2`, `-3`… (`<dest>` is `u<id>` for a DM,
+`c<chat>` for a chat, `c<chat>t<topic>` for a chat topic), with the date in Asia/Manila,
+so a rerun of the same slot and day dedupes per destination and queues nothing new. If the gateway fails after the client's retries, the
 slot logs `job failed kind=shift<slot> error=GatewayError` and the scheduler carries on; a missed slot is not
 made up. Each run logs one line with counts only (slot, snapshot, baseline, unfinished, received, processed,
-accomplished, parts).
+accomplished, parts, destinations, undelivered).
+
+After the last send the job checks delivery: every 15 seconds, for up to 5 minutes (earlier once all are final),
+it asks the gateway about each queued message. A destination counts as undelivered if it was rejected at send,
+or any part `failed`, is still `queued` at the end, or whose status could not be read (`unknown`). If any
+destination is undelivered, one alert (key `shift-<date>-<slot>-undelivered`) is sent by the same rule as the
+Notion-outage alert, naming the slot and each such destination by id with its state; it holds no report text.
+No alert when everything was delivered. `undelivered=<n>` is in the run log line, without ids.
 
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml               # send one slot now
 
 If Notion cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
 alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from Notion) to `ops_chat_id`,
-or to the shift group marked 🚨 when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
+or to the first chat entry of that report's list, marked 🚨, when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
 catch-up. The next slot compares with the latest earlier snapshot and says so.
 
-Do not send by hand before the dry-run go-ahead: it posts to `shift_chat_id`.
+Do not send by hand before the dry-run go-ahead: it posts to every destination of the slot's list.

@@ -54,3 +54,35 @@ def test_a_200_without_message_ref_is_not_success():
     t = FakeTransport(*[(200, {})] * 4)
     with pytest.raises(GatewayError):
         client(t).notify(1, "x", "k")
+
+
+# ---- delivery status (GET /notify/{ref}) --------------------------------------------------------
+
+@pytest.mark.parametrize("state", ["queued", "sent", "failed"])
+def test_delivery_status_returns_the_gateways_state(state):
+    t = FakeTransport((200, {"state": state}))
+    assert client(t).delivery_status(5531) == state
+
+
+def test_delivery_status_accepts_a_status_key_too():
+    assert client(FakeTransport((200, {"status": "failed"}))).delivery_status(1) == "failed"
+
+
+def test_delivery_status_is_a_get_with_bearer_and_no_body():
+    t = FakeTransport((200, {"state": "sent"}))
+    client(t).delivery_status(5531)
+    url, headers, body = t.calls[0]
+    assert url == "http://gw:8780/notify/5531"
+    assert headers["Authorization"] == "Bearer s3cret"
+    assert body is None  # no body means GET
+
+
+@pytest.mark.parametrize("reply", [
+    ConnectionError("down s3cret"),
+    (404, None), (500, {"state": "sent"}), (202, {"state": "sent"}),
+    (200, None), (200, {}), (200, {"state": "delivered"}), (200, {"state": None}), (200, {"state": ["sent"]}),
+])
+def test_delivery_status_never_raises_and_is_unknown_on_any_problem(reply):
+    t = FakeTransport(reply)
+    assert client(t).delivery_status(1) == "unknown"
+    assert len(t.calls) == 1  # no retries: the caller polls

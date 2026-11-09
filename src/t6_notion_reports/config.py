@@ -22,7 +22,9 @@ SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
-SHIFT_KEYS = {"shift_reports_enabled", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
+SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
+# shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
+SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
@@ -55,13 +57,21 @@ class BriefSettings:
 
 
 @dataclass(frozen=True)
+class Destination:
+    """One place a shift report goes: a DM (``dm=True``, ``chat`` is the user id, no topic) or a chat with a topic."""
+
+    chat: int
+    topic: int | None = None
+    dm: bool = False
+
+
+@dataclass(frozen=True)
 class ShiftSettings:
     """JO shift report settings. Present only when ``shift_reports_enabled`` is true."""
 
     gateway_url: str
-    chat_id: int
-    topic_id: int | None
-    ops_chat_id: int | None  # where the Notion-outage alert goes; unset: it goes to the shift group
+    destinations: Mapping[str, tuple[Destination, ...]]  # keyed by slot ("1130", "1900", "0500"); () skips that slot
+    ops_chat_id: int | None  # where the Notion-outage alert goes; unset: the first group entry of the slot's list
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
     openrouter_api_key: str | None = None  # unset: task summaries are the first three words, no LLM call
@@ -220,22 +230,73 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         raise ConfigError("invalid config key: shift_reports_enabled (expected true or false)")
     if not enabled:  # nothing else about the shift reports is read, so existing configs behave as before
         return None
-    chat = _integer(raw, "shift_chat_id") if "shift_chat_id" in raw else None
-    topic = _integer(raw, "shift_topic_id") if "shift_topic_id" in raw else None
+    for old in ("shift_chat_id", "shift_topic_id"):
+        if old in raw:
+            raise ConfigError(f"config key {old} was replaced by shift_destinations")
     ops = _integer(raw, "ops_chat_id") if "ops_chat_id" in raw else None
-    for key in ("jo_data_source", "shift_chat_id"):
-        if key not in raw:
-            raise ConfigError(f"missing config key: {key} (needed when shift_reports_enabled is true)")
+    if "jo_data_source" not in raw:
+        raise ConfigError("missing config key: jo_data_source (needed when shift_reports_enabled is true)")
+    destinations = _shift_destinations(raw)
+    if not any(destinations.values()):
+        raise ConfigError("invalid config key: shift_destinations (needs at least one destination when shift_reports_enabled is true)")
     return ShiftSettings(
         gateway_url=_gateway_url(raw),
-        chat_id=chat,
-        topic_id=topic,
+        destinations=destinations,
         ops_chat_id=ops,
         test_banner=_banner(raw),
         shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
     )
+
+
+def _shift_destinations(raw: dict) -> dict[str, tuple[Destination, ...]]:
+    """Parse ``shift_destinations`` into a tuple of destinations per slot. Messages never hold an id."""
+    key = "shift_destinations"
+    val = raw.get(key, {})
+    if val is None:
+        val = {}
+    if not isinstance(val, dict):
+        raise ConfigError(f"invalid config key: {key} (expected a mapping of report name to a list)")
+    for name in val:
+        if name not in SHIFT_REPORT_SLOTS:
+            raise ConfigError(f"invalid config key: {key} (unknown report name; expected mid, day or night)")
+    result: dict[str, tuple[Destination, ...]] = {}
+    for name, slot in SHIFT_REPORT_SLOTS.items():
+        entries = val.get(name)
+        if entries is None:
+            entries = []
+        if not isinstance(entries, list):
+            raise ConfigError(f"invalid config key: {key}.{name} (expected a list)")
+        seen: set[Destination] = set()
+        parsed = []
+        for number, entry in enumerate(entries, 1):
+            where = f"invalid config key: {key}.{name} (entry {number}"
+            if _is_int(entry):
+                if entry <= 0:
+                    raise ConfigError(f"{where} is a bare id that is not a user id; "
+                                      "a group chat must use the {chat, topic} form)")
+                dest = Destination(entry, None, dm=True)
+            elif isinstance(entry, dict):
+                if set(entry) - {"chat", "topic"}:
+                    raise ConfigError(f"{where} has a key other than chat and topic)")
+                if not _is_int(entry.get("chat")):
+                    raise ConfigError(f"{where} needs an integer chat)")
+                if "topic" in entry and not _is_int(entry["topic"]):
+                    raise ConfigError(f"{where} has a topic that is not an integer)")
+                dest = Destination(entry["chat"], entry.get("topic"))
+            else:
+                raise ConfigError(f"{where} is not a user id or a mapping with chat and optional topic)")
+            if dest in seen:
+                raise ConfigError(f"{where} repeats an earlier entry)")
+            seen.add(dest)
+            parsed.append(dest)
+        result[slot] = tuple(parsed)
+    return result
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _integer(raw: dict, key: str) -> int:

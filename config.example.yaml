@@ -39,10 +39,16 @@ database_path: /app/data/psr.db
 # JO shift reports (optional). Needs jo_data_source above. When true, the scheduler snapshots Job Orders
 # and sends the 05:00, 11:30 and 19:00 reports every day, Asia/Manila. The secret SHIFT_SECRET goes in .env
 # (never PSR_SECRET). gateway_url and test_banner are shared with the briefing keys above; gateway_url is
-# required here, and so is shift_chat_id. Leave shift_reports_enabled false (or out) and nothing is scheduled.
+# required here, and so is at least one destination in shift_destinations. Leave shift_reports_enabled false
+# (or out) and nothing is scheduled. shift_chat_id and shift_topic_id were replaced by shift_destinations
+# and fail the boot if they are still here.
 # shift_reports_enabled: true
-# shift_chat_id: -1000000000000            # FILL IN: chat for the reports (Cyril's DM for the dry run)
-# shift_topic_id: 1                        # optional topic in that chat
+# shift_destinations:                      # one list per report; every name and list is optional
+#   mid:   [{chat: -1000000000001, topic: 1}]   # 11:30 report: a chat with an optional topic
+#   day:   [100000001, 100000002]               # 19:00 report: a bare number is a user id (a DM)
+#   night: [100000001, {chat: -1000000000001, topic: 2}]   # 05:00 report: DMs and chats can mix
+# The ids above are placeholders. Put the real ids only in the deployed config.yaml. A person must have
+# started the bot before a DM can reach them.
 # ops_chat_id: 100000001                   # optional; where the ops alert will go (later ticket)
 
 # People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,

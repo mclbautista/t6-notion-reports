@@ -3,23 +3,29 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Mapping, Sequence
 
+from .config import Destination
+from .gateway import GatewayError
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .contacts import load_contacts
 from .llm import LlmClient
 from .redact import Redactor
-from .shift_report import is_active
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
-from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
+from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
 
 # Notion unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
 # are at least six hours apart, so a retrying slot is always done before the next one is due.
 RETRY_FOR = timedelta(minutes=30)
 RETRY_EVERY = timedelta(minutes=1)
+
+# Delivery check after the last send: ask the gateway about every queued message this often, for this long.
+POLL_EVERY = timedelta(seconds=15)
+POLL_FOR = timedelta(minutes=5)
 
 
 class NotionUnavailable(Exception):
@@ -58,16 +64,49 @@ def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
     return (moment - timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
 
 
+@dataclass(frozen=True)
+class DestinationResult:
+    """What sending one report to one destination did: the gateway ``message_ref`` of each queued part, in
+    part order, and whether the gateway rejected it (then ``refs`` holds only the parts queued before that)."""
+
+    destination: Destination
+    refs: tuple[int, ...]
+    rejected: bool
+
+
 class ShiftTarget:
-    """Where a slot's report goes: a gateway client authenticated with SHIFT_SECRET, a chat and a topic."""
+    """Where reports go: a gateway client authenticated with SHIFT_SECRET, the destinations per slot, ``ops_chat_id``."""
 
-    def __init__(self, gateway, chat_id: int, topic_id: int | None, ops_chat_id: int | None = None):
-        self.gateway, self.chat_id, self.topic_id, self.ops_chat_id = gateway, chat_id, topic_id, ops_chat_id
+    def __init__(self, gateway, destinations: Mapping[str, Sequence[Destination]], ops_chat_id: int | None = None):
+        self.gateway, self.destinations, self.ops_chat_id = gateway, destinations, ops_chat_id
+
+    def first_group(self, slot: str) -> Destination | None:
+        return next((d for d in self.destinations.get(slot, ()) if not d.dm), None)
+
+    def send_alert(self, slot: str, text: str, key: str, log=print) -> bool:
+        """The one alert-destination rule: ``ops_chat_id``, else the slot's first group entry (with its topic),
+        else nothing is sent and a log line (slot only, no ids, keys or text) says so. True if it was sent."""
+        if self.ops_chat_id is not None:
+            self.gateway.notify(self.ops_chat_id, text, key)
+            return True
+        group = self.first_group(slot)
+        if group is None:
+            log(f"shift slot={slot} alert not sent: no ops_chat_id and no group entry")
+            return False
+        self.gateway.notify(group.chat, text, key, group.topic)
+        return True
 
 
-def shift_keys(now: datetime, slot: str, parts: int) -> list[str]:
-    """``shift-<date>-<slot>`` for part 1, then ``-2``, ``-3``... The date is Asia/Manila."""
-    base = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}"
+def destination_tag(dest: Destination) -> str:
+    """``u<user id>`` for a DM, ``c<chat>`` or ``c<chat>t<topic>`` for a group. Only ever sent to the gateway."""
+    if dest.dm:
+        return f"u{dest.chat}"
+    return f"c{dest.chat}" if dest.topic is None else f"c{dest.chat}t{dest.topic}"
+
+
+def shift_keys(now: datetime, slot: str, parts: int, dest: Destination) -> list[str]:
+    """``shift-<date>-<slot>-<dest>`` for part 1, then ``-2``, ``-3``... The date is Asia/Manila."""
+    base = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-{destination_tag(dest)}"
     return [base] + [f"{base}-{n}" for n in range(2, parts + 1)]
 
 
@@ -119,18 +158,77 @@ def run_shift_report(
     received, processed, accomplished = report.counts.received, report.counts.processed, report.counts.accomplished
     unfinished = report.unfinished
     parts = len(report.messages)
-    # One line per run: counts only, never message text or secrets.
-    log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
-        f"unfinished={unfinished} received={received} processed={processed} "
-        f"accomplished={accomplished} parts={parts} "
-        f"summaries={stats.new} cached={stats.cached} fallback={stats.fallback}")
+    destinations = () if target is None else tuple(target.destinations.get(slot) or ())
+    # One line per run: counts only, never message text, ids, keys or secrets.
+    head = (f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
+            + ("" if target is None else f"destinations={len(destinations)} ") +
+            f"unfinished={unfinished} received={received} processed={processed} "
+            f"accomplished={accomplished} parts={parts} "
+            f"summaries={stats.new} cached={stats.cached} fallback={stats.fallback}")
     if target is None:
+        log(head)
         for number, text in enumerate(report.messages, 1):
             out(f"--- part {number}/{parts} ---\n{text}\n")
         return report
-    for key, text in zip(shift_keys(now, slot, parts), report.messages):
-        target.gateway.notify(target.chat_id, text, key, target.topic_id)
+    if not destinations:
+        log(f"{head} undelivered=0")
+        log(f"shift slot={slot} has no destinations; not sent")
+        return report
+    results = tuple(_send_to(target.gateway, d, report.messages, shift_keys(now, slot, parts, d)) for d in destinations)
+    undelivered = _check_delivery(target, results, clock, sleep)
+    if undelivered:
+        _send_undelivered_alert(target, slot, now, undelivered, log)
+    log(f"{head} undelivered={len(undelivered)}")
+    if all(r.rejected for r in results):  # the gateway itself is down: say so, as a single-destination send always did
+        raise GatewayError(f"gateway rejected every destination of slot {slot}")
     return report
+
+
+def _check_delivery(target: ShiftTarget, results: Sequence[DestinationResult], clock, sleep) -> list[tuple[Destination, str]]:
+    """Poll every queued ref every ``POLL_EVERY`` until all are sent or failed, or ``POLL_FOR`` is up (stopping early
+    when all are final). Returns the undelivered destinations in config order with their state: ``rejected`` (the
+    gateway refused it at send), ``failed``, ``still queued`` or ``unknown`` (the status call never answered)."""
+    state = {ref: "queued" for r in results for ref in r.refs}
+    give_up = clock() + POLL_FOR
+    while True:
+        for ref in [ref for ref, st in state.items() if st not in ("sent", "failed")]:
+            state[ref] = target.gateway.delivery_status(ref)
+        if all(st in ("sent", "failed") for st in state.values()) or clock() + POLL_EVERY > give_up:
+            break
+        sleep(POLL_EVERY.total_seconds())
+    undelivered = []
+    for r in results:
+        states = {state[ref] for ref in r.refs}
+        word = ("rejected" if r.rejected else "failed" if "failed" in states else
+                "still queued" if "queued" in states else "unknown" if "unknown" in states else None)
+        if word:
+            undelivered.append((r.destination, word))
+    return undelivered
+
+
+def _send_undelivered_alert(target: ShiftTarget, slot: str, now: datetime, undelivered, log) -> None:
+    """One alert per slot run (key ``shift-<date>-<slot>-undelivered``): the slot and each undelivered destination by
+    id with its state. No report text. Goes through the shared alert-destination rule."""
+    names = [f"user {d.chat}" if d.dm else f"chat {d.chat}" + ("" if d.topic is None else f" topic {d.topic}")
+             for d, _ in undelivered]
+    lines = "\n".join(f"{name} ({word})" for name, (_, word) in zip(names, undelivered))
+    text = f"🚨 Shift report for slot {slot} was not delivered to {len(undelivered)} destination(s):\n{lines}"
+    key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-undelivered"
+    try:
+        target.send_alert(slot, text, key, log)
+    except GatewayError:
+        log(f"shift slot={slot} undelivered alert not sent: gateway rejected it")
+
+
+def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence[str]) -> DestinationResult:
+    """Every part to one destination, in order. A rejection (after the client's retries) ends this destination only."""
+    refs: list[int] = []
+    for key, text in zip(keys, messages):
+        try:
+            refs.append(gateway.notify(dest.chat, text, key, dest.topic))
+        except GatewayError:
+            return DestinationResult(dest, tuple(refs), True)
+    return DestinationResult(dest, tuple(refs), False)
 
 
 def _llm_summarizer(notion: Notion, contacts_ds: str, current: JoSnapshot, llm: LlmClient) -> TaskSummarizer | None:
@@ -160,19 +258,19 @@ def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, no
                 break
             sleep(RETRY_EVERY.total_seconds())
     log(f"shift slot={slot} notion unavailable attempts={attempts} error={error}; skipping the slot")
-    _send_alert(target, slot, now, error)
+    _send_alert(target, slot, now, error, log)
     raise NotionUnavailable(f"slot {slot} skipped after {attempts} attempts ({error})")
 
 
-def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str) -> None:
+def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=print) -> None:
     """One ops alert per slot (key ``shift-<date>-<slot>-alert``). Names the slot and the error type only.
 
-    Without ``ops_chat_id`` it goes to the shift group instead, marked as an alert, so it is not lost.
+    Without ``ops_chat_id`` it goes to the first group entry of the slot's list; with none, it is not sent.
     """
     minutes = int(RETRY_FOR.total_seconds() // 60)
     text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
     key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-alert"
-    if target.ops_chat_id is not None:
-        target.gateway.notify(target.ops_chat_id, text, key)
-    else:
-        target.gateway.notify(target.chat_id, text, key, target.topic_id)
+    try:
+        target.send_alert(slot, text, key, log)
+    except GatewayError:
+        log(f"shift slot={slot} notion alert not sent: gateway rejected it")

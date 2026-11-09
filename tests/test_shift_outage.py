@@ -7,6 +7,7 @@ import pytest
 from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
 from test_shift_report import PM, PREV_1900, at, jo, prior, world
 from test_shift_send import CHAT, TOPIC, FakeTransport
+from t6_notion_reports.config import Destination
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.jo_snapshots import connect
 from t6_notion_reports.shift_job import NotionUnavailable, ShiftTarget, run_shift_report
@@ -39,7 +40,9 @@ class Outage:
 
 
 def tgt(transport, ops=OPS):
-    return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None), CHAT, TOPIC, ops)
+    dest = (Destination(CHAT, TOPIC),)
+    return ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
+                       {"0500": dest, "1130": dest, "1900": dest}, ops)
 
 
 def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):
@@ -80,7 +83,7 @@ def test_recovery_inside_the_window_sends_the_normal_report_and_no_alert():
     notion = Outage(world(jo("j1")), clock, recover_at=PM + timedelta(minutes=10))
     skipped, _ = go(conn, notion, clock, transport)
     assert skipped is None
-    assert [c[2]["idempotency_key"] for c in transport.calls] == ["shift-2026-11-03-1900"]
+    assert [c[2]["idempotency_key"] for c in transport.calls] == [f"shift-2026-11-03-1900-c{CHAT}t{TOPIC}"]
     assert transport.calls[0][2]["to"] == CHAT
     assert PM + timedelta(minutes=10) <= clock.now < PM + timedelta(minutes=12)
 
@@ -113,7 +116,7 @@ def test_rerunning_the_alerted_slot_queues_no_second_alert():
     assert len(transport.queued) == 1 and len(transport.calls) == 2
 
 
-def test_missing_ops_chat_id_sends_the_alert_to_the_shift_group_marked_alert():
+def test_missing_ops_chat_id_sends_the_alert_to_the_first_group_entry_marked_alert():
     clock, transport, conn = Clock(PM), FakeTransport(), connect()
     prior(conn)
     go(conn, Outage(world(), clock), clock, transport, ops=None)
@@ -145,3 +148,51 @@ def test_retrying_slot_gives_up_before_the_next_slot_is_due():
     from t6_notion_reports.schedule import SHIFT_SLOTS
     gaps = [(b.at.hour - a.at.hour) % 24 for a, b in zip(SHIFT_SLOTS, SHIFT_SLOTS[1:] + SHIFT_SLOTS[:1])]
     assert RETRY_FOR < timedelta(hours=min(gaps))
+
+
+def alert_run(dests, ops=None):
+    clock, transport, conn = Clock(PM), FakeTransport(), connect()
+    prior(conn)
+    logs = []
+    target = ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
+                         {"1900": dests}, ops)
+    with pytest.raises(NotionUnavailable):
+        run_shift_report(conn, Outage(world(), clock), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=logs.append,
+                         target=target, clock=lambda: clock.now, sleep=clock.sleep)
+    return transport, logs
+
+
+def test_ops_chat_id_wins_over_a_group_entry_and_carries_no_topic():
+    transport, _ = alert_run((Destination(CHAT, TOPIC),), ops=OPS)
+    assert [(c[2]["to"], "topic" in c[2]) for c in transport.calls] == [(OPS, False)]
+
+
+def test_without_ops_the_first_group_entry_gets_the_alert_with_its_topic_after_dms():
+    dests = (Destination(111, dm=True), Destination(CHAT, TOPIC), Destination(222, 9))
+    transport, _ = alert_run(dests)
+    body = transport.calls[0][2]
+    assert len(transport.calls) == 1 and (body["to"], body["topic"]) == (CHAT, TOPIC)
+
+
+def test_without_ops_and_only_dms_nothing_is_sent_and_a_log_line_has_no_ids():
+    dests = (Destination(111, dm=True), Destination(222, dm=True))
+    transport, logs = alert_run(dests)
+    assert transport.calls == []
+    line = next(entry for entry in logs if "alert" in entry and "not sent" in entry)
+    assert "1900" in line and "111" not in line and "222" not in line
+
+
+def test_without_ops_and_an_empty_list_nothing_is_sent():
+    transport, logs = alert_run(())
+    assert transport.calls == []
+    assert any("not sent" in entry for entry in logs)
+
+
+def test_gateway_failure_while_alerting_still_raises_notion_unavailable_and_logs_no_ids():
+    clock, transport, conn = Clock(PM), FakeTransport(fail=True), connect()
+    prior(conn)
+    skipped, logs = go(conn, Outage(world(jo("j1")), clock), clock, transport)
+    assert isinstance(skipped, NotionUnavailable)
+    assert any("alert not sent" in line for line in logs)
+    for line in logs:
+        assert str(OPS) not in line and "shift-2026" not in line and "secret notion text" not in line

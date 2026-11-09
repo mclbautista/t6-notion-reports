@@ -194,7 +194,7 @@ def _shift_secrets(cfg):
 def _shift_target(cfg) -> ShiftTarget:
     """A gateway client authenticated with SHIFT_SECRET, never PSR_SECRET."""
     shift = cfg.shift
-    return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.chat_id, shift.topic_id, shift.ops_chat_id)
+    return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.destinations, shift.ops_chat_id)
 
 
 def _shift_llm(cfg):
