@@ -186,3 +186,13 @@ def test_without_ops_and_an_empty_list_nothing_is_sent():
     transport, logs = alert_run(())
     assert transport.calls == []
     assert any("not sent" in entry for entry in logs)
+
+
+def test_gateway_failure_while_alerting_still_raises_notion_unavailable_and_logs_no_ids():
+    clock, transport, conn = Clock(PM), FakeTransport(fail=True), connect()
+    prior(conn)
+    skipped, logs = go(conn, Outage(world(jo("j1")), clock), clock, transport)
+    assert isinstance(skipped, NotionUnavailable)
+    assert any("alert not sent" in line for line in logs)
+    for line in logs:
+        assert str(OPS) not in line and "shift-2026" not in line and "secret notion text" not in line

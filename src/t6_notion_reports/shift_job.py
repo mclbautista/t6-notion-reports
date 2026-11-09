@@ -274,4 +274,7 @@ def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=p
     minutes = int(RETRY_FOR.total_seconds() // 60)
     text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
     key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-alert"
-    target.send_alert(slot, text, key, log)
+    try:
+        target.send_alert(slot, text, key, log)
+    except GatewayError:
+        log(f"shift slot={slot} notion alert not sent: gateway rejected it")
