@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Sequence
 
 from .config import Destination
+from .gateway import GatewayError
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .contacts import load_contacts
@@ -59,24 +61,38 @@ def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
     return (moment - timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
 
 
+@dataclass(frozen=True)
+class DestinationResult:
+    """What sending one report to one destination did: the gateway ``message_ref`` of each queued part, in
+    part order, and whether the gateway rejected it (then ``refs`` holds only the parts queued before that)."""
+
+    destination: Destination
+    refs: tuple[int, ...]
+    rejected: bool
+
+
 class ShiftTarget:
     """Where reports go: a gateway client authenticated with SHIFT_SECRET, the destinations per slot, ``ops_chat_id``."""
 
     def __init__(self, gateway, destinations: Mapping[str, Sequence[Destination]], ops_chat_id: int | None = None):
         self.gateway, self.destinations, self.ops_chat_id = gateway, destinations, ops_chat_id
-
-    def first_destination(self, slot: str) -> Destination | None:
-        """Interim until the per-destination send (#86): the report goes to the first destination of the slot only."""
-        dests = self.destinations.get(slot, ())
-        return dests[0] if dests else None
+        # Slot code -> what the last send of that slot did, one entry per destination (for the delivery check, #88).
+        self.results: dict[str, tuple[DestinationResult, ...]] = {}
 
     def first_group(self, slot: str) -> Destination | None:
         return next((d for d in self.destinations.get(slot, ()) if not d.dm), None)
 
 
-def shift_keys(now: datetime, slot: str, parts: int) -> list[str]:
-    """``shift-<date>-<slot>`` for part 1, then ``-2``, ``-3``... The date is Asia/Manila."""
-    base = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}"
+def destination_tag(dest: Destination) -> str:
+    """``u<user id>`` for a DM, ``c<chat>`` or ``c<chat>t<topic>`` for a group. Only ever sent to the gateway."""
+    if dest.dm:
+        return f"u{dest.chat}"
+    return f"c{dest.chat}" if dest.topic is None else f"c{dest.chat}t{dest.topic}"
+
+
+def shift_keys(now: datetime, slot: str, parts: int, dest: Destination) -> list[str]:
+    """``shift-<date>-<slot>-<dest>`` for part 1, then ``-2``, ``-3``... The date is Asia/Manila."""
+    base = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-{destination_tag(dest)}"
     return [base] + [f"{base}-{n}" for n in range(2, parts + 1)]
 
 
@@ -128,8 +144,10 @@ def run_shift_report(
     received, processed, accomplished = report.counts.received, report.counts.processed, report.counts.accomplished
     unfinished = report.unfinished
     parts = len(report.messages)
-    # One line per run: counts only, never message text or secrets.
+    destinations = () if target is None else tuple(target.destinations.get(slot) or ())
+    # One line per run: counts only, never message text, ids, keys or secrets.
     log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
+        + ("" if target is None else f"destinations={len(destinations)} ") +
         f"unfinished={unfinished} received={received} processed={processed} "
         f"accomplished={accomplished} parts={parts} "
         f"summaries={stats.new} cached={stats.cached} fallback={stats.fallback}")
@@ -137,13 +155,25 @@ def run_shift_report(
         for number, text in enumerate(report.messages, 1):
             out(f"--- part {number}/{parts} ---\n{text}\n")
         return report
-    first = target.first_destination(slot)
-    if first is None:
+    if not destinations:
         log(f"shift slot={slot} has no destinations; not sent")
         return report
-    for key, text in zip(shift_keys(now, slot, parts), report.messages):
-        target.gateway.notify(first.chat, text, key, first.topic)
+    results = tuple(_send_to(target.gateway, d, report.messages, shift_keys(now, slot, parts, d)) for d in destinations)
+    target.results[slot] = results
+    if all(r.rejected for r in results):  # the gateway itself is down: say so, as a single-destination send always did
+        raise GatewayError(f"gateway rejected every destination of slot {slot}")
     return report
+
+
+def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence[str]) -> DestinationResult:
+    """Every part to one destination, in order. A rejection (after the client's retries) ends this destination only."""
+    refs: list[int] = []
+    for key, text in zip(keys, messages):
+        try:
+            refs.append(gateway.notify(dest.chat, text, key, dest.topic))
+        except GatewayError:
+            return DestinationResult(dest, tuple(refs), True)
+    return DestinationResult(dest, tuple(refs), False)
 
 
 def _llm_summarizer(notion: Notion, contacts_ds: str, current: JoSnapshot, llm: LlmClient) -> TaskSummarizer | None:

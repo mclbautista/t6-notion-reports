@@ -83,7 +83,7 @@ def test_recovery_inside_the_window_sends_the_normal_report_and_no_alert():
     notion = Outage(world(jo("j1")), clock, recover_at=PM + timedelta(minutes=10))
     skipped, _ = go(conn, notion, clock, transport)
     assert skipped is None
-    assert [c[2]["idempotency_key"] for c in transport.calls] == ["shift-2026-11-03-1900"]
+    assert [c[2]["idempotency_key"] for c in transport.calls] == [f"shift-2026-11-03-1900-c{CHAT}t{TOPIC}"]
     assert transport.calls[0][2]["to"] == CHAT
     assert PM + timedelta(minutes=10) <= clock.now < PM + timedelta(minutes=12)
 

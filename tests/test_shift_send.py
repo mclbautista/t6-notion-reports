@@ -18,6 +18,8 @@ from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 MNL = timezone(timedelta(hours=8))
 PM = datetime(2026, 11, 3, 19, tzinfo=MNL)
 CHAT, TOPIC = -100777, 9
+USER, USER2 = 100000001, 100000002
+DK1900 = f"shift-2026-11-03-1900-c{CHAT}t{TOPIC}"  # key of part 1 for the group destination
 PROJECTS_ID = "1" * 8 + "-1111-1111-1111-" + "1" * 12
 CONTACTS_ID = "2" * 8 + "-2222-2222-2222-" + "2" * 12
 
@@ -40,6 +42,11 @@ def target(transport, secret="shift-s3cret", topic=TOPIC):
     dest = (Destination(CHAT, topic),)
     return ShiftTarget(GatewayClient("http://gw:8780", secret, transport, sleep=lambda _: None),
                        {"0500": dest, "1130": dest, "1900": dest})
+
+
+def multi(transport, dests, secret="shift-s3cret", ops=None):
+    return ShiftTarget(GatewayClient("http://gw:8780", secret, transport, sleep=lambda _: None),
+                       {"0500": dests, "1130": dests, "1900": dests}, ops)
 
 
 def many(n):
@@ -65,7 +72,7 @@ def test_bearer_chat_topic_and_part_keys():
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
     assert {(c[2]["to"], c[2]["topic"]) for c in t.calls} == {(CHAT, TOPIC)}
     keys = [c[2]["idempotency_key"] for c in t.calls]
-    assert keys == ["shift-2026-11-03-1900"] + [f"shift-2026-11-03-1900-{n}" for n in range(2, len(keys) + 1)]
+    assert keys == [DK1900] + [f"{DK1900}-{n}" for n in range(2, len(keys) + 1)]
     for c in t.calls:
         assert c[2]["format"] == "html" and len(c[2]["text"]) <= 4096
         assert_valid_html(c[2]["text"])
@@ -75,19 +82,19 @@ def test_topic_is_optional():
     t = FakeTransport()
     send("0500", [], target(t, topic=None), when=datetime(2026, 11, 4, 5, tzinfo=MNL))
     assert "topic" not in t.calls[0][2]
-    assert t.calls[0][2]["idempotency_key"] == "shift-2026-11-04-0500"
+    assert t.calls[0][2]["idempotency_key"] == f"shift-2026-11-04-0500-c{CHAT}"
 
 
 def test_key_date_is_asia_manila_not_utc():
     t = FakeTransport()
     send("0500", [], target(t), when=datetime(2026, 11, 3, 22, tzinfo=timezone.utc))  # 06:00 on Nov 4 in Manila
-    assert t.calls[0][2]["idempotency_key"] == "shift-2026-11-04-0500"
+    assert t.calls[0][2]["idempotency_key"] == f"shift-2026-11-04-0500-c{CHAT}t{TOPIC}"
 
 
 def test_midshift_goes_through_the_same_path():
     t = FakeTransport()
     send("1130", [jo("j1", "1", "AE")], target(t), when=datetime(2026, 11, 3, 11, 30, tzinfo=MNL))
-    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1130"]
+    assert [c[2]["idempotency_key"] for c in t.calls] == [f"shift-2026-11-03-1130-c{CHAT}t{TOPIC}"]
 
 
 def test_sending_the_same_slot_twice_queues_nothing_new():
@@ -106,6 +113,104 @@ def test_gateway_failure_raises_after_retries_and_names_no_text_or_secret():
     assert "shift-s3cret" not in str(err.value) and "Secret task" not in str(err.value)
 
 
+# ---- destinations -------------------------------------------------------------------------------
+
+DM1, DM2, GROUP = Destination(USER, dm=True), Destination(USER2, dm=True), Destination(CHAT, TOPIC)
+
+
+class SelectiveTransport(FakeTransport):
+    """Rejects (503) every send addressed to ``reject``."""
+
+    def __init__(self, reject):
+        super().__init__()
+        self.reject = reject
+
+    def __call__(self, url, headers, body):
+        if body is not None and body["to"] in self.reject:
+            self.calls.append((url, headers, body))
+            return 503, None
+        return super().__call__(url, headers, body)
+
+
+def test_dm_has_no_topic_group_has_topic_and_keys_carry_the_destination():
+    t = FakeTransport()
+    send("1900", [jo("j1", "48", "TOC")], multi(t, (DM1, GROUP)))
+    assert [(c[2]["to"], c[2].get("topic"), c[2]["idempotency_key"]) for c in t.calls] == [
+        (USER, None, f"shift-2026-11-03-1900-u{USER}"),
+        (CHAT, TOPIC, f"shift-2026-11-03-1900-c{CHAT}t{TOPIC}")]
+    assert "topic" not in t.calls[0][2]
+
+
+def test_every_part_goes_to_every_destination_in_config_order_and_a_rerun_repeats_the_keys():
+    t = FakeTransport()
+    tgt = multi(t, (DM2, DM1, GROUP))
+    conn, _ = send("1900", many(40), tgt)
+    n = len(t.calls) // 3
+    assert n > 1
+    sent = [(c[2]["to"], c[2]["idempotency_key"]) for c in t.calls]
+    expect = []
+    for d, tag in ((USER2, f"u{USER2}"), (USER, f"u{USER}"), (CHAT, f"c{CHAT}t{TOPIC}")):
+        base = f"shift-2026-11-03-1900-{tag}"
+        expect += [(d, base)] + [(d, f"{base}-{k}") for k in range(2, n + 1)]
+    assert sent == expect
+    texts = [c[2]["text"] for c in t.calls]
+    assert texts[:n] == texts[n:2 * n] == texts[2 * n:]
+    first = dict(t.queued)
+    send("1900", many(40), tgt, conn=conn)
+    assert t.queued == first and [c[2]["idempotency_key"] for c in t.calls[3 * n:]] == [k for _, k in expect]
+
+
+def test_each_slot_goes_only_to_its_own_list():
+    t = FakeTransport()
+    tgt = ShiftTarget(GatewayClient("http://gw:8780", "s", t, sleep=lambda _: None),
+                      {"1130": (GROUP,), "1900": (DM1,), "0500": (DM2,)})
+    send("1900", [], tgt)
+    assert {c[2]["to"] for c in t.calls} == {USER}
+    t.calls.clear()
+    send("0500", [], tgt, when=datetime(2026, 11, 4, 5, tzinfo=MNL))
+    assert {c[2]["to"] for c in t.calls} == {USER2}
+
+
+@pytest.mark.parametrize("dests", [(), None])
+def test_empty_or_missing_list_sends_nothing_and_logs_one_skip_line(dests):
+    t, logs = FakeTransport(), []
+    tgt = ShiftTarget(GatewayClient("http://gw:8780", "s", t, sleep=lambda _: None), {} if dests is None else {"1900": ()})
+    send("1900", [jo("j1", "48", "TOC")], tgt, logs=logs)
+    assert t.calls == []
+    assert [line for line in logs if "no destinations" in line] == ["shift slot=1900 has no destinations; not sent"]
+
+
+def test_a_rejected_destination_does_not_stop_the_others_and_is_recorded():
+    t, logs = SelectiveTransport({USER}), []
+    tgt = multi(t, (DM1, DM2, GROUP))
+    send("1900", many(40), tgt, logs=logs)
+    by = {}
+    for c in t.calls:
+        by.setdefault(c[2]["to"], []).append(c[2]["idempotency_key"])
+    parts = len(by[CHAT])
+    assert parts > 1 and len(by[USER2]) == parts
+    assert all(c[2]["to"] != USER or c[2]["idempotency_key"] == f"shift-2026-11-03-1900-u{USER}" for c in t.calls)
+    assert len(logs) == 1 and "destinations=3" in logs[0]
+
+
+def test_results_per_destination_for_the_delivery_check():
+    t = SelectiveTransport({USER})
+    tgt = multi(t, (DM1, GROUP))
+    send("1900", many(40), tgt)
+    first, second = tgt.results["1900"]
+    assert first.destination == DM1 and first.rejected and first.refs == ()
+    assert second.destination == GROUP and not second.rejected
+    assert list(second.refs) == [t.queued[c[2]["idempotency_key"]] for c in t.calls if c[2]["to"] == CHAT]
+
+
+def test_whole_gateway_down_still_raises_after_recording_every_destination():
+    t = FakeTransport(fail=True)
+    tgt = multi(t, (DM1, GROUP))
+    with pytest.raises(GatewayError):
+        send("1900", [jo("j1", "48", "TOC")], tgt)
+    assert len(t.calls) == 8 and all(r.rejected for r in tgt.results["1900"])
+
+
 # ---- banner and log -----------------------------------------------------------------------------
 
 @pytest.mark.parametrize("banner", [True, False])
@@ -120,9 +225,10 @@ def test_log_line_has_counts_only():
     t, logs = FakeTransport(), []
     send("1900", [jo("j1", "48", "TOC", task="Secret task")], target(t), logs=logs)
     assert len(logs) == 1 and logs[0].startswith("shift slot=1900 snapshot=")
-    for field in ("baseline=", "unfinished=1", "received=", "processed=", "accomplished=", "parts=1"):
+    for field in ("destinations=1", "baseline=", "unfinished=1", "received=", "processed=", "accomplished=", "parts=1"):
         assert field in logs[0]
     assert "Secret task" not in logs[0] and "shift-s3cret" not in logs[0]
+    assert str(CHAT) not in logs[0] and "shift-2026" not in logs[0]
 
 
 # ---- config -------------------------------------------------------------------------------------
@@ -223,7 +329,7 @@ def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_t
     t, logs, now = FakeTransport(), [], [PM]
     job = cli.make_job(None, fake, cfg, None, lambda: now[0], shift_target=target(t))
     job("shift1900")
-    assert [c[2]["idempotency_key"] for c in t.calls] == ["shift-2026-11-03-1900"]
+    assert [c[2]["idempotency_key"] for c in t.calls] == [DK1900]
     assert {c[1]["Authorization"] for c in t.calls} == {"Bearer shift-s3cret"}
     # Same slot again on the same day: same key, nothing new queued.
     job("shift1900")
