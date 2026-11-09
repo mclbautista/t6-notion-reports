@@ -33,7 +33,7 @@ DATE_KEYS = {PLAYDATE: "playdate", SUBMISSION: "submission_deadline", ARCHIVAL: 
 _PROPERTY_BY_KEY = {key: name for name, key in DATE_KEYS.items()}
 
 SYSTEM = """You help a post-production coordinator prepare for the weekly PSR meeting on one project. You are given the project, its dated PM Notes lines (each with an id), what changed since the last brief and since the last PSR, and the project's lines from the latest PSR Minutes. Today's date is given.
-Use only what is in the payload. Never invent a fact, a date or a name. Every date, number, episode and capitalised word you write in a "text" must already appear in the payload, so start a sentence with a word from the payload.
+Use only what is in the payload. Never invent a fact, a date or a name. Every date, number, episode and name you write in a "text" must be supported by its cited line. Do not borrow facts from other lines or metadata; start a sentence with a word from the cited line.
 
 1. last_update: pick the PM Notes "As of" header that marks the project's real last update. Headers have typos ("Seep", "Oct 26.,"); read them sensibly. Cite the header's line_id and give its date as as_of_date. If no header makes sense, return null.
 2. changes: short phrases (a few words, Taglish is fine) for what changed. Merge the snapshot changes, the PM Notes and the Minutes into one list. Each change needs a source. Set after_psr true only for changes newer than the Monday snapshot (window since_psr).
@@ -43,6 +43,10 @@ Use only what is in the payload. Never invent a fact, a date or a name. Every da
    - stale_milestone: a dated milestone in the notes is already past and no later line mentions it.
    - source_conflict: two sources disagree and you cannot tell which is newer.
    Every concern needs a source (pm_notes or minutes), a line_id and an exact quote.
+   For source_conflict or health_vs_evidence comparisons that use other lines, include supporting_citations:
+   [{"source": "pm_notes", "line_id": 1, "quote": "exact line"}]. Supporting sources may also be minutes or
+   snapshot. Every fact must come from the primary line or these explicitly cited lines; health comparisons
+   may also use project_health. Do not borrow facts from uncited lines.
 4. dates_from_notes: for each property in blank_date_properties, look for its date in the PM Notes. Give iso_date (YYYY-MM-DD) when the line states a precise day, otherwise fuzzy_text copied exactly from the line (for example "Q2 2027"). Cite the line_id and an exact quote. Return nothing for a property the notes do not state, and never for a property that is not in blank_date_properties.
 
 When sources disagree, prefer the newest by its timestamp (minutes.last_edited, the end of a snapshot window, the PM Notes "As of" date). Raise source_conflict only when you cannot tell which source is newer.
@@ -64,12 +68,19 @@ class Change(BaseModel):
     after_psr: bool = False
 
 
+class Citation(BaseModel):
+    source: str
+    line_id: int
+    quote: str
+
+
 class Concern(BaseModel):
     kind: str = ""
     text: str = ""
     source: str = ""
     line_id: int | None = None
     quote: str | None = None
+    supporting_citations: list[Citation] = []
 
 
 class DateFromNotes(BaseModel):
@@ -200,8 +211,9 @@ def build_payload(
     redactor: Redactor = Redactor(),
     page_id: str = "",
 ) -> Payload:
-    """The payload for one project. Nothing about other projects, people or Notion ids goes in:
-    the PM Notes and Minutes lines pass through ``redactor`` first (see redact.py).
+    """The payload for one project. Known identities and identifiers in free text are protected:
+    the PM Notes and Minutes lines pass through ``redactor`` first (see its approved #94 boundary).
+    The target project identity remains available; unknown names may remain in source text.
 
     ``minutes_meta`` holds the minutes page's date, last-edited time and Sent at; it is sent only with
     lines about this project.
@@ -219,8 +231,8 @@ def build_payload(
         "today": today.isoformat(),
         "project": {
             "name": squash(str(state.get("Name") or "")),
-            "stage": squash(str(state.get("Stage") or "")) or None,
-            "status": squash(str(state.get("Status") or "")) or None,
+            "stage": hide(squash(str(state.get("Stage") or ""))) or None,
+            "status": hide(squash(str(state.get("Status") or ""))) or None,
             "project_health": hide(squash(str(state.get("Project Health") or ""))) or None,
         },
         "dates": {key: (dates[name].isoformat() if dates[name] else None) for name, key in DATE_KEYS.items()},
@@ -348,7 +360,7 @@ def validate(reply: Consolidation, payload: Payload, today: date) -> Outcome:
     for item, restored in items["concerns"]:
         if item.kind not in CONCERN_KINDS or (item.kind == "health_vs_evidence" and not health):
             continue
-        if _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=False):
+        if _concern_ok(payload, item):
             concerns.append(squash(restored.text))
     dates = _note_dates(items["dates_from_notes"], payload)
     return Outcome(
@@ -368,15 +380,34 @@ def restore_consolidation(reply: Consolidation, mapping: Mapping) -> tuple[dict[
     for name in _ITEM_TYPES:
         result[name] = []
         for item in getattr(reply, name):
-            canonical = {key: mapping.canonicalize(value) if isinstance(value, str) else value
-                         for key, value in item.model_dump().items()}
-            restored = {key: mapping.restore(value) if isinstance(value, str) else value
-                        for key, value in canonical.items()}
-            if any(unresolved(value) for value in restored.values() if isinstance(value, str)):
+            canonical = _map_strings(item.model_dump(), mapping.canonicalize)
+            restored = _map_strings(canonical, mapping.restore)
+            if any(unresolved(value) for value in _strings(restored)):
                 dropped = True
                 continue
             result[name].append((type(item)(**canonical), type(item)(**restored)))
     return result, dropped
+
+
+def _map_strings(value, transform):
+    if isinstance(value, str):
+        return transform(value)
+    if isinstance(value, dict):
+        return {key: _map_strings(item, transform) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_map_strings(item, transform) for item in value]
+    return value
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
 
 
 def _note_dates(items: list[tuple[DateFromNotes, DateFromNotes]], payload: Payload) -> tuple[NoteDate, ...]:
@@ -405,13 +436,38 @@ def _note_dates(items: list[tuple[DateFromNotes, DateFromNotes]], payload: Paylo
 
 def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quote: str | None, snapshot_ok: bool) -> bool:
     """Every item cites a real line of its source and quotes it exactly; a snapshot change cites a snapshot line."""
-    if not squash(text) or source not in SOURCES or (source == "snapshot" and not snapshot_ok):
+    if not squash(text) or not _citation_ok(payload, source, line_id, quote, snapshot_ok):
         return False
-    line = payload.lines.get(line_id) if line_id is not None else None
-    if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
-        return False
+    line = payload.lines[line_id]
     # A known name in any case is ungrounded too: the payload never holds one (redact.py).
-    return ungrounded(text, payload.facts, date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
+    return ungrounded(text, _facts({"line": line.text}), date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
+
+
+def _concern_ok(payload: Payload, item: Concern) -> bool:
+    """Comparisons may combine only explicitly cited evidence, never arbitrary payload facts."""
+    comparison = item.kind in {"source_conflict", "health_vs_evidence"}
+    if item.supporting_citations and not comparison:
+        return False
+    if not _citation_ok(payload, item.source, item.line_id, item.quote, snapshot_ok=False):
+        return False
+    evidence = [payload.lines[item.line_id].text]
+    for citation in item.supporting_citations:
+        if not _citation_ok(payload, citation.source, citation.line_id, citation.quote, snapshot_ok=True):
+            return False
+        evidence.append(payload.lines[citation.line_id].text)
+    if item.kind == "health_vs_evidence":
+        evidence.append(str(payload.data["project"]["project_health"] or ""))
+    return bool(squash(item.text)) and ungrounded(
+        item.text, _facts({"evidence": evidence}), date.fromisoformat(payload.data["today"])
+    ) is None and payload.redactor.names_in(item.text, payload.page_id) is None
+
+
+def _citation_ok(payload: Payload, source: str, line_id: int | None, quote: str | None,
+                 snapshot_ok: bool) -> bool:
+    line = payload.lines.get(line_id) if line_id is not None else None
+    return (source in SOURCES and (source != "snapshot" or snapshot_ok)
+            and line is not None and line.origin == source and bool(quote)
+            and _bare(quote) == _bare(line.text))
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:

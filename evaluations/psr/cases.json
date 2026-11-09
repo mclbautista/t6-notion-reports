@@ -1,0 +1,324 @@
+{
+  "status": "DRAFT: human review pending; live evaluation not run",
+  "today": "2026-11-16",
+  "cases": [
+    {
+      "id": "open-pending",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Pending client approval",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Pending client approval",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "open-tbc",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Delivery date TBC",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Delivery date TBC",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "open-waiting",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Waiting for client feedback",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Waiting for client feedback",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "open-confirm",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Confirm delivery format",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Confirm delivery format",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "open-follow-up",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Follow up on missing files",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Follow up on missing files",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "open-taglish",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Pending pa ang client approval; follow up bukas",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "open_item"
+        ],
+        "citation": "Pending pa ang client approval; follow up bukas",
+        "review": "One fluent actionable sentence; preserve the language and unresolved status."
+      }
+    },
+    {
+      "id": "health-on-track",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Delivery slipped from Nov 16 to Nov 20, 2026",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "health_vs_evidence"
+        ],
+        "citation": "Delivery slipped from Nov 16 to Nov 20, 2026",
+        "review": "Explain the health/evidence contradiction; open_item may also apply."
+      }
+    },
+    {
+      "id": "health-incoming",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Online blocked by missing files",
+      "health": "INCOMING",
+      "expected": {
+        "kinds": [
+          "health_vs_evidence"
+        ],
+        "citation": "Online blocked by missing files",
+        "review": "Explain the health/evidence contradiction; open_item may also apply."
+      }
+    },
+    {
+      "id": "health-stale-critical",
+      "issue": 97,
+      "notes": "As of Oct 20, 2026\n\u2022 Grade started",
+      "health": "CRITICAL",
+      "expected": {
+        "kinds": [
+          "health_vs_evidence"
+        ],
+        "citation": "Grade started",
+        "review": "Identify lack of an update for over two weeks, without inventing progress."
+      }
+    },
+    {
+      "id": "health-stale-at-risk",
+      "issue": 97,
+      "notes": "As of Oct 20, 2026\n\u2022 Grade started",
+      "health": "AT RISK",
+      "expected": {
+        "kinds": [
+          "health_vs_evidence"
+        ],
+        "citation": "Grade started",
+        "review": "Identify lack of an update for over two weeks, without inventing progress."
+      }
+    },
+    {
+      "id": "forgotten-milestone",
+      "issue": 97,
+      "notes": "As of Nov 2, 2026\n\u2022 Delivery scheduled Nov 5, 2026",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [
+          "stale_milestone"
+        ],
+        "citation": "Delivery scheduled Nov 5, 2026",
+        "review": "Past milestone lacks a subsequent mention; do not assert it was missed."
+      }
+    },
+    {
+      "id": "milestone-mentioned-later",
+      "issue": 97,
+      "notes": "As of Nov 2, 2026\n\u2022 Delivery scheduled Nov 5, 2026\nAs of Nov 6, 2026\n\u2022 Delivery completed Nov 5, 2026",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "stale_milestone",
+          "open_item",
+          "health_vs_evidence",
+          "source_conflict"
+        ],
+        "review": "Later completion resolves the dated milestone."
+      }
+    },
+    {
+      "id": "resolved-action",
+      "issue": 97,
+      "notes": "As of Nov 10, 2026\n\u2022 Pending client approval\nAs of Nov 14, 2026\n\u2022 Client approval received",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "open_item",
+          "health_vs_evidence",
+          "source_conflict",
+          "stale_milestone"
+        ],
+        "review": "Do not revive the older pending item."
+      }
+    },
+    {
+      "id": "healthy-negative",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Grade completed; delivery scheduled Nov 20, 2026",
+      "health": "ON TRACK",
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "open_item",
+          "health_vs_evidence",
+          "stale_milestone",
+          "source_conflict"
+        ],
+        "review": "Future milestone and completed work do not create a Concern."
+      }
+    },
+    {
+      "id": "risk-recent-negative",
+      "issue": 97,
+      "notes": "As of Nov 14, 2026\n\u2022 Grade started",
+      "health": "AT RISK",
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "health_vs_evidence",
+          "source_conflict",
+          "stale_milestone",
+          "open_item"
+        ],
+        "review": "AT RISK with recent activity is not the stale-health case."
+      }
+    },
+    {
+      "id": "recency-pm_notes",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 15, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": "2026-11-10T12:00:00+08:00",
+      "minutes_edited": "2026-11-10T12:00:00+08:00",
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "source_conflict"
+        ],
+        "newest": "pm_notes",
+        "winning_value": "Nov 20",
+        "review": "Accepted delivery change must cite the exact winning source line; do not present the superseded date as current."
+      }
+    },
+    {
+      "id": "recency-snapshot",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 9, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": "2026-11-14T12:00:00+08:00",
+      "minutes_edited": "2026-11-10T12:00:00+08:00",
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "source_conflict"
+        ],
+        "newest": "snapshot",
+        "winning_value": "2026-11-21",
+        "review": "Accepted delivery change must cite the exact winning source line; do not present the superseded date as current."
+      }
+    },
+    {
+      "id": "recency-minutes",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 9, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": "2026-11-10T12:00:00+08:00",
+      "minutes_edited": "2026-11-14T12:00:00+08:00",
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [],
+        "forbidden": [
+          "source_conflict"
+        ],
+        "newest": "minutes",
+        "winning_value": "Nov 22",
+        "review": "Accepted delivery change must cite the exact winning source line; do not present the superseded date as current."
+      }
+    },
+    {
+      "id": "recency-equal",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 14, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": "2026-11-14T00:00:00+08:00",
+      "minutes_edited": "2026-11-14T00:00:00+08:00",
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [
+          "source_conflict"
+        ],
+        "review": "Recency cannot be resolved from a date-only PM Notes header versus same-day timestamps, or unavailable/equal source times. Cite PM Notes or Minutes, and do not choose a winner. Human reviewer must confirm this ambiguity policy before live evaluation."
+      }
+    },
+    {
+      "id": "recency-missing",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 14, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": null,
+      "minutes_edited": null,
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [
+          "source_conflict"
+        ],
+        "review": "Recency cannot be resolved from a date-only PM Notes header versus same-day timestamps, or unavailable/equal source times. Cite PM Notes or Minutes, and do not choose a winner. Human reviewer must confirm this ambiguity policy before live evaluation."
+      }
+    },
+    {
+      "id": "recency-same-day-precision",
+      "issue": 98,
+      "health": "ON TRACK",
+      "notes": "As of Nov 14, 2026\n\u2022 Submission deadline scheduled Nov 20, 2026",
+      "snapshot_end": "2026-11-14T00:00:00+08:00",
+      "minutes_edited": "2026-11-14T12:00:00+08:00",
+      "minutes": [
+        "\u2022 Submission deadline scheduled Nov 22, 2026"
+      ],
+      "expected": {
+        "kinds": [
+          "source_conflict"
+        ],
+        "review": "Recency cannot be resolved from a date-only PM Notes header versus same-day timestamps, or unavailable/equal source times. Cite PM Notes or Minutes, and do not choose a winner. Human reviewer must confirm this ambiguity policy before live evaluation."
+      }
+    }
+  ]
+}

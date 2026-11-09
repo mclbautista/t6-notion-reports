@@ -104,6 +104,15 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   prefixed with their @handle, and the digest says so.
 - Idempotency keys are `notion-reports-<date>-<contact id>` for each coordinator and `psr-digest-<date>` for the digest (`psr-digest-<date>-<contact id>` when there is more than one digest recipient), so a same-day rerun
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
+- **PSR message splitting policy (owner approved for #96):** normal messages split only between
+  complete projects. A new part repeats the coordinator (in the digest) and section heading, marking
+  an already-started section `(cont.)`. The approved exception to #40's project-only boundary rule
+  is a single project that exceeds the message limit: preserve all content and continue it under its
+  project identity and section, both marked `(cont.)`, plus its coordinator in the digest. Split at
+  lines first; an oversized line splits at words, or characters for an unbroken word, preserving valid
+  HTML and the same context on every fragment. Digest warnings and tails continue under the digest
+  title `(cont.)`, never as untitled messages. Every part, including repeated context and any test
+  banner, stays within Telegram's 4096-character limit.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
 - **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
@@ -111,11 +120,27 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
   relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
   date, the property changes since the last brief and since the PSR, and the project's lines from the latest
-  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at). Never other projects,
-  team or contact names, Telegram ids or Notion ids. The reply is structured: `last_update`, `changes` and
+  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at).
+  **Free-text privacy policy (owner approved for #94):** redact known Contacts names, aliases and handles,
+  known contact/project page ids, Telegram identifiers/links, Notion identifiers/links, and known references
+  to other snapshot projects before sending free text, including bracketed and punctuated values.
+  Full contact names and aliases match in every casing even when they are ordinary words: a known
+  name or alias `Will` also hides the verb `will`. This sacrifices some useful language to protect known
+  identities. Partial name words and project codes that are ordinary words retain their existing
+  capitalized/all-capitals matching rule, so ambiguous lowercase ordinary language can remain.
+  The target project's own identity remains available. **Limitation:** unknown names absent from Contacts,
+  unknown other-project names absent from the snapshots, and ambiguous lowercase partial-name words
+  cannot reliably be identified and may remain; this is a known-values boundary, not universal name detection.
+  Local numbered placeholders protect outbound text; grounding checks the exact protected source quotes,
+  then accepted output restores names locally (identifiers stay hidden). The reply is structured: `last_update`, `changes` and
   `concerns`. Code checks each item on its own: the quote must be the cited line (ignoring bullet marks and
-  whitespace) and every date, number, episode and capitalised word must be in the payload; a failing item is
-  dropped. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
+  whitespace) and facts must be grounded in that cited line; a failing item is dropped.
+  A `source_conflict` or `health_vs_evidence` Concern may include `supporting_citations` with exact source,
+  line id and quote for each additional evidence line (including snapshot lines). Only those explicitly
+  cited lines may supply comparison facts; health comparisons may also use `project_health`. Other
+  Concern kinds and changes remain scoped to their primary line. ISO dates may be paraphrased with month
+  names while preserving their written year. These checks enforce evidence provenance, not the semantic
+  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
   the Concern store. A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
   update; otherwise Notion's last-edited time does.
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",

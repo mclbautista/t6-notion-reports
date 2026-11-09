@@ -171,3 +171,20 @@ def test_a_precise_date_from_notes_is_checked_for_order_and_a_fuzzy_one_is_not()
     assert len(concerns) == 1 and "Submission Deadline (Dec 1, 2026) is before Playdate (Dec 20, 2026)" in concerns[0]
     text = text_of(reply={"dates_from_notes": fuzzy()}, **{"Submission Deadline": date("2026-12-20")})
     assert "is before" not in text
+
+
+def test_bad_note_date_siblings_do_not_hide_the_valid_complete_date():
+    notes = "As of Nov 9\n• Submission Dec 1, 2026, playdate Q2 2027"
+    quote = notes.splitlines()[1]
+
+    def dates(p):
+        valid = {"property": "submission_deadline", "iso_date": "2026-12-01",
+                 "line_id": line_id(p, "Submission Dec"), "quote": quote}
+        return [{**valid, "quote": "invented quote"},
+                {**valid, "line_id": 999},
+                {**valid, "iso_date": "2027-12-01"},
+                {**valid, "iso_date": ["2026-12-01"]}, valid]
+
+    text = text_of(reply={"dates_from_notes": dates}, notes=notes, Playdate=date("2026-12-20"))
+    assert "Submission Deadline (from PM Notes): Dec 1, 2026 · not in property" in text
+    assert "Dec 1, 2027" not in text

@@ -72,3 +72,14 @@ def test_a_year_the_header_writes_is_kept_and_iso_headers_are_read():
     notes = parse_pm_notes("As of Nov 1, 2024\n- old\nAs of 2025-03-04\n- iso\nAs of Oct 20 2026: tail", SNAP)
     assert [b.header_date for b in notes.blocks] == [date(2024, 11, 1), date(2025, 3, 4), date(2026, 10, 20)]
     assert notes.blocks[2].bullets == ["tail"]
+
+
+def test_ordinal_headers_and_date_extraction_agree_on_the_written_year():
+    from t6_notion_reports.dates import days
+    for text, expected in (("Nov 1st, 2024", date(2024, 11, 1)),
+                           ("Nov 1ST, 2024", date(2024, 11, 1)),
+                           ("Nov 1st, 1999", date(1999, 11, 1))):
+        block = parse_pm_notes(f"As of {text}: locked", SNAP).blocks[0]
+        assert block.header_date == expected
+        assert block.bullets == ["locked"]
+        assert days(text, SNAP) == {expected}

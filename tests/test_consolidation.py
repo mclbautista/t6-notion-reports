@@ -552,9 +552,10 @@ def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
 
 
 # ---- redaction contract: identity and id variants (#62 item 4) --------------------------------
-# Exposure boundary (recommended, pending Cyril's approval): a name or project code that is not an
-# ordinary word is hidden in any case; one that is an ordinary word (will, two) only as written
-# capitalised or in capitals. Every known TelegramUserID is hidden wherever it stands as a number.
+# Approved #94 boundary: partial name words and project codes that are not ordinary words match
+# in every case; ordinary partial words/codes match capitalised or in capitals. Full contact names
+# and aliases match in every casing, including ordinary words. See test_llm_privacy_boundary.py.
+# Known TelegramUserIDs are hidden as numbers, including next to punctuation.
 
 def variants_db(notes, extra_people=()):
     from fake_notion import contact as page_of
@@ -615,3 +616,66 @@ def test_a_block_whose_header_has_no_date_is_kept_only_among_the_latest_blocks()
     llm = Llm()
     run(conn_one(held), llm, brief=replace(BRIEF, pm_notes_weeks=4))
     assert "• Launch H1 2027" in [r["text"] for r in llm.payloads[0]["pm_notes"]]
+
+
+@pytest.mark.parametrize("weeks", [52, 4])
+@pytest.mark.parametrize("future", [
+    "Dec 2nd, 2027", "2 December 2027", "2027-12-02", "12/2/2027",
+    "July 2027", "Q2 2027", "2027 Q4", "H1 2027", "2027 H2", "2H 2027",
+    "early 2027", "mid-2027", "end of 2027", "summer 2027", "winter 2026",
+])
+def test_old_future_blocks_have_an_exact_payload_at_each_history_window(weeks, future):
+    header = "As of Aug 3rd, 2024"
+    bullet = f"Launch {future}"
+    llm = Llm()
+    run(conn_one(f"{header}\n• {bullet}\nAs of Nov 1st, 2024\n• Offline locked"), llm,
+        brief=replace(BRIEF, pm_notes_weeks=weeks))
+    assert llm.payloads[0]["pm_notes"] == [
+        {"line_id": 1, "block": header, "text": header},
+        {"line_id": 2, "block": header, "text": f"• {bullet}"},
+    ]
+
+
+@pytest.mark.parametrize("weeks", [52, 4])
+@pytest.mark.parametrize("header", ["Nov 1st, 2024", "Nov 1ST, 2024", "Nov 1st, 1999"])
+@pytest.mark.parametrize("bullet", ["Offline locked", "Screening Dec 2", "Launch summer 2024",
+                                     "Launch H1 2025", "Launch end of 2024"])
+def test_old_explicit_year_blocks_with_no_future_period_have_an_empty_payload(weeks, header, bullet):
+    llm = Llm()
+    run(conn_one(f"As of {header}\n• {bullet}"), llm, brief=replace(BRIEF, pm_notes_weeks=weeks))
+    assert llm.payloads[0]["pm_notes"] == []
+
+
+@pytest.mark.parametrize("field", ["changes", "concerns"])
+@pytest.mark.parametrize("borrowed", ["QC waiting for zyxmarco", "QC on Nov 21, 2027", "QC on Nov 20, 2027"])
+def test_facts_from_another_line_cannot_support_a_citation(field, borrowed):
+    notes = ("As of Nov 9\n• QC on Nov 20, 2026, waiting for client notes\n"
+             "• Delivery Nov 21, 2027, zyxmarco confirmed")
+    quote = notes.splitlines()[1]
+
+    def reply(p):
+        cite = {"source": "pm_notes", "line_id": line_id(p, "QC on"), "quote": quote}
+        extra = {"kind": "open_item"} if field == "concerns" else {}
+        return {field: [{**cite, **extra, "text": borrowed},
+                        {**cite, **extra, "text": "QC waiting for client notes"}]}
+
+    gw, _ = run(conn_one(notes), Llm(reply))
+    text = dm(gw)
+    assert "QC waiting for client notes" in text
+    assert borrowed not in text
+
+
+def test_a_restorable_name_token_from_another_line_is_not_evidence():
+    notes = "As of Nov 9\n• QC waiting for client notes\n• Oto confirmed delivery"
+
+    def reply(p):
+        qc = next(r for r in p["pm_notes"] if "QC waiting" in r["text"])
+        other = next(r for r in p["pm_notes"] if "confirmed delivery" in r["text"])
+        token = re.search(r"\[person \d+\]", other["text"])[0]
+        cite = {"source": "pm_notes", "line_id": qc["line_id"], "quote": qc["text"]}
+        return {"changes": [{**cite, "text": f"QC waiting for {token}"},
+                            {**cite, "text": "QC waiting for client notes"}]}
+
+    gw, _ = run(conn_one(notes), Llm(reply))
+    assert "QC waiting for client notes" in dm(gw)
+    assert "QC waiting for Oto" not in dm(gw)
