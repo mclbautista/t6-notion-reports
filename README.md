@@ -120,8 +120,19 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
   relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
   date, the property changes since the last brief and since the PSR, and the project's lines from the latest
-  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at). Never other projects,
-  team or contact names, Telegram ids or Notion ids. The reply is structured: `last_update`, `changes` and
+  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at).
+  **Free-text privacy policy (owner approved for #94):** redact known Contacts names, aliases and handles,
+  known contact/project page ids, Telegram identifiers/links, Notion identifiers/links, and known references
+  to other snapshot projects before sending free text, including bracketed and punctuated values.
+  Full contact names and aliases match in every casing even when they are ordinary words: a known
+  name or alias `Will` also hides the verb `will`. This sacrifices some useful language to protect known
+  identities. Partial name words and project codes that are ordinary words retain their existing
+  capitalized/all-capitals matching rule, so ambiguous lowercase ordinary language can remain.
+  The target project's own identity remains available. **Limitation:** unknown names absent from Contacts,
+  unknown other-project names absent from the snapshots, and ambiguous lowercase partial-name words
+  cannot reliably be identified and may remain; this is a known-values boundary, not universal name detection.
+  Local numbered placeholders protect outbound text; grounding checks the exact protected source quotes,
+  then accepted output restores names locally (identifiers stay hidden). The reply is structured: `last_update`, `changes` and
   `concerns`. Code checks each item on its own: the quote must be the cited line (ignoring bullet marks and
   whitespace) and every date, number, episode and capitalised word must be in the payload; a failing item is
   dropped. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through

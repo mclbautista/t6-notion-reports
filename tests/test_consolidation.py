@@ -552,9 +552,10 @@ def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
 
 
 # ---- redaction contract: identity and id variants (#62 item 4) --------------------------------
-# Exposure boundary (recommended, pending Cyril's approval): a name or project code that is not an
-# ordinary word is hidden in any case; one that is an ordinary word (will, two) only as written
-# capitalised or in capitals. Every known TelegramUserID is hidden wherever it stands as a number.
+# Approved #94 boundary: partial name words and project codes that are not ordinary words match
+# in every case; ordinary partial words/codes match capitalised or in capitals. Full contact names
+# and aliases match in every casing, including ordinary words. See test_llm_privacy_boundary.py.
+# Known TelegramUserIDs are hidden as numbers, including next to punctuation.
 
 def variants_db(notes, extra_people=()):
     from fake_notion import contact as page_of

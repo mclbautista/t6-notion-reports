@@ -200,8 +200,9 @@ def build_payload(
     redactor: Redactor = Redactor(),
     page_id: str = "",
 ) -> Payload:
-    """The payload for one project. Nothing about other projects, people or Notion ids goes in:
-    the PM Notes and Minutes lines pass through ``redactor`` first (see redact.py).
+    """The payload for one project. Known identities and identifiers in free text are protected:
+    the PM Notes and Minutes lines pass through ``redactor`` first (see its approved #94 boundary).
+    The target project identity remains available; unknown names may remain in source text.
 
     ``minutes_meta`` holds the minutes page's date, last-edited time and Sent at; it is sent only with
     lines about this project.
@@ -219,8 +220,8 @@ def build_payload(
         "today": today.isoformat(),
         "project": {
             "name": squash(str(state.get("Name") or "")),
-            "stage": squash(str(state.get("Stage") or "")) or None,
-            "status": squash(str(state.get("Status") or "")) or None,
+            "stage": hide(squash(str(state.get("Stage") or ""))) or None,
+            "status": hide(squash(str(state.get("Status") or ""))) or None,
             "project_health": hide(squash(str(state.get("Project Health") or ""))) or None,
         },
         "dates": {key: (dates[name].isoformat() if dates[name] else None) for name, key in DATE_KEYS.items()},

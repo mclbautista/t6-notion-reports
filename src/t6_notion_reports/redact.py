@@ -8,13 +8,16 @@ afterwards so the brief reads normally.
 
 What counts as a person: every Contacts name, each word of it (three letters or more, and not a month
 name), each alias, and each Telegram handle. What counts as a project, other than the one the payload
-is about: the name of any project in the snapshots (four letters or more, ignoring case), and the code
-of any project in them (two characters or more). Ids: Notion links and page ids, Telegram links
+is about: the name and code of any project in the snapshots, including short values.
+Ids: known contact/project page ids, Notion links and page ids, Telegram links
 (t.me and tg://), any @handle, runs of seven or more digits (Telegram ids, phone numbers) even when a
 full stop or comma follows, and every known TelegramUserID wherever it stands as a number.
 Matching is by whole word, longest first.
 
-Exposure boundary (#62): a name word or a project code that is not an ordinary word is hidden in any
+Approved exposure boundary (#94): known full contact names and aliases are hidden in every casing,
+including ordinary words (so a known full name or alias "Will" also hides the verb "will"). Unknown
+names cannot be reliably recognized and may remain. The target project's identity stays available.
+A partial name word or project code that is not an ordinary word is hidden in any
 case ("dario", "DARIO", "ab"). One that is an ordinary word ("Will", "Joy", a code such as "TWO") is hidden
 only as written capitalised or in capitals, since hiding "will" or "two" everywhere would blank the notes.
 The ordinary words are the lists in ``condense`` plus ``EXTRA_ORDINARY``.
@@ -100,7 +103,7 @@ class Redactor:
     people: tuple[tuple[str, bool], ...] = ()  # (name, loose): loose matches in any case, else as written capitalised
     projects: tuple[tuple[str, str], ...] = ()  # (project page id, a name of it), matched ignoring case
     codes: tuple[tuple[str, str, bool], ...] = ()  # (project page id, its code, loose)
-    known_ids: tuple[str, ...] = ()  # every known TelegramUserID, hidden wherever it stands as a number
+    known_ids: tuple[str, ...] = ()  # known TelegramUserIDs and contact/project page ids
 
     @classmethod
     def build(
@@ -108,25 +111,32 @@ class Redactor:
     ) -> Redactor:
         """``states``: the snapshots, so an old name of a project is caught too."""
         people: dict[str, bool] = {}
+        full_names: set[str] = set()
         ids: set[str] = set()
         for c in contacts:
+            ids.add(c.page_id)
             name = squash(c.name or "")
             if name and name != c.page_id:
                 people[name] = True
+                full_names.add(name)
                 for word in name.split():
                     if len(word) >= 3 and word.casefold() not in _MONTH_WORDS and word != name:
                         people[word] = people.get(word, True) and not ordinary(word)
             for alias in (squash(x) for x in (c.aliases or "").split(",")):
                 if len(alias) >= 2:
                     people[alias] = True
+                    full_names.add(alias)
             if c.handle:
                 people[c.handle.lstrip("@")] = True
             if c.telegram_id is not None:
                 ids.add(str(c.telegram_id))
+        # An ordinary partial name from a later contact must not weaken a known full name/alias.
+        people.update((name, True) for name in full_names)
         states = list(states)
-        names = {(p, v) for state in states for p, s in state.items() if len(v := squash(str(s.get("Name") or ""))) >= 4}
+        ids.update(p for state in states for p in state)
+        names = {(p, v) for state in states for p, s in state.items() if (v := squash(str(s.get("Name") or "")))}
         codes = {(p, v) for state in states for p, s in state.items()
-                 if len(v := squash(str(s.get("Project Code") or ""))) >= 2}
+                 if (v := squash(str(s.get("Project Code") or "")))}
         return cls(
             tuple(sorted(people.items(), key=lambda kv: len(kv[0]), reverse=True)),
             tuple(sorted(names, key=lambda pair: len(pair[1]), reverse=True)),
@@ -138,27 +148,45 @@ class Redactor:
         return {v.casefold() for p, v in self.projects if p == own_page_id} | {
             v.casefold() for p, v, _ in self.codes if p == own_page_id}
 
-    def _id_pattern(self) -> re.Pattern | None:
-        if not self.known_ids:
+    def _id_pattern(self, own: set[str]) -> re.Pattern | None:
+        values = [v for v in self.known_ids if v.casefold() not in own]
+        if not values:
             return None
-        return re.compile(r"(?<![\w\[.,])(?:" + "|".join(map(re.escape, self.known_ids)) + r")(?![\w\]]|[.,]\d)")
+        patterns = []
+        for value in values:
+            # Punctuation delimits ids, including brackets and commas. A digit adjacent to a
+            # decimal separator and another digit belongs to a decimal, not a Telegram id.
+            decimal = r"(?<!\d[.,])" if value.lstrip("-").isdigit() else ""
+            end = r"(?![.,]\d)" if value.lstrip("-").isdigit() else ""
+            patterns.append(r"(?<!\w)" + decimal + re.escape(value) + r"(?!\w)" + end)
+        return re.compile("|".join(patterns), re.I)
 
     def redact(self, text: str, own_page_id: str, mapping: Mapping) -> str:
         """``text`` with every identity outside the project ``own_page_id`` replaced by a placeholder."""
         own = self._own(own_page_id)
-        text = _IDS.sub(lambda m: mapping.placeholder("id", m.group(0)), text)
-        if (known := self._id_pattern()) is not None:
-            text = known.sub(lambda m: mapping.placeholder("id", m.group(0)), text)
-        for page_id, value in self.projects:
-            if page_id != own_page_id and value.casefold() not in own:
-                text = _word(value).sub(lambda m: mapping.placeholder("project", m.group(0)), text)
-        for page_id, value, loose in self.codes:
-            if page_id != own_page_id and value.casefold() not in own:
-                text = _word(value, loose).sub(lambda m: mapping.placeholder("project", m.group(0)), text)
-        for person, loose in self.people:
-            if person.casefold() not in own:
-                text = _word(person, loose).sub(lambda m: mapping.placeholder("person", m.group(0)), text)
-        return text
+        # One pass over the original text: issued placeholders are never scanned again.
+        # This lets punctuation (including brackets) delimit identities without treating raw source
+        # brackets as trusted placeholders, or redacting a placeholder number that is itself an id.
+        ids = [f"(?i:{_IDS.pattern})"]
+        if (known := self._id_pattern(own)) is not None:
+            ids.append(f"(?i:{known.pattern})")
+        projects = [_word(v).pattern for p, v in self.projects
+                    if p != own_page_id and v.casefold() not in own]
+        projects += [_word(v, loose).pattern for p, v, loose in self.codes
+                     if p != own_page_id and v.casefold() not in own]
+        people = [_word(v, loose).pattern for v, loose in self.people if v.casefold() not in own]
+        patterns = {"id": ids, "project": projects, "person": people}
+        matchers = [(kind, re.compile("|".join(values))) for kind, values in patterns.items() if values]
+        pieces: list[str] = []
+        cursor = 0
+        while matches := [(kind, match) for kind, matcher in matchers if (match := matcher.search(text, cursor))]:
+            # Prefer the full known value when a short page id overlaps a longer name, e.g.
+            # a fixture id "other" and project name "Other Show". Both remain protected.
+            kind, match = min(matches, key=lambda pair: (pair[1].start(), -len(pair[1].group(0))))
+            pieces.extend((text[cursor:match.start()], mapping.placeholder(kind, match.group(0))))
+            cursor = match.end()
+        pieces.append(text[cursor:])
+        return "".join(pieces)
 
     def names_in(self, text: str, own_page_id: str) -> str | None:
         """The first person or other-project name ``text`` holds, as ``redact`` would find it, or an id."""
@@ -175,6 +203,6 @@ class Redactor:
 def _word(value: str, loose: bool = True) -> re.Pattern:
     """Whole-word pattern: any case when ``loose``, else only as written, capitalised or in capitals."""
     if loose:
-        return re.compile(rf"(?<![\w\[]){re.escape(value)}(?![\w\]])", re.I)
+        return re.compile(rf"(?i:(?<!\w){re.escape(value)}(?!\w))")
     forms = "|".join(dict.fromkeys(re.escape(f) for f in (value, value.capitalize(), value.upper())))
-    return re.compile(rf"(?<![\w\[])(?:{forms})(?![\w\]])")
+    return re.compile(rf"(?<!\w)(?:{forms})(?!\w)")
