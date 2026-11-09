@@ -72,7 +72,7 @@ def test_error_names_the_report_and_entry_number(tmp_path):
 
 
 def test_same_chat_with_different_topics_or_a_dm_is_not_a_duplicate(tmp_path):
-    s = load(tmp_path, shift_destinations={"day": [GROUP, {"chat": GROUP, "topic": 1}, {"chat": GROUP, "topic": 2}]}).shift
+    s = load(tmp_path, shift_destinations={"day": [USER_A, {"chat": GROUP, "topic": 1}, {"chat": GROUP, "topic": 2}]}).shift
     assert len(s.destinations["1900"]) == 3
 
 
@@ -94,3 +94,11 @@ def test_disabled_reads_nothing_from_the_shift_keys(tmp_path):
                                    | {"shift_reports_enabled": False, "shift_destinations": "junk",
                                       "shift_chat_id": "junk", "shift_topic_id": "junk"}))
     assert load_config(str(path), {"NOTION_TOKEN": "tok"}).shift is None
+
+
+@pytest.mark.parametrize("bad_id", [0, -1, GROUP])
+def test_non_positive_bare_id_is_rejected_as_a_misplaced_group_chat(tmp_path, bad_id):
+    msg = fails(tmp_path, shift_destinations={"day": [USER_A, bad_id]})
+    assert "shift_destinations" in msg and "day" in msg and "entry 2" in msg
+    assert "chat" in msg and "topic" in msg
+    assert str(bad_id) not in msg.replace("entry 2", "")

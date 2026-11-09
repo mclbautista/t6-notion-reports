@@ -273,6 +273,9 @@ def _shift_destinations(raw: dict) -> dict[str, tuple[Destination, ...]]:
         for number, entry in enumerate(entries, 1):
             where = f"invalid config key: {key}.{name} (entry {number}"
             if _is_int(entry):
+                if entry <= 0:
+                    raise ConfigError(f"{where} is a bare id that is not a user id; "
+                                      "a group chat must use the {chat, topic} form)")
                 dest = Destination(entry, None, dm=True)
             elif isinstance(entry, dict):
                 if set(entry) - {"chat", "topic"}:
