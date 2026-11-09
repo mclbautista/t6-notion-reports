@@ -205,7 +205,14 @@ Idempotency keys are `shift-<YYYY-MM-DD>-<slot>` for part 1, then `-2`, `-3`…,
 so a rerun of the same slot and day queues nothing new. If the gateway fails after the client's retries, the
 slot logs `job failed kind=shift<slot> error=GatewayError` and the scheduler carries on; a missed slot is not
 made up. Each run logs one line with counts only (slot, snapshot, baseline, unfinished, received, processed,
-accomplished, parts).
+accomplished, parts, destinations, undelivered).
+
+After the last send the job checks delivery: every 15 seconds, for up to 5 minutes (earlier once all are final),
+it asks the gateway about each queued message. A destination counts as undelivered if it was rejected at send,
+or any part `failed`, is still `queued` at the end, or whose status could not be read (`unknown`). If any
+destination is undelivered, one alert (key `shift-<date>-<slot>-undelivered`) is sent by the same rule as the
+Notion-outage alert, naming the slot and each such destination by id with its state; it holds no report text.
+No alert when everything was delivered. `undelivered=<n>` is in the run log line, without ids.
 
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml               # send one slot now

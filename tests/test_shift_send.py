@@ -31,6 +31,8 @@ class FakeTransport:
         self.calls, self.queued, self.fail = [], {}, fail
 
     def __call__(self, url, headers, body):
+        if body is None:  # GET /notify/{ref}: everything queued is already sent
+            return 200, {"state": "sent"}
         self.calls.append((url, headers, body))
         if self.fail:
             return 503, None
@@ -109,7 +111,7 @@ def test_gateway_failure_raises_after_retries_and_names_no_text_or_secret():
     t = FakeTransport(fail=True)
     with pytest.raises(GatewayError) as err:
         send("1900", [jo("j1", "48", "TOC", task="Secret task")], target(t))
-    assert len(t.calls) == 4  # the client's own retries
+    assert len([c for c in t.calls if not c[2]["idempotency_key"].endswith("-undelivered")]) == 4  # the client's own retries
     assert "shift-s3cret" not in str(err.value) and "Secret task" not in str(err.value)
 
 
@@ -186,6 +188,8 @@ def test_a_rejected_destination_does_not_stop_the_others_and_is_recorded():
     send("1900", many(40), tgt, logs=logs)
     by = {}
     for c in t.calls:
+        if c[2]["idempotency_key"].endswith("-undelivered"):
+            continue  # the alert for USER goes to the first group
         by.setdefault(c[2]["to"], []).append(c[2]["idempotency_key"])
     parts = len(by[CHAT])
     assert parts > 1 and len(by[USER2]) == parts
@@ -200,7 +204,8 @@ def test_results_per_destination_for_the_delivery_check():
     first, second = tgt.results["1900"]
     assert first.destination == DM1 and first.rejected and first.refs == ()
     assert second.destination == GROUP and not second.rejected
-    assert list(second.refs) == [t.queued[c[2]["idempotency_key"]] for c in t.calls if c[2]["to"] == CHAT]
+    assert list(second.refs) == [t.queued[c[2]["idempotency_key"]] for c in t.calls if c[2]["to"] == CHAT
+                                  and not c[2]["idempotency_key"].endswith("-undelivered")]
 
 
 def test_whole_gateway_down_still_raises_after_recording_every_destination():
@@ -208,7 +213,190 @@ def test_whole_gateway_down_still_raises_after_recording_every_destination():
     tgt = multi(t, (DM1, GROUP))
     with pytest.raises(GatewayError):
         send("1900", [jo("j1", "48", "TOC")], tgt)
-    assert len(t.calls) == 8 and all(r.rejected for r in tgt.results["1900"])
+    assert len([c for c in t.calls if not c[2]["idempotency_key"].endswith("-undelivered")]) == 8 and all(r.rejected for r in tgt.results["1900"])
+
+
+# ---- delivery check and undelivered alert (#88) -------------------------------------------------
+
+OPS = -100555
+
+
+class StatusTransport(FakeTransport):
+    """Also answers GET /notify/{ref} (body None) from a script: ``script[ref]`` is a list of states, one per
+    poll; the last one repeats. ``"error"`` answers 500. A ref with no script is ``sent`` at once."""
+
+    def __init__(self, script=None, reject=()):
+        super().__init__()
+        self.script, self.reject, self.polls = script or {}, reject, []
+
+    def __call__(self, url, headers, body):
+        if body is None:
+            ref = int(url.rsplit("/", 1)[1])
+            self.polls.append(ref)
+            seq = self.script.get(ref, ["sent"])
+            state = seq[min(self.polls.count(ref) - 1, len(seq) - 1)]
+            return (500, None) if state == "error" else (200, {"state": state})
+        if body["to"] in self.reject:
+            self.calls.append((url, headers, body))
+            return 503, None
+        return super().__call__(url, headers, body)
+
+    def ref_of(self, to):
+        return [self.queued[c[2]["idempotency_key"]] for c in self.calls if c[2]["to"] == to and c[2]["idempotency_key"] in self.queued]
+
+    def alerts(self):
+        return [c[2] for c in self.calls if c[2]["idempotency_key"].endswith("-undelivered")]
+
+
+class StepClock:
+    """Fake clock and sleep: sleeping moves the clock."""
+
+    def __init__(self):
+        self.now, self.sleeps = datetime(2026, 11, 3, 11, tzinfo=timezone.utc), []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += timedelta(seconds=seconds)
+
+
+def checked(t, dests, ops=OPS, slot="1900", jos=(), clock=None):
+    clock = clock or StepClock()
+    tgt = multi(t, dests, ops=ops)
+    conn, logs = connect(), []
+    prior(conn)
+    run_shift_report(conn, world(*jos), JOB_ORDERS, CONTACTS, PROJECTS, slot, PM, log=logs.append, target=tgt,
+                     clock=clock, sleep=clock.sleep)
+    return logs, clock
+
+
+def test_all_sent_at_once_means_no_alert_and_no_waiting():
+    t = StatusTransport()
+    logs, clock = checked(t, (DM1, GROUP))
+    assert t.alerts() == [] and clock.sleeps == [] and sorted(t.polls) == [1, 2]
+    assert "undelivered=0" in logs[0]
+
+
+def test_polling_stops_early_once_everything_is_final():
+    t = StatusTransport({1: ["queued", "queued", "sent"], 2: ["queued", "sent"]})
+    logs, clock = checked(t, (DM1, GROUP))
+    assert clock.sleeps == [15, 15] and t.alerts() == []
+    assert t.polls == [1, 2, 1, 2, 1]  # a ref that is final is not asked again
+    assert "undelivered=0" in logs[0]
+
+
+def test_failed_ref_is_alerted_by_id_with_state_failed_and_no_report_text():
+    t = StatusTransport({1: ["queued", "failed"]})
+    logs, _ = checked(t, (DM1, DM2), jos=[jo("j1", "48", "TOC", task="Secret task")])
+    (alert,) = t.alerts()
+    assert alert["to"] == OPS and "topic" not in alert
+    assert alert["idempotency_key"] == "shift-2026-11-03-1900-undelivered"
+    assert "1900" in alert["text"] and f"{USER} (failed)" in alert["text"] and str(USER2) not in alert["text"]
+    assert "Secret task" not in alert["text"] and "TOC" not in alert["text"]
+    assert "undelivered=1" in logs[0]
+
+
+def test_ref_still_queued_after_five_minutes_is_alerted_as_still_queued():
+    t = StatusTransport({2: ["queued"]})
+    logs, clock = checked(t, (DM1, GROUP))
+    (alert,) = t.alerts()
+    assert f"chat {CHAT} topic {TOPIC} (still queued)" in alert["text"] and str(USER) not in alert["text"]
+    assert sum(clock.sleeps) == 300 and set(clock.sleeps) == {15}
+    assert "undelivered=1" in logs[0]
+
+
+def test_status_call_erroring_throughout_counts_as_undelivered_and_unknown():
+    t = StatusTransport({1: ["error"]})
+    logs, clock = checked(t, (DM1,))
+    (alert,) = t.alerts()
+    assert f"{USER} (unknown)" in alert["text"] and sum(clock.sleeps) == 300
+    assert "undelivered=1" in logs[0]
+
+
+def test_a_status_error_that_recovers_is_not_undelivered():
+    t = StatusTransport({1: ["error", "sent"]})
+    _, clock = checked(t, (DM1,))
+    assert t.alerts() == [] and clock.sleeps == [15]
+
+
+def test_destination_rejected_at_send_is_alerted_as_rejected_while_others_are_delivered():
+    t = StatusTransport(reject={USER})
+    logs, _ = checked(t, (DM1, DM2, GROUP))
+    assert len(t.ref_of(USER2)) >= 1 and len(t.ref_of(CHAT)) >= 1
+    (alert,) = t.alerts()
+    assert f"{USER} (rejected)" in alert["text"] and str(USER2) not in alert["text"] and str(CHAT) not in alert["text"]
+    assert "destinations=3" in logs[0] and "undelivered=1" in logs[0]
+
+
+def test_one_alert_lists_every_undelivered_destination_even_with_many_parts():
+    t = StatusTransport({1: ["failed"], 2: ["failed"]}, reject=set())
+    t.script.update({r: ["failed"] for r in range(1, 100) if r % 2})
+    checked(t, (DM1, DM2), jos=many(40))
+    (alert,) = t.alerts()
+    assert str(USER) in alert["text"] and alert["text"].count("(failed)") >= 1
+
+
+def test_every_destination_rejected_still_alerts_then_raises():
+    t = StatusTransport(reject={USER, CHAT, OPS})
+    tgt = multi(t, (DM1, GROUP), ops=None)
+    conn, logs, clock = connect(), [], StepClock()
+    prior(conn)
+    with pytest.raises(GatewayError):
+        run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=logs.append, target=tgt,
+                         clock=clock, sleep=clock.sleep)
+    assert clock.sleeps == [] and any("undelivered=2" in line for line in logs)
+    assert len([c for c in t.calls if c[2]["idempotency_key"].endswith("-undelivered")]) > 0  # an alert was tried
+
+
+def test_alert_follows_the_shared_rule_ops_chat_then_first_group_then_log_only():
+    t = StatusTransport({1: ["failed"]})
+    checked(t, (DM1, GROUP), ops=None)
+    (alert,) = t.alerts()
+    assert (alert["to"], alert["topic"]) == (CHAT, TOPIC)
+    t = StatusTransport({1: ["failed"]})
+    logs, _ = checked(t, (DM1,), ops=None)
+    assert t.alerts() == [] and any("alert not sent" in line for line in logs)
+    assert not any(str(USER) in line for line in logs)
+
+
+def test_rerun_resends_the_same_alert_key():
+    t = StatusTransport({1: ["failed"]})
+    conn, clock = connect(), StepClock()
+    prior(conn)
+    tgt = multi(t, (DM1,), ops=OPS)
+    for _ in range(2):
+        run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, target=tgt,
+                         clock=clock, sleep=clock.sleep)
+    assert [a["idempotency_key"] for a in t.alerts()] == ["shift-2026-11-03-1900-undelivered"] * 2
+
+
+def test_alert_gateway_failure_does_not_lose_the_run_line():
+    t = StatusTransport({1: ["failed"]}, reject={OPS})
+    logs, _ = checked(t, (DM1,))
+    assert any("undelivered=1" in line for line in logs)
+
+
+def test_skipped_slot_and_dry_print_do_no_polling():
+    t = StatusTransport()
+    tgt = ShiftTarget(GatewayClient("http://gw:8780", "s", t, sleep=lambda _: None), {"1900": ()}, OPS)
+    conn, clock = connect(), StepClock()
+    prior(conn)
+    run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, target=tgt,
+                     clock=clock, sleep=clock.sleep)
+    run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, out=lambda _: None,
+                     clock=clock, sleep=clock.sleep)
+    assert t.calls == [] and t.polls == [] and clock.sleeps == []
+
+
+def test_run_log_has_counts_without_ids_keys_or_text():
+    t = StatusTransport({1: ["failed"]})
+    logs, _ = checked(t, (DM1, GROUP), jos=[jo("j1", "48", "TOC", task="Secret task")])
+    (line,) = logs
+    assert "destinations=2 " in line and line.endswith("undelivered=1")
+    for bad in (str(USER), str(CHAT), str(OPS), "shift-2026", "Secret task", "failed"):
+        assert bad not in line
 
 
 # ---- banner and log -----------------------------------------------------------------------------

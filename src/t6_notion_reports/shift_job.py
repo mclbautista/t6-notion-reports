@@ -24,6 +24,10 @@ from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shif
 RETRY_FOR = timedelta(minutes=30)
 RETRY_EVERY = timedelta(minutes=1)
 
+# Delivery check after the last send: ask the gateway about every queued message this often, for this long.
+POLL_EVERY = timedelta(seconds=15)
+POLL_FOR = timedelta(minutes=5)
+
 
 class NotionUnavailable(Exception):
     """Notion could not be read for the whole retry window; the slot was skipped after one alert."""
@@ -159,23 +163,65 @@ def run_shift_report(
     parts = len(report.messages)
     destinations = () if target is None else tuple(target.destinations.get(slot) or ())
     # One line per run: counts only, never message text, ids, keys or secrets.
-    log(f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
-        + ("" if target is None else f"destinations={len(destinations)} ") +
-        f"unfinished={unfinished} received={received} processed={processed} "
-        f"accomplished={accomplished} parts={parts} "
-        f"summaries={stats.new} cached={stats.cached} fallback={stats.fallback}")
+    head = (f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
+            + ("" if target is None else f"destinations={len(destinations)} ") +
+            f"unfinished={unfinished} received={received} processed={processed} "
+            f"accomplished={accomplished} parts={parts} "
+            f"summaries={stats.new} cached={stats.cached} fallback={stats.fallback}")
     if target is None:
+        log(head)
         for number, text in enumerate(report.messages, 1):
             out(f"--- part {number}/{parts} ---\n{text}\n")
         return report
     if not destinations:
+        log(f"{head} undelivered=0")
         log(f"shift slot={slot} has no destinations; not sent")
         return report
     results = tuple(_send_to(target.gateway, d, report.messages, shift_keys(now, slot, parts, d)) for d in destinations)
     target.results[slot] = results
+    undelivered = _check_delivery(target, results, clock, sleep)
+    if undelivered:
+        _send_undelivered_alert(target, slot, now, undelivered, log)
+    log(f"{head} undelivered={len(undelivered)}")
     if all(r.rejected for r in results):  # the gateway itself is down: say so, as a single-destination send always did
         raise GatewayError(f"gateway rejected every destination of slot {slot}")
     return report
+
+
+def _check_delivery(target: ShiftTarget, results: Sequence[DestinationResult], clock, sleep) -> list[tuple[Destination, str]]:
+    """Poll every queued ref every ``POLL_EVERY`` until all are sent or failed, or ``POLL_FOR`` is up (stopping early
+    when all are final). Returns the undelivered destinations in config order with their state: ``rejected`` (the
+    gateway refused it at send), ``failed``, ``still queued`` or ``unknown`` (the status call never answered)."""
+    state = {ref: "queued" for r in results for ref in r.refs}
+    give_up = clock() + POLL_FOR
+    while True:
+        for ref in [ref for ref, st in state.items() if st not in ("sent", "failed")]:
+            state[ref] = target.gateway.delivery_status(ref)
+        if all(st in ("sent", "failed") for st in state.values()) or clock() + POLL_EVERY > give_up:
+            break
+        sleep(POLL_EVERY.total_seconds())
+    undelivered = []
+    for r in results:
+        states = {state[ref] for ref in r.refs}
+        word = ("rejected" if r.rejected else "failed" if "failed" in states else
+                "still queued" if "queued" in states else "unknown" if "unknown" in states else None)
+        if word:
+            undelivered.append((r.destination, word))
+    return undelivered
+
+
+def _send_undelivered_alert(target: ShiftTarget, slot: str, now: datetime, undelivered, log) -> None:
+    """One alert per slot run (key ``shift-<date>-<slot>-undelivered``): the slot and each undelivered destination by
+    id with its state. No report text. Goes through the shared alert-destination rule."""
+    names = [f"user {d.chat}" if d.dm else f"chat {d.chat}" + ("" if d.topic is None else f" topic {d.topic}")
+             for d, _ in undelivered]
+    lines = "\n".join(f"{name} ({word})" for name, (_, word) in zip(names, undelivered))
+    text = f"🚨 Shift report for slot {slot} was not delivered to {len(undelivered)} destination(s):\n{lines}"
+    key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-undelivered"
+    try:
+        target.send_alert(slot, text, key, log)
+    except GatewayError:
+        log(f"shift slot={slot} undelivered alert not sent: gateway rejected it")
 
 
 def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence[str]) -> DestinationResult:
