@@ -1,8 +1,8 @@
-"""Build the end-of-shift Job Orders reports (18:00 and 05:00) as Telegram HTML (spec 4, 6.1, 6.3, 6.4).
+"""Build the end-of-shift Job Orders reports (19:00 and 05:00) as Telegram HTML (spec 4, 6.1, 6.3, 6.4).
 
 Pure: no network, no clock, no database. ``build_end_of_shift`` takes the snapshot just taken and the
 older snapshot that bounds the window, and returns the messages. The line format, department
-grouping, deadline sort and footer are public helpers so the 12:00 report can reuse them.
+grouping, deadline sort and footer are public helpers so the 11:30 report can reuse them.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ STARTED = ("In progress", "Needs Completion Review", DONE)
 # TOC and AE always appear; these follow in this order and are left out when empty.
 OTHER_DEPARTMENTS = ("OE", "COOR", "COLOR", "VFX", "SOUND", "ADMIN")
 NO_DEPARTMENT = "No department"
-SLOT_LABEL = {"0500": "05:00", "1200": "12:00", "1800": "18:00", "manual": "manual"}
+SLOT_LABEL = {"0500": "05:00", "1130": "11:30", "1900": "19:00", "1200": "12:00", "1800": "18:00", "manual": "manual"}
 
 
 class Slot(NamedTuple):
@@ -35,14 +35,14 @@ class Slot(NamedTuple):
 
 
 SLOTS = {
-    "1800": Slot("Day shift end of shift", "TOC tonight", "AE tomorrow", "Day shift window", "0500"),
-    "0500": Slot("Night shift end of shift", "TOC to day shift", "AE", "Night shift window", "1800"),
+    "1900": Slot("Day shift end of shift", "TOC tonight", "AE tomorrow", "Day shift window", "0500"),
+    "0500": Slot("Night shift end of shift", "TOC to day shift", "AE", "Night shift window", "1900"),
 }
 
 Fields = dict[str, object]
 
 
-# ---- reusable pieces (the 12:00 report builds on these) ----------------------------------------
+# ---- reusable pieces (the 11:30 report builds on these) ----------------------------------------
 
 def parse_instant(value: object) -> datetime | None:
     return datetime.fromisoformat(value) if isinstance(value, str) and value else None

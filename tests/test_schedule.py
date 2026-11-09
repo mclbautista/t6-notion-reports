@@ -125,10 +125,10 @@ def test_two_slots_on_same_minute_both_run_in_declared_order_once():
     assert fired == [(manila(2026, 11, 13, 18), "friday"), (manila(2026, 11, 13, 18), "shift18")]
 
 
-def test_friday_18_jo_shift_slot_fires_on_its_own_before_the_projects_snapshot():
+def test_friday_19_jo_shift_slot_fires_on_its_own_before_the_projects_snapshot():
     from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS
     fired = run_slots(SLOTS + SHIFT_SLOTS, manila(2026, 11, 13, 17), manila(2026, 11, 14, 0, 1))
-    assert fired == [(manila(2026, 11, 13, 18), "shift1800"), (manila(2026, 11, 13, 23, 30), "friday")]
+    assert fired == [(manila(2026, 11, 13, 19), "shift1900"), (manila(2026, 11, 13, 23, 30), "friday")]
 
 
 def test_declared_order_wins_over_other_order():

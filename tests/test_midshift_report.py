@@ -8,14 +8,14 @@ from t6_notion_reports.jo_snapshots import connect
 from fake_notion import relation
 
 MNL = timezone(timedelta(hours=8))
-NOON = datetime(2026, 11, 3, 12, tzinfo=MNL)
+NOON = datetime(2026, 11, 3, 11, 30, tzinfo=MNL)
 
 
 def mid(*jos, banner=False, seed=True):
     conn = connect()
     if seed:
         prior(conn)
-    return run(conn, world(*jos), "1200", NOON, banner)
+    return run(conn, world(*jos), "1130", NOON, banner)
 
 
 def section(text, heading):
@@ -101,5 +101,5 @@ def test_works_as_baseline_and_splits_long_reports_with_banner():
     for part in report.messages:
         assert len(part) <= 4096 and part.startswith("🧪 TEST\n")
         assert_valid_html(part)
-    assert "baseline=True" in log[0] and f"parts={len(report.messages)}" in log[0] and "slot=1200" in log[0]
+    assert "baseline=True" in log[0] and f"parts={len(report.messages)}" in log[0] and "slot=1130" in log[0]
     assert "Secret" not in log[0]

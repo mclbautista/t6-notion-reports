@@ -19,7 +19,8 @@ from zoneinfo import ZoneInfo
 from .snapshots import squash
 
 MANILA = ZoneInfo("Asia/Manila")
-KINDS = ("0500", "1200", "1800", "manual")
+# 1200 and 1800 are the retired slot kinds: old rows keep them, new snapshots no longer take them.
+KINDS = ("0500", "1130", "1900", "1200", "1800", "manual")
 RETENTION_DAYS = 90
 
 # Spec section 3. Note the trailing space in "Blocker ": it is Notion's property name.
@@ -34,7 +35,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS jo_snapshots (
     snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
     taken_at    TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('0500', '1200', '1800', 'manual')),
+    kind        TEXT NOT NULL CHECK (kind IN ('0500', '1130', '1900', '1200', '1800', 'manual')),
     is_baseline INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jo_snapshot_pages (
@@ -125,7 +126,21 @@ class JoSnapshot:
 def connect(path: str = ":memory:") -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
+    _widen_kind_check(conn)
     return conn
+
+
+def _widen_kind_check(conn: sqlite3.Connection) -> None:
+    """Databases made before the 11:30 and 19:00 slots have a CHECK without those kinds, and SQLite
+    cannot alter a CHECK in place, so rebuild ``jo_snapshots`` once and keep every row."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='jo_snapshots'").fetchone()
+    if row is None or "'1130'" in row[0]:
+        return
+    conn.executescript(
+        "BEGIN;"
+        + SCHEMA.split(";")[0].replace("jo_snapshots (", "jo_snapshots_new (").replace("IF NOT EXISTS ", "")
+        + ";INSERT INTO jo_snapshots_new SELECT snapshot_id, taken_at, kind, is_baseline FROM jo_snapshots;"
+        "DROP TABLE jo_snapshots;ALTER TABLE jo_snapshots_new RENAME TO jo_snapshots;COMMIT;")
 
 
 def take_snapshot(
@@ -227,7 +242,7 @@ def load_bounding(
 ) -> JoSnapshot | None:
     """The newest snapshot taken at or before ``at_or_before``: the one that bounds a window.
 
-    ``kinds`` narrows it (e.g. ``("1800",)``). None when there is no such snapshot.
+    ``kinds`` narrows it (e.g. ``("1900",)``). None when there is no such snapshot.
     """
     for sid, taken_at, kind in conn.execute(
         "SELECT snapshot_id, taken_at, kind FROM jo_snapshots ORDER BY snapshot_id DESC"

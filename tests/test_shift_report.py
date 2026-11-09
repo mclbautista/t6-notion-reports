@@ -12,9 +12,9 @@ from t6_notion_reports.jo_snapshots import connect
 from t6_notion_reports.shift_job import run_shift_report
 
 MNL = timezone(timedelta(hours=8))
-PREV_1800 = datetime(2026, 11, 2, 18, tzinfo=MNL)
+PREV_1900 = datetime(2026, 11, 2, 19, tzinfo=MNL)
 AM = datetime(2026, 11, 3, 5, tzinfo=MNL)
-PM = datetime(2026, 11, 3, 18, tzinfo=MNL)
+PM = datetime(2026, 11, 3, 19, tzinfo=MNL)
 NEXT_AM = datetime(2026, 11, 4, 5, tzinfo=MNL)
 
 
@@ -46,7 +46,7 @@ def run(conn, fake, slot, when, banner=False):
     return report, "\n".join(out), log
 
 
-def prior(conn, fake=None, when=PREV_1800, kind="1800"):
+def prior(conn, fake=None, when=PREV_1900, kind="1900"):
     """An earlier snapshot, so the next one is not the baseline."""
     run_jo_snapshot(conn, fake or world(), JOB_ORDERS, CONTACTS, PROJECTS, kind, when)
 
@@ -55,7 +55,7 @@ def headings(text):
     return re.findall(r"^<b>(.+?)</b>$", text, re.M)
 
 
-def test_1800_department_lists_order_none_and_left_out():
+def test_1900_department_lists_order_none_and_left_out():
     conn = connect()
     prior(conn)
     fake = world(
@@ -66,7 +66,7 @@ def test_1800_department_lists_order_none_and_left_out():
         jo("n1", "7", None),
         jo("d1", "8", "COLOR", st="Done"), jo("x1", "9", "ADMIN", st="Cancelled"),
     )
-    _, text, _ = run(conn, fake, "1800", PM)
+    _, text, _ = run(conn, fake, "1900", PM)
     assert headings(text)[:6] == ["Day shift end of shift · Tue Nov 3", "TOC tonight", "AE tomorrow", "OE", "VFX", "SOUND"]
     assert "COLOR" not in text.split("Day shift window")[0] and "ADMIN" not in text.split("Day shift window")[0]
     assert "No department" in headings(text) and headings(text).index("No department") == 6
@@ -92,7 +92,7 @@ def test_unfinished_line_fields_link_and_deadline_format():
     prior(conn)
     fake = world(jo("abcd-1234", "48", "TOC", st="In progress", health="🔥 Urgent", task="Export <v2> & sons",
                     Assigned=relation("c1", "c2"), Projects=relation("pr1")))
-    _, text, _ = run(conn, fake, "1800", PM)
+    _, text, _ = run(conn, fake, "1900", PM)
     row = next(l for l in text.splitlines() if "JO #48" in l)
     assert row == ('<a href="https://www.notion.so/abcd1234">JO #48</a> · FAKEX · Export &lt;v2&gt; &amp; sons · '
                    "In progress · 🔥 Urgent · Tue Nov 3 18:00 · Oto, Rex")
@@ -102,7 +102,7 @@ def test_unfinished_line_fields_link_and_deadline_format():
 def test_empty_relations_and_missing_deadline():
     conn = connect()
     prior(conn)
-    _, text, _ = run(conn, world(jo("j1", "5", "TOC", deadline=None)), "1800", PM)
+    _, text, _ = run(conn, world(jo("j1", "5", "TOC", deadline=None)), "1900", PM)
     assert "· no project · Export · Pending · 🔵 On Track · no deadline · unassigned" in text
 
 
@@ -126,9 +126,9 @@ def test_window_counts_per_department_and_total():
         jo("j6", "6", "OE", st="Cancelled", posted=at(3, 11)),                 # cancelled: nowhere
         jo("j7", "7", "COOR", st="Pending", posted=at(2, 9)),                  # all zero: left out
         jo("j8", "8", None, st="Pending", posted=at(3, 12)),                   # received, no department
-        jo("j9", "9", "TOC", st="Pending", posted=at(3, 18, 30)),              # after the snapshot: not in the window
+        jo("j9", "9", "TOC", st="Pending", posted=at(3, 19, 30)),              # after the snapshot: not in the window
     )
-    report, text, _ = run(conn, fake, "1800", PM)
+    report, text, _ = run(conn, fake, "1900", PM)
     breakdown = text.split("<b>Day shift window</b>\n")[1].split("\n\n")[0].splitlines()
     assert breakdown == [
         "AE: received 1 · processed 2 · accomplished 2",
@@ -144,7 +144,7 @@ def test_window_counts_per_department_and_total():
 def test_baseline_reports_received_only_with_a_note():
     conn = connect()
     fake = world(jo("j1", "1", "AE", st="Done", posted=at(3, 10)), jo("j2", "2", "VFX", posted=at(3, 11)))
-    report, text, log = run(conn, fake, "1800", PM)
+    report, text, log = run(conn, fake, "1900", PM)
     assert "First snapshot: processed and accomplished start next time." in text
     window = text.split("<b>Day shift window</b>\n")[1]
     assert "processed" not in window.split("Last JO edit")[0].replace("start next time", "").replace("processed and accomplished", "")
@@ -155,22 +155,22 @@ def test_baseline_reports_received_only_with_a_note():
 
 def test_fallback_comparison_note_when_bounding_snapshot_is_missing():
     conn = connect()
-    prior(conn, world(jo("j1", "1", "AE", st="Pending")), PREV_1800, "1800")  # no 05:00 snapshot today
+    prior(conn, world(jo("j1", "1", "AE", st="Pending")), PREV_1900, "1900")  # no 05:00 snapshot today
     fake = world(jo("j1", "1", "AE", st="Done"))
-    _, text, _ = run(conn, fake, "1800", PM)
-    assert "Compared with 18:00 on Mon Nov 2" in text
+    _, text, _ = run(conn, fake, "1900", PM)
+    assert "Compared with 19:00 on Mon Nov 2" in text
     assert "accomplished 1" in text
 
 
 def test_no_note_when_the_expected_snapshot_exists():
     conn = connect()
-    prior(conn, world(), PREV_1800, "1800")
+    prior(conn, world(), PREV_1900, "1900")
     prior(conn, world(), AM, "0500")
-    _, text, _ = run(conn, world(), "1800", PM)
+    _, text, _ = run(conn, world(), "1900", PM)
     assert "Compared with" not in text
     prior_night = connect()
     prior(prior_night, world(), AM, "0500")
-    prior(prior_night, world(), PM, "1800")
+    prior(prior_night, world(), PM, "1900")
     _, text, _ = run(prior_night, world(), "0500", NEXT_AM)
     assert "Compared with" not in text and "Night shift window" in text
 
@@ -184,7 +184,7 @@ def test_footer_is_newest_edit_among_the_jos_counted():
         jo("new", "3", "VFX", st="Done", posted=at(3, 10), edited="2026-11-03T08:15:00.000Z"),  # counted
         jo("gone", "4", "OE", st="Cancelled", edited="2026-11-03T09:59:00.000Z"),  # cancelled: ignored
     )
-    _, text, _ = run(conn, fake, "1800", PM)
+    _, text, _ = run(conn, fake, "1900", PM)
     assert text.splitlines()[-1] == "Last JO edit: Tue Nov 3 16:15"
 
 
@@ -193,7 +193,7 @@ def test_long_report_splits_into_valid_parts_with_banner():
     prior(conn)
     jos = [jo(f"p{i}", str(i), "AE", task=f"Task <{i}> & " + "long " * 20, deadline=at(3, 18))
            for i in range(1, 120)]
-    report, text, log = run(conn, world(*jos), "1800", PM, banner=True)
+    report, text, log = run(conn, world(*jos), "1900", PM, banner=True)
     assert len(report.messages) > 1
     for part in report.messages:
         assert len(part) <= 4096
@@ -206,9 +206,9 @@ def test_long_report_splits_into_valid_parts_with_banner():
 def test_run_logs_one_counts_line_with_no_text():
     conn = connect()
     prior(conn)
-    _, _, log = run(conn, world(jo("j1", "1", "AE", task="Secret Task")), "1800", PM)
+    _, _, log = run(conn, world(jo("j1", "1", "AE", task="Secret Task")), "1900", PM)
     assert len(log) == 1 and "Secret Task" not in log[0]
-    assert re.fullmatch(r"shift slot=1800 snapshot=\d+ baseline=False unfinished=1 received=\d+ processed=\d+ "
+    assert re.fullmatch(r"shift slot=1900 snapshot=\d+ baseline=False unfinished=1 received=\d+ processed=\d+ "
                         r"accomplished=\d+ parts=1", log[0])
 
 
@@ -238,15 +238,78 @@ def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     # Nothing but Notion reads is possible here: no gateway client exists on this path.
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
-    assert cli.main(["shift-report", "--slot", "1800", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
+    assert cli.main(["shift-report", "--slot", "1900", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     captured = capsys.readouterr()
     assert "TOC tonight" in captured.out and "JO #48" in captured.out
-    assert captured.err.startswith("shift slot=1800 ") and "baseline=True" in captured.err
+    assert captured.err.startswith("shift slot=1900 ") and "baseline=True" in captured.err
     assert not (fake.created or fake.appended or fake.trashed or fake.sent_marked)
 
 
 def test_cli_send_needs_shift_enabled_and_rejects_unknown_slots(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
-    assert cli.main(["shift-report", "--slot", "1800", "--config", str(cfg)]) == 2
+    assert cli.main(["shift-report", "--slot", "1900", "--config", str(cfg)]) == 2
     with pytest.raises(SystemExit):
         cli.main(["shift-report", "--slot", "0900", "--dry-print", "--config", str(cfg)])
+
+
+# ---- slots moved to 11:30 and 19:00 (#74) ------------------------------------------------------
+
+OLD_SCHEMA = """
+CREATE TABLE jo_snapshots (
+    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    taken_at    TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('0500', '1200', '1800', 'manual')),
+    is_baseline INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def test_existing_database_keeps_old_kinds_and_accepts_the_new_ones(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    old = sqlite3.connect(path)
+    old.executescript(OLD_SCHEMA)
+    old.execute("INSERT INTO jo_snapshots (taken_at, kind, is_baseline) VALUES ('2026-11-02T10:00:00+00:00', '1800', 0)")
+    old.commit()
+    old.close()
+    conn = connect(path)
+    assert conn.execute("SELECT kind FROM jo_snapshots").fetchall() == [("1800",)]
+    prior(conn, world(jo("j1")), AM, "0500")
+    prior(conn, world(jo("j1")), PM, "1900")
+    prior(conn, world(jo("j1")), AM + timedelta(minutes=390), "1130")
+    assert sorted(k for (k,) in conn.execute("SELECT kind FROM jo_snapshots")) == ["0500", "1130", "1800", "1900"]
+    assert connect(path).execute("SELECT count(*) FROM jo_snapshots").fetchone() == (4,)  # a second connect is a no-op
+
+
+def test_first_0500_report_after_the_move_falls_back_to_the_old_1800_snapshot():
+    conn = connect()
+    prior(conn, world(jo("j1", "1", "AE", st="Pending")), datetime(2026, 11, 3, 18, tzinfo=MNL), "1800")
+    _, text, _ = run(conn, world(jo("j1", "1", "AE", st="Done")), "0500", NEXT_AM)
+    assert "Compared with 18:00 on Tue Nov 3" in text and "Night shift window" in text
+
+
+def test_0500_report_compares_with_the_previous_1900_snapshot_without_a_note():
+    conn = connect()
+    prior(conn, world(), PM, "1900")
+    _, text, _ = run(conn, world(), "0500", NEXT_AM)
+    assert "Compared with" not in text
+
+
+def test_cli_accepts_the_new_slots_and_rejects_the_retired_ones(tmp_path, monkeypatch, capsys):
+    cfg = cli_config(tmp_path, monkeypatch)
+    for slot in ("0500", "1130", "1900"):
+        fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+        assert cli.main(["shift-report", "--slot", slot, "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
+    capsys.readouterr()
+    for slot in ("1200", "1800"):
+        with pytest.raises(SystemExit):
+            cli.main(["shift-report", "--slot", slot, "--dry-print", "--config", str(cfg)])
+
+
+def test_baseline_windows_open_at_0500_for_the_1900_report_and_1900_yesterday_for_0500():
+    from t6_notion_reports.shift_job import nominal_window_start
+    conn = connect()
+    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM)
+    from t6_notion_reports.jo_snapshots import load_latest
+    assert nominal_window_start("1900", load_latest(conn)) == AM
+    assert nominal_window_start("0500", load_latest(conn)) == datetime(2026, 11, 2, 19, tzinfo=MNL)

@@ -11,7 +11,7 @@ from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .midshift_report import MidshiftReport, build_midshift
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
 
-MIDSHIFT_SLOT = "1200"
+MIDSHIFT_SLOT = "1130"
 # Notion unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
 # are at least six hours apart, so a retrying slot is always done before the next one is due.
 RETRY_FOR = timedelta(minutes=30)
@@ -25,12 +25,13 @@ class NotionUnavailable(Exception):
 def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tuple[JoSnapshot | None, str | None]:
     """The snapshot that opens the window, and a "<slot> on <date>" note when it is a fallback.
 
-    Expected: the 05:00 snapshot of the same Manila day (18:00 report) or the 18:00 snapshot of the
-    day before (05:00 report). If that one is missing, the latest earlier snapshot of any kind.
+    Expected: the 05:00 snapshot of the same Manila day (19:00 report) or the 19:00 snapshot of the
+    day before (05:00 report). If that one is missing, the latest earlier snapshot of any kind
+    (which can be an old 18:00 one from before the slots moved).
     """
     opens_kind = SLOTS[slot].opens_kind
     day = current.taken_at.astimezone(MANILA).date()
-    expected_day = day if slot == "1800" else day - timedelta(days=1)
+    expected_day = day if slot == "1900" else day - timedelta(days=1)
     before = current.taken_at - timedelta(microseconds=1)
     older = load_bounding(conn, before, (opens_kind,))
     if older and older.taken_at.astimezone(MANILA).date() == expected_day:
@@ -43,11 +44,11 @@ def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tupl
 
 
 def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
-    """Where the window would open with no earlier snapshot: 05:00 today (18:00 report) or 18:00 yesterday."""
+    """Where the window would open with no earlier snapshot: 05:00 today (19:00 report) or 19:00 yesterday."""
     moment = current.taken_at.astimezone(MANILA)
-    if slot == "1800":
+    if slot == "1900":
         return moment.replace(hour=5, minute=0, second=0, microsecond=0)
-    return (moment - timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
+    return (moment - timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
 
 
 class ShiftTarget:
