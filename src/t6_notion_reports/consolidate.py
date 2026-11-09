@@ -33,7 +33,7 @@ DATE_KEYS = {PLAYDATE: "playdate", SUBMISSION: "submission_deadline", ARCHIVAL: 
 _PROPERTY_BY_KEY = {key: name for name, key in DATE_KEYS.items()}
 
 SYSTEM = """You help a post-production coordinator prepare for the weekly PSR meeting on one project. You are given the project, its dated PM Notes lines (each with an id), what changed since the last brief and since the last PSR, and the project's lines from the latest PSR Minutes. Today's date is given.
-Use only what is in the payload. Never invent a fact, a date or a name. Every date, number, episode and capitalised word you write in a "text" must already appear in the payload, so start a sentence with a word from the payload.
+Use only what is in the payload. Never invent a fact, a date or a name. Every date, number, episode and name you write in a "text" must be supported by its cited line. Do not borrow facts from other lines or metadata; start a sentence with a word from the cited line.
 
 1. last_update: pick the PM Notes "As of" header that marks the project's real last update. Headers have typos ("Seep", "Oct 26.,"); read them sensibly. Cite the header's line_id and give its date as as_of_date. If no header makes sense, return null.
 2. changes: short phrases (a few words, Taglish is fine) for what changed. Merge the snapshot changes, the PM Notes and the Minutes into one list. Each change needs a source. Set after_psr true only for changes newer than the Monday snapshot (window since_psr).
@@ -412,7 +412,7 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     if line is None or line.origin != source or not quote or _bare(quote) != _bare(line.text):
         return False
     # A known name in any case is ungrounded too: the payload never holds one (redact.py).
-    return ungrounded(text, payload.facts, date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
+    return ungrounded(text, line.text, date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
 
 
 def _day_grounded(day: date, line: str, today: date) -> bool:

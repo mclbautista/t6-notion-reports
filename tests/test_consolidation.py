@@ -644,3 +644,38 @@ def test_old_explicit_year_blocks_with_no_future_period_have_an_empty_payload(we
     llm = Llm()
     run(conn_one(f"As of {header}\n• {bullet}"), llm, brief=replace(BRIEF, pm_notes_weeks=weeks))
     assert llm.payloads[0]["pm_notes"] == []
+
+
+@pytest.mark.parametrize("field", ["changes", "concerns"])
+@pytest.mark.parametrize("borrowed", ["QC waiting for zyxmarco", "QC on Nov 21, 2027", "QC on Nov 20, 2027"])
+def test_facts_from_another_line_cannot_support_a_citation(field, borrowed):
+    notes = ("As of Nov 9\n• QC on Nov 20, 2026, waiting for client notes\n"
+             "• Delivery Nov 21, 2027, zyxmarco confirmed")
+    quote = notes.splitlines()[1]
+
+    def reply(p):
+        cite = {"source": "pm_notes", "line_id": line_id(p, "QC on"), "quote": quote}
+        extra = {"kind": "open_item"} if field == "concerns" else {}
+        return {field: [{**cite, **extra, "text": borrowed},
+                        {**cite, **extra, "text": "QC waiting for client notes"}]}
+
+    gw, _ = run(conn_one(notes), Llm(reply))
+    text = dm(gw)
+    assert "QC waiting for client notes" in text
+    assert borrowed not in text
+
+
+def test_a_restorable_name_token_from_another_line_is_not_evidence():
+    notes = "As of Nov 9\n• QC waiting for client notes\n• Oto confirmed delivery"
+
+    def reply(p):
+        qc = next(r for r in p["pm_notes"] if "QC waiting" in r["text"])
+        other = next(r for r in p["pm_notes"] if "confirmed delivery" in r["text"])
+        token = re.search(r"\[person \d+\]", other["text"])[0]
+        cite = {"source": "pm_notes", "line_id": qc["line_id"], "quote": qc["text"]}
+        return {"changes": [{**cite, "text": f"QC waiting for {token}"},
+                            {**cite, "text": "QC waiting for client notes"}]}
+
+    gw, _ = run(conn_one(notes), Llm(reply))
+    assert "QC waiting for client notes" in dm(gw)
+    assert "QC waiting for Oto" not in dm(gw)
