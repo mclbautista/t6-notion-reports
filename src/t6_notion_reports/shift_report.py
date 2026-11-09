@@ -1,8 +1,8 @@
-"""Build the end-of-shift Job Orders reports (19:00 and 05:00) as Telegram HTML (spec 4, 6.1, 6.3, 6.4).
+"""Build the end-of-shift Job Orders reports (19:00 and 05:00) as Telegram HTML (#73, replaces #20 section 6).
 
 Pure: no network, no clock, no database. ``build_end_of_shift`` takes the snapshot just taken and the
-older snapshot that bounds the window, and returns the messages. The line format, department
-grouping, deadline sort and footer are public helpers so the 11:30 report can reuse them.
+older snapshot that bounds the window, and returns the messages. Task text goes through a
+``TaskSummarizer``. The deadline sort, footer and small helpers are public so the 11:30 report can reuse them.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from datetime import datetime
 
 from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
+from .task_summary import FirstWordsSummarizer, TaskSummarizer, task_label
 from .telegram_html import Block, Line, bold, line, link, render_messages
 
 SEP = " · "
@@ -20,24 +21,35 @@ DONE, CANCELLED = "Done", "Cancelled"
 NOT_STARTED = ("Needs Intake Review", "Pending")
 STARTED = ("In progress", "Needs Completion Review", DONE)
 
-# TOC and AE always appear; these follow in this order and are left out when empty.
+# Section order after TOC and AE (COOR and ADMIN share one section); any other Department value follows
+# them under its own name, then "No Department". Counts in the tally are per department, in this order.
 OTHER_DEPARTMENTS = ("OE", "COOR", "COLOR", "VFX", "SOUND", "ADMIN")
 NO_DEPARTMENT = "No department"
 SLOT_LABEL = {"0500": "05:00", "1130": "11:30", "1900": "19:00", "1200": "12:00", "1800": "18:00", "manual": "manual"}
+
+SECTIONS = (  # (heading, departments in it), after TOC and AE
+    ("⚫️ For OE", ("OE",)),
+    ("🟡 For COLOR", ("COLOR",)),
+    ("🟠 For SOUND", ("SOUND",)),
+    ("🟤 For VFX", ("VFX",)),
+    ("🟣 For COOR & ADMIN", ("COOR", "ADMIN")),
+)
+NO_DEPARTMENT_HEADING = "🔴 No Department"
+FLAGGED_HEALTH = ("🔴 Blocked", "⚠️ Delayed", "🔥 Urgent")
+UNASSIGNED = "Unassigned"
 
 
 class Slot(NamedTuple):
     title: str
     toc_heading: str
-    ae_heading: str
-    window_name: str
     opens_kind: str  # kind of the snapshot that opens the window
 
 
 SLOTS = {
-    "1900": Slot("Day shift end of shift", "TOC tonight", "AE tomorrow", "Day shift window", "0500"),
-    "0500": Slot("Night shift end of shift", "TOC to day shift", "AE", "Night shift window", "1900"),
+    "1900": Slot("END OF SHIFT REPORT (DAY SHIFT)", "🔵 For TOC (Night Shift)", "1130"),
+    "0500": Slot("END OF SHIFT REPORT (NIGHT SHIFT)", "🔵 For TOC (Day Shift)", "1900"),
 }
+AE_HEADING = "🟢 For AE"
 
 Fields = dict[str, object]
 
@@ -104,18 +116,43 @@ def department_order(present: set[str | None]) -> list[str | None]:
     return [d for d in known if d in present] + extras + ([None] if None in present else [])
 
 
-def jo_line(page_id: str, fields: Fields) -> Line:
-    """JO number, project, task, Status, Health, deadline, assignee; the JO number links to Notion."""
+def jo_id_text(fields: Fields) -> str:
+    """``<project code> #<JO Number>``: several projects joined with "/", none gives "no project", no number "#?"."""
+    names = [str(r.get("name") or r["id"]) for r in fields.get("Projects") or [] if isinstance(r, dict)]
     number = str(fields.get("JO Number") or "").strip()
-    return line(
-        link(f"JO #{number}" if number else "JO", page_url(page_id)),
-        SEP + project_text(fields),
-        SEP + str(fields.get("Task") or "no task"),
-        SEP + str(fields.get("Status") or "no status"),
-        SEP + str(fields.get("Health") or "no health"),
-        SEP + deadline_text(fields),
-        SEP + assignee_text(fields),
-    )
+    return f"{'/'.join(names) or 'no project'} #{number or '?'}"
+
+
+def assignee_names(fields: Fields) -> list[str]:
+    return [str(r.get("name") or r["id"]) for r in fields.get("Assigned") or [] if isinstance(r, dict)]
+
+
+def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owner: str | None) -> Line:
+    """``[health ]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
+    health = fields.get("Health")
+    others = [n for n in assignee_names(fields) if n != owner]
+    parts: list = [f"{health} " if health in FLAGGED_HEALTH else "",
+                   link(jo_id_text(fields), page_url(page_id)),
+                   f" - {task_label(fields.get('Task'), summarizer)}",
+                   f" - {fields.get('Status') or 'no status'}",
+                   f" - {deadline_text(fields)}"]
+    if others and owner is not None:
+        parts.append(f" - also: {', '.join(others)}")
+    return line(*[p for p in parts if p != ""])
+
+
+def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer) -> list[Block]:
+    """One block per assignee (alphabetical, Unassigned last); a JO with several assignees is in each."""
+    by_person: dict[str | None, list[tuple[str, Fields]]] = {}
+    for item in items:
+        for name in assignee_names(item[1]) or [None]:
+            by_person.setdefault(name, []).append(item)
+    people = sorted((n for n in by_person if n is not None), key=lambda n: (n.casefold(), n))
+    blocks: list[Block] = []
+    for person in people + ([None] if None in by_person else []):
+        blocks.append(line(person or UNASSIGNED))
+        blocks += [turnover_line(p, f, summarizer, person) for p, f in sort_by_deadline(by_person[person])]
+    return blocks
 
 
 def last_edit_footer(page_ids: set[str], pages: dict[str, Fields]) -> Line:
@@ -199,29 +236,44 @@ def build_end_of_shift(
     compared_with: str | None = None,
     banner: bool = False,
     window_start: datetime | None = None,
+    summarizer: TaskSummarizer | None = None,
 ) -> EndOfShiftReport:
     """``older`` None means the baseline: received only, with a note. ``compared_with`` is the
     "<slot> on <date>" text when ``older`` is a fallback rather than the expected bounding snapshot.
-    ``window_start`` opens the received window when there is no ``older``."""
+    ``window_start`` opens the received window when there is no ``older``. ``summarizer`` shortens the
+    Task text (default: the first three words)."""
+    summarizer = summarizer or FirstWordsSummarizer()
     report_slot = SLOTS[slot]
     moment = current.taken_at.astimezone(MANILA)
-    blocks: list[Block] = [line(bold(f"{report_slot.title} · {moment.strftime('%a %b %-d')}"))]
+    blocks: list[Block] = [
+        line(bold(report_slot.title)),
+        line(f"{moment.strftime('%a %b %-d')} / {moment.strftime('%A')} ({moment.strftime('%H:%M')})"),
+    ]
 
     active = [(p, f) for p, f in current.pages.items() if is_active(f)]
     groups = group_by_department(active)
-    headings = {"TOC": report_slot.toc_heading, "AE": report_slot.ae_heading, None: NO_DEPARTMENT}
-    shown = [d for d in department_order(set(groups) | {"TOC", "AE"})
-             if d in ("TOC", "AE") or groups.get(d)]
-    for department in shown:
-        rows = sort_by_deadline(groups.get(department, []))
-        blocks += [Line(), line(bold(headings.get(department, department)))]
-        blocks += [jo_line(p, f) for p, f in rows] or [line("none")]
+
+    def section(heading: str, items: list[tuple[str, Fields]], always: bool = False) -> None:
+        if not items and not always:
+            return
+        blocks.extend([Line(), line(bold(heading))])
+        blocks.extend(assignee_blocks(items, summarizer) or [line("none")])
+
+    section(report_slot.toc_heading, groups.get("TOC", []), always=True)
+    section(AE_HEADING, groups.get("AE", []), always=True)
+    listed = {"TOC", "AE"}
+    for heading, departments in SECTIONS:
+        section(heading, [i for d in departments for i in groups.get(d, [])])
+        listed.update(departments)
+    for department in sorted(d for d in groups if d is not None and d not in listed):
+        section(department, groups[department])
+    section(NO_DEPARTMENT_HEADING, groups.get(None, []))
 
     start = older.taken_at if older else window_start
     if start is None:
         raise ValueError("window_start is required when there is no older snapshot")
     counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at)
-    blocks += [Line(), line(bold(report_slot.window_name))]
+    blocks += [Line(), line(bold(f"✅ Since {SLOT_LABEL[report_slot.opens_kind]} report"))]
     if older is None:
         blocks.append(line("First snapshot: processed and accomplished start next time."))
     elif compared_with:

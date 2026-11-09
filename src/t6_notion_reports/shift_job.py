@@ -9,6 +9,7 @@ from typing import Callable
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, load_bounding, load_latest
 from .midshift_report import MidshiftReport, build_midshift
+from .task_summary import TaskSummarizer
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
 
 MIDSHIFT_SLOT = "1130"
@@ -25,9 +26,9 @@ class NotionUnavailable(Exception):
 def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tuple[JoSnapshot | None, str | None]:
     """The snapshot that opens the window, and a "<slot> on <date>" note when it is a fallback.
 
-    Expected: the 05:00 snapshot of the same Manila day (19:00 report) or the 19:00 snapshot of the
+    Expected: the 11:30 snapshot of the same Manila day (19:00 report) or the 19:00 snapshot of the
     day before (05:00 report). If that one is missing, the latest earlier snapshot of any kind
-    (which can be an old 18:00 one from before the slots moved).
+    (which can be an old 12:00 or 18:00 one from before the slots moved).
     """
     opens_kind = SLOTS[slot].opens_kind
     day = current.taken_at.astimezone(MANILA).date()
@@ -44,10 +45,10 @@ def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tupl
 
 
 def nominal_window_start(slot: str, current: JoSnapshot) -> datetime:
-    """Where the window would open with no earlier snapshot: 05:00 today (19:00 report) or 19:00 yesterday."""
+    """Where the window would open with no earlier snapshot: 11:30 today (19:00 report) or 19:00 yesterday."""
     moment = current.taken_at.astimezone(MANILA)
     if slot == "1900":
-        return moment.replace(hour=5, minute=0, second=0, microsecond=0)
+        return moment.replace(hour=11, minute=30, second=0, microsecond=0)
     return (moment - timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
 
 
@@ -78,6 +79,7 @@ def run_shift_report(
     target: ShiftTarget | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     sleep: Callable[[float], None] = time.sleep,
+    summarizer: TaskSummarizer | None = None,
 ) -> EndOfShiftReport | MidshiftReport:
     """Snapshot Job Orders (kind = slot), build that slot's report, then print it or send it.
 
@@ -102,7 +104,7 @@ def run_shift_report(
         older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
         report = build_end_of_shift(
             slot, current, older, compared_with, banner,
-            window_start=nominal_window_start(slot, current))
+            window_start=nominal_window_start(slot, current), summarizer=summarizer)
         received, processed, accomplished = (
             report.counts.received, report.counts.processed, report.counts.accomplished)
         unfinished = report.unfinished
