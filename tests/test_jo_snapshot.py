@@ -157,3 +157,31 @@ def test_cli_requires_jo_data_source(tmp_path, capsys, monkeypatch):
 PROJECTS_ID = "33333333-3333-3333-3333-333333333333"
 CONTACTS_ID = "22222222-2222-2222-2222-222222222222"
 JO_ID = "33333333-3333-3333-3333-333333333333"
+
+
+def test_bounding_picks_the_chronologically_latest_snapshot_not_the_last_inserted():
+    conn = connect()
+    late = snap(conn, notion(job_order("j1")), "1900", T1 + timedelta(hours=13))   # 18:00 Manila, inserted first
+    early = snap(conn, notion(job_order("j1")), "1130", T1 + timedelta(hours=12))  # 17:00 Manila, inserted second
+    assert load_bounding(conn, T1 + timedelta(hours=14)).snapshot_id == late.snapshot_id
+    assert load_bounding(conn, T1 + timedelta(hours=12, minutes=30)).snapshot_id == early.snapshot_id
+
+
+def test_bounding_compares_instants_across_utc_offsets():
+    conn = connect()
+    utc = timezone.utc
+    a = snap(conn, notion(job_order("j1")), "1130", datetime(2026, 11, 3, 10, 0, tzinfo=utc))   # 18:00 Manila
+    b = snap(conn, notion(job_order("j1")), "1900", datetime(2026, 11, 3, 9, 30, tzinfo=timezone(timedelta(hours=8))))  # 01:30 UTC
+    assert load_bounding(conn, datetime(2026, 11, 3, 12, 0, tzinfo=utc)).snapshot_id == a.snapshot_id
+    assert load_bounding(conn, datetime(2026, 11, 3, 9, 0, tzinfo=utc)).snapshot_id == b.snapshot_id
+
+
+def test_summary_retention_compares_instants_across_offsets():
+    conn = connect()
+    now = datetime(2026, 11, 3, 19, tzinfo=timezone(timedelta(hours=8)))
+    cutoff = (now - timedelta(days=90)).astimezone(timezone.utc)
+    for page, used in (("newer", cutoff + timedelta(hours=1)), ("older", cutoff - timedelta(hours=1))):
+        conn.execute("INSERT INTO jo_task_summaries VALUES (?, 'h', 'Label', ?, ?)",
+                     (page, used.isoformat(), used.isoformat()))
+    snap(conn, notion(), "1900", now)
+    assert [r[0] for r in conn.execute("SELECT page_id FROM jo_task_summaries")] == ["newer"]

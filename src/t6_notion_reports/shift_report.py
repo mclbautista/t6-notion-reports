@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
-from .task_summary import FirstWordsSummarizer, TaskSummarizer, task_label
+from .task_summary import FirstWordsSummarizer, TaskSummarizer, for_page, task_label
 from .telegram_html import Block, Line, bold, line, link, render_messages
 
 SEP = " · "
@@ -134,7 +134,7 @@ def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owne
     others = [n for n in assignee_names(fields) if n != owner]
     parts: list = [f"{health} " if health in FLAGGED_HEALTH else "",
                    link(jo_id_text(fields), page_url(page_id)),
-                   f" - {task_label(fields.get('Task'), summarizer)}",
+                   f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",
                    f" - {deadline_text(fields)}"]
     if others and owner is not None:
@@ -296,4 +296,4 @@ def _count_blocks(counts: WindowCounts, with_flow: bool) -> list[Block]:
 
     rows = [line(f"{d or NO_DEPARTMENT}: {text(c)}")
             for d in department_order(set(counts.by_department)) if not (c := counts.by_department[d]).zero]
-    return rows + [line(bold("Total"), f": {text(counts.total)}")]
+    return (rows or [line("none")]) + [line(bold("Total"), f": {text(counts.total)}")]

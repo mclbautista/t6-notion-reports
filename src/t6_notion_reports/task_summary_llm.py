@@ -50,15 +50,26 @@ class SummaryStats:
     fallback: int = 0
 
 
-class SummaryLookup:
-    """A ``TaskSummarizer`` that only answers from summaries already made; anything else is None
-    (the renderer then falls back to the first three words)."""
+class _PageSummaries:
+    """What one Job Order's line may show: its own summary for its own current Task text, else None."""
 
-    def __init__(self, by_task: dict[str, str]):
-        self._by_task = by_task
+    def __init__(self, found: tuple[str, str] | None):
+        self._found = found
 
     def summarize(self, task_text: str) -> str | None:
-        return self._by_task.get(task_text.strip())
+        return self._found[1] if self._found and self._found[0] == task_text.strip() else None
+
+
+class SummaryLookup:
+    """Summaries already made, by Job Order page id. ``for_page`` gives the ``TaskSummarizer`` for one
+    page, so a fallback on one JO never shows another JO's summary of identical Task text. Anything not
+    found is None (the renderer then falls back to the first three words)."""
+
+    def __init__(self, by_page: dict[str, tuple[str, str]]):
+        self._by_page = by_page  # page id -> (Task text, summary)
+
+    def for_page(self, page_id: str) -> TaskSummarizer:
+        return _PageSummaries(self._by_page.get(page_id))
 
 
 def valid(summary: object) -> str | None:
@@ -70,8 +81,8 @@ def summarize_tasks(
     conn: sqlite3.Connection, summarizer: TaskSummarizer, tasks: dict[str, object], now: datetime,
 ) -> tuple[SummaryLookup, SummaryStats]:
     """``tasks``: page id -> Task text. A cached (page id, hash of Task) makes no call; a new valid
-    reply is stored; an empty, too long or failed reply is a fallback and is not stored."""
-    found: dict[str, str] = {}
+    reply is stored (older Tasks' rows stay until retention removes them, so A, B, A makes two calls); an empty, too long or failed reply is a fallback and is not stored."""
+    found: dict[str, tuple[str, str]] = {}
     new = cached = fallback = 0
     stamp = now.isoformat()
     with conn:
@@ -85,7 +96,7 @@ def summarize_tasks(
             if row:
                 conn.execute("UPDATE jo_task_summaries SET last_used_at = ? WHERE page_id = ? AND task_hash = ?",
                              (stamp, page_id, digest))
-                found[text] = row[0]
+                found[page_id] = (text, row[0])
                 cached += 1
                 continue
             try:
@@ -95,8 +106,7 @@ def summarize_tasks(
             if summary is None:
                 fallback += 1
                 continue
-            conn.execute("DELETE FROM jo_task_summaries WHERE page_id = ?", (page_id,))  # an older Task's summary
             conn.execute("INSERT INTO jo_task_summaries VALUES (?, ?, ?, ?, ?)", (page_id, digest, summary, stamp, stamp))
-            found[text] = summary
+            found[page_id] = (text, summary)
             new += 1
     return SummaryLookup(found), SummaryStats(new, cached, fallback)

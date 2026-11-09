@@ -39,3 +39,9 @@ def task_label(task: object, summarizer: TaskSummarizer) -> str:
         reply = None
     reply = " ".join(reply.split()) if isinstance(reply, str) else ""
     return reply if reply and len(reply.split()) <= MAX_WORDS else first_words(text)
+
+
+def for_page(summarizer: TaskSummarizer, page_id: str) -> TaskSummarizer:
+    """The summarizer to use for one Job Order: a per-page lookup when the summarizer has one."""
+    scoped = getattr(summarizer, "for_page", None)
+    return scoped(page_id) if scoped else summarizer

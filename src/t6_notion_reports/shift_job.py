@@ -1,9 +1,10 @@
 """Run one shift report slot: snapshot Job Orders, pick the bounding snapshot, build the report."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, Sequence
 
@@ -158,6 +159,9 @@ def run_shift_report(
     received, processed, accomplished = report.counts.received, report.counts.processed, report.counts.accomplished
     unfinished = report.unfinished
     parts = len(report.messages)
+    if target is not None:
+        report = replace(report, messages=_stored_parts(conn, now, slot, report.messages))
+        parts = len(report.messages)
     destinations = () if target is None else tuple(target.destinations.get(slot) or ())
     # One line per run: counts only, never message text, ids, keys or secrets.
     head = (f"shift slot={slot} snapshot={current.snapshot_id} baseline={current.is_baseline} "
@@ -182,6 +186,19 @@ def run_shift_report(
     if all(r.rejected for r in results):  # the gateway itself is down: say so, as a single-destination send always did
         raise GatewayError(f"gateway rejected every destination of slot {slot}")
     return report
+
+
+def _stored_parts(conn: sqlite3.Connection, now: datetime, slot: str, messages: list[str]) -> list[str]:
+    """The parts a slot sends for its Manila date: the first run's, kept in the database. A rerun reuses them,
+    so changed data never adds parts to a report already (partly) sent; keys are the same, the gateway drops the
+    parts it already accepted, and a part it rejected earlier is queued now."""
+    day = now.astimezone(MANILA).date().isoformat()
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO shift_report_parts VALUES (?, ?, ?, ?)",
+                     (day, slot, json.dumps(messages, ensure_ascii=False), now.isoformat()))
+        (stored,) = conn.execute("SELECT parts_json FROM shift_report_parts WHERE report_date = ? AND slot = ?",
+                                 (day, slot)).fetchone()
+    return json.loads(stored)
 
 
 def _check_delivery(target: ShiftTarget, results: Sequence[DestinationResult], clock, sleep) -> list[tuple[Destination, str]]:

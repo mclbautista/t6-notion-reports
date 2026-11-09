@@ -496,3 +496,23 @@ def test_1130_html_banner_and_splitting_still_hold():
         assert len(part) <= 4096 and part.startswith("🧪 TEST\n")
         assert_valid_html(part)
     assert "slot=1130" in log[0] and "baseline=True" in log[0]
+
+
+def test_empty_tally_shows_none_and_still_a_zero_total():
+    conn = connect()
+    prior(conn, world(), MID, "1130")
+    _, text, _ = run(conn, world(), "1900", PM)
+    assert blocks_of(text, "✅ Since 11:30 report") == [
+        "none", "<b>Total</b>: received 0 · processed 0 · accomplished 0"]
+
+
+def test_oversized_linked_jo_label_splits_into_valid_parts():
+    conn = connect()
+    prior(conn)
+    huge = [project("pr1", name="P" * 5000, code="P" * 5000)]
+    fake = FakeNotion(projects=huge, contacts=PEOPLE, job_orders=[jo("j1", "1", "AE", Projects=relation("pr1"))])
+    report, _, _ = run(conn, fake, "1900", PM)
+    assert len(report.messages) > 1
+    for message in report.messages:
+        assert len(message) <= 4096
+        assert_valid_html(message)

@@ -4,7 +4,7 @@ Content is a list of blocks: ``Line`` (a row of spans) and ``Quote`` (an expanda
 lines). ``render_messages`` turns blocks into messages of at most ``LIMIT`` characters. It escapes
 all user text and splits only between lines (bullets), closing and reopening a blockquote that
 spans a split so that every part is valid HTML on its own. A single line that is itself too long
-is split on word boundaries.
+is split on word boundaries; an over-long link is split into several links to the same address.
 """
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def _fit(item: Line, quoted: bool, room: int) -> list[Line]:
         return [item]
     tokens: list[Span] = []
     for span in item.spans:
-        if span.href or len(render_span(span)) <= budget:
+        if len(render_span(span)) <= budget:
             tokens.append(span)
             continue
         for word in re.findall(r"\S+\s*", span.text):

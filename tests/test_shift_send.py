@@ -107,6 +107,41 @@ def test_sending_the_same_slot_twice_queues_nothing_new():
     assert t.queued == first and len(t.calls) == 2 * len(first)
 
 
+def test_rerun_with_changed_data_reuses_the_original_parts_and_queues_no_new_ones():
+    t = FakeTransport()
+    conn, _ = send("1900", [jo("j1", "1", "AE")], target(t))
+    first_calls = [(c[2]["idempotency_key"], c[2]["text"]) for c in t.calls]
+    assert len(first_calls) == 1
+    send("1900", many(40), target(t), conn=conn)  # same slot and date, now seven-ish parts
+    assert set(t.queued) == {first_calls[0][0]}
+    assert [(c[2]["idempotency_key"], c[2]["text"]) for c in t.calls] == first_calls * 2
+
+
+def test_rerun_resends_a_part_the_gateway_rejected_earlier():
+    class RejectPart2Once(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.failing = True
+
+        def __call__(self, url, headers, body):
+            if body is not None and self.failing and body["idempotency_key"].endswith("-2"):
+                self.calls.append((url, headers, body))
+                return 503, None
+            return super().__call__(url, headers, body)
+
+    t = RejectPart2Once()
+    conn = connect()
+    with pytest.raises(GatewayError):
+        send("1900", many(40), target(t), conn=conn)
+    def report_keys():
+        return [k for k in t.queued if not k.endswith("-undelivered")]
+
+    assert len(report_keys()) == 1
+    t.failing = False
+    send("1900", many(40), target(t), conn=conn)
+    assert len(report_keys()) > 2  # part 2 onwards queued on the rerun, from the stored parts
+
+
 def test_gateway_failure_raises_after_retries_and_names_no_text_or_secret():
     t = FakeTransport(fail=True)
     with pytest.raises(GatewayError) as err:
