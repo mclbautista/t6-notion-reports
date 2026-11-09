@@ -117,6 +117,15 @@ def test_rerun_with_changed_data_reuses_the_original_parts_and_queues_no_new_one
     assert [(c[2]["idempotency_key"], c[2]["text"]) for c in t.calls] == first_calls * 2
 
 
+def test_rerun_with_changed_data_keeps_every_destinations_parts():
+    t = FakeTransport()
+    tgt = multi(t, (GROUP, DM1))
+    conn, _ = send("1900", [jo("j1", "1", "AE")], tgt)
+    queued = dict(t.queued)
+    send("1900", many(40), tgt, conn=conn)
+    assert t.queued == queued and len(queued) == 2
+
+
 def test_rerun_resends_a_part_the_gateway_rejected_earlier():
     class RejectPart2Once(FakeTransport):
         def __init__(self):

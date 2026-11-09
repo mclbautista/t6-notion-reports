@@ -78,6 +78,23 @@ def instant(text: str) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
+def manila_day(moment: datetime) -> str:
+    """The Asia/Manila calendar date of an instant, as ISO text."""
+    return moment.astimezone(MANILA).date().isoformat()
+
+
+def keep_report_parts(conn: sqlite3.Connection, now: datetime, slot: str, parts: list[str]) -> list[str]:
+    """The parts a slot sends for its Manila date: the first run's, which stay in the database. Later runs
+    of the same date and slot get those back, whatever ``parts`` they just built."""
+    day = manila_day(now)
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO shift_report_parts VALUES (?, ?, ?, ?)",
+                     (day, slot, json.dumps(parts, ensure_ascii=False), now.isoformat()))
+        (stored,) = conn.execute("SELECT parts_json FROM shift_report_parts WHERE report_date = ? AND slot = ?",
+                                 (day, slot)).fetchone()
+    return json.loads(stored)
+
+
 def manila_instant(start: str | None, as_deadline: bool, time_zone: str | None = None) -> str | None:
     """Spec 3.1: an instant stays that instant (written at +08:00); a date-only value becomes
     23:59 Manila (Deadline) or 00:00 Manila (Date); a datetime with no offset is Manila time."""
@@ -224,8 +241,7 @@ def prune(conn: sqlite3.Connection, now: datetime) -> int:
     stale = [(page_id, task_hash) for page_id, task_hash, used in conn.execute(
         "SELECT page_id, task_hash, last_used_at FROM jo_task_summaries") if instant(used) < cutoff]
     conn.executemany("DELETE FROM jo_task_summaries WHERE page_id = ? AND task_hash = ?", stale)
-    conn.execute("DELETE FROM shift_report_parts WHERE report_date < ?",
-                 ((now - timedelta(days=RETENTION_DAYS)).astimezone(MANILA).date().isoformat(),))
+    conn.execute("DELETE FROM shift_report_parts WHERE report_date < ?", (manila_day(cutoff),))
     old = [sid for sid, taken_at in conn.execute("SELECT snapshot_id, taken_at FROM jo_snapshots")
            if instant(taken_at) < cutoff]
     if not old:

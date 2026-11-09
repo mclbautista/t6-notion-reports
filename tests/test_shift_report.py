@@ -513,6 +513,8 @@ def test_oversized_linked_jo_label_splits_into_valid_parts():
     fake = FakeNotion(projects=huge, contacts=PEOPLE, job_orders=[jo("j1", "1", "AE", Projects=relation("pr1"))])
     report, _, _ = run(conn, fake, "1900", PM)
     assert len(report.messages) > 1
+    link_text = "".join(re.findall(r'<a href="https://www\.notion\.so/[^"]+">([^<]*)</a>', "".join(report.messages)))
+    assert link_text.count("P") == 5000 and link_text.endswith("#1")
     for message in report.messages:
         assert len(message) <= 4096
         assert_valid_html(message)
