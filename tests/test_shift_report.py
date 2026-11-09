@@ -415,3 +415,84 @@ def test_tally_counts_coor_and_admin_separately_and_windows_run_report_to_report
         "<b>Total</b>: received 2 · processed 0 · accomplished 0",
     ]
     assert "🟣 For COOR &amp; ADMIN" in text
+
+
+# ---- 11:30 report on the new layout (#76) ------------------------------------------------------
+
+def test_1130_header_sections_and_every_unfinished_jo_listed():
+    conn = connect()
+    prior(conn, world(), AM, "0500")
+    fake = world(
+        jo("n1", "1", "AE", st="Pending"), jo("n2", "2", "AE", st="In progress"),
+        jo("n3", "3", "AE", st="Needs Completion Review"), jo("n4", "4", "AE", st="Done"),
+        jo("n5", "5", "TOC", st="Cancelled"), jo("n6", "6", "OE", st="Needs Intake Review"))
+    _, text, _ = run(conn, fake, "1130", MID)
+    assert headings(text) == ["MID SHIFT DAY REPORT", "🔵 For TOC (Day Shift)", "🟢 For AE", "⚫️ For OE",
+                              "✅ Since 05:00 report"]
+    assert text.splitlines()[2] == "Tue Nov 3 / Tuesday (11:30)"
+    ae = "\n".join(blocks_of(text, "🟢 For AE"))
+    assert all(f"#{n}<" in ae for n in "123") and "#4<" not in ae and "#5<" not in text
+    assert "#6<" in "\n".join(blocks_of(text, "⚫️ For OE"))
+    assert blocks_of(text, "🔵 For TOC (Day Shift)") == ["none"]
+
+
+def test_1130_has_no_carried_over_split_or_header_counts():
+    conn = connect()
+    prior(conn, world(), AM, "0500")
+    _, text, _ = run(conn, world(jo("n1", "1", "AE", posted=at(3, 9))), "1130", MID)
+    for gone in ("Carried over", "Came in this morning", "Active JOs", "midshift"):
+        assert gone not in text
+
+
+def test_1130_tally_counts_from_the_0500_snapshot_of_that_day():
+    conn = connect()
+    prior(conn, world(jo("a", "1", "AE", st="Pending", posted=at(2, 9)),
+                      jo("b", "2", "OE", st="Pending", posted=at(2, 9))), AM, "0500")
+    fake = world(jo("a", "1", "AE", st="Done", posted=at(2, 9)),
+                 jo("b", "2", "OE", st="In progress", posted=at(2, 9)),
+                 jo("c", "3", "AE", st="Pending", posted=at(3, 8)),
+                 jo("old", "4", "AE", st="Pending", posted=at(3, 4)))  # received before 05:00: outside
+    _, text, _ = run(conn, fake, "1130", MID)
+    assert blocks_of(text, "✅ Since 05:00 report") == [
+        "AE: received 1 · processed 1 · accomplished 1",
+        "OE: received 0 · processed 1 · accomplished 0",
+        "<b>Total</b>: received 1 · processed 2 · accomplished 1",
+    ]
+    assert "Compared with" not in text
+
+
+def test_1130_baseline_and_fallback_notes():
+    conn = connect()
+    _, text, _ = run(conn, world(jo("a", "1", "AE", posted=at(3, 6))), "1130", MID)
+    assert "First snapshot: processed and accomplished start next time." in text
+    assert "AE: received 1" in text  # window opens at 05:00 today
+    conn = connect()
+    prior(conn, world(), PREV_1900, "1900")  # no 05:00 snapshot today
+    _, text, _ = run(conn, world(), "1130", MID)
+    assert "Compared with 19:00 on Mon Nov 2" in text
+
+
+def test_1900_tally_opens_from_the_1130_snapshot_when_it_exists():
+    conn = connect()
+    prior(conn, world(jo("a", "1", "AE", st="Pending")), MID, "1130")
+    _, text, _ = run(conn, world(jo("a", "1", "AE", st="Done")), "1900", PM)
+    assert "✅ Since 11:30 report" in text and "Compared with" not in text
+    assert "AE: received 0 · processed 1 · accomplished 1" in text
+
+
+def test_1130_baseline_window_start_is_0500_today():
+    from t6_notion_reports.jo_snapshots import load_latest
+    from t6_notion_reports.shift_job import nominal_window_start
+    conn = connect()
+    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1130", MID)
+    assert nominal_window_start("1130", load_latest(conn)) == AM
+
+
+def test_1130_html_banner_and_splitting_still_hold():
+    jos = [jo(f"p{i}", str(i), "AE", task=f"Task <{i}> & " + "long " * 20) for i in range(1, 120)]
+    report, _, log = run(connect(), world(*jos), "1130", MID, banner=True)
+    assert len(report.messages) > 1
+    for part in report.messages:
+        assert len(part) <= 4096 and part.startswith("🧪 TEST\n")
+        assert_valid_html(part)
+    assert "slot=1130" in log[0] and "baseline=True" in log[0]

@@ -12,7 +12,7 @@ from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
-from .shift_job import MIDSHIFT_SLOT, NotionUnavailable, ShiftTarget, run_shift_report
+from .shift_job import NotionUnavailable, ShiftTarget, run_shift_report
 from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
@@ -37,8 +37,8 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     jo.add_argument("--kind", choices=jo_snapshots.KINDS, default="manual")
     jo.add_argument("--config", default="config.yaml")
     jo.add_argument("--db", help="default: database_path from --config")
-    shift = sub.add_parser("shift-report", help="build one midshift or end-of-shift Job Orders report")
-    shift.add_argument("--slot", choices=sorted([*SHIFT_SLOTS, MIDSHIFT_SLOT]), required=True)
+    shift = sub.add_parser("shift-report", help="build one 11:30, 19:00 or 05:00 Job Orders report")
+    shift.add_argument("--slot", choices=sorted(SHIFT_SLOTS), required=True)
     shift.add_argument("--config", default="config.yaml")
     shift.add_argument("--db", help="default: database_path from --config")
     shift.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")

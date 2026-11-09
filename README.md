@@ -175,7 +175,7 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
 ## JO shift reports
 
 Three Job Orders reports go to one group topic every day (weekends and holidays included), Asia/Manila:
-05:00 night end of shift, 11:30 day midshift, 19:00 day end of shift. At each slot the scheduler takes a
+05:00 night end of shift, 11:30 day mid shift, 19:00 day end of shift. At each slot the scheduler takes a
 Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     jo_data_source: "…"
