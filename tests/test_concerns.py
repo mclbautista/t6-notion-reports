@@ -3,6 +3,8 @@ import re
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
+
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, date, relation
 from t6_notion_reports.brief_job import run_brief
 from t6_notion_reports.snapshot_job import run_snapshot
@@ -226,3 +228,56 @@ def test_a_notes_dependent_ordering_concern_resolves_when_the_notes_date_moves_a
     run(conn, 0, llm=note_date_llm())
     text = dm(run(conn, 1, llm=Llm(reply_with())))  # extraction worked and found no date
     assert concern_lines(text) == [] and len(resolved_lines(text)) == 1
+
+
+@pytest.mark.parametrize("unavailable", ["failure", "skipped"])
+def test_notes_date_concern_lifecycle_reaches_coordinator_and_digest(unavailable):
+    """#92: uncertainty preserves age; recovered evidence can establish a fix."""
+    conn = note_date_setup()
+
+    def check_open(gateway, weeks):
+        for text in (dm(gateway), digest(gateway)):
+            (line,) = concern_lines(text)
+            assert f"since Nov 14 ({weeks} wk" in line
+            assert not resolved_lines(text)
+        (first_on, resolved_on, source) = conn.execute(
+            "SELECT first_on, resolved_on, source FROM concerns"
+        ).fetchone()
+        assert (first_on, resolved_on, source) == ("2026-11-14", None, "flags_notes")
+
+    check_open(run(conn, 0, llm=note_date_llm()), 0)
+    llm = FailingLlm() if unavailable == "failure" else None
+    check_open(run(conn, 1, llm=llm), 1)
+    check_open(run(conn, 2, llm=llm), 2)
+    check_open(run(conn, 3, llm=note_date_llm()), 3)
+
+    # A changed property cannot prove the ordering fixed while Submission is unknown.
+    from fake_notion import rich
+    page = proj("p1", "ONE", IN_PROGRESS,
+                **staffed(**LISTED, Playdate=date("2026-11-30"),
+                          **{"Submission Deadline": date(None)}),
+                **{"PM Notes": rich(NOTE_DATE_NOTES)})
+    run_snapshot(conn, FakeNotion([page], contacts()), PROJECTS, CONTACTS,
+                 "friday", FRIDAY + timedelta(weeks=4))
+    check_open(run(conn, 4, llm=llm), 4)
+    # Extraction confirms Dec 1 submission now follows Nov 30 playdate.
+    fixed = run(conn, 5, llm=note_date_llm())
+    for text in (dm(fixed), digest(fixed)):
+        assert not concern_lines(text)
+        (line,) = resolved_lines(text)
+        assert "Submission Deadline (Dec 1, 2026) is before Playdate (Dec 20, 2026)" in line
+    assert conn.execute("SELECT resolved_on FROM concerns").fetchone() == ("2026-12-19",)
+
+
+@pytest.mark.parametrize("unavailable", ["failure", "skipped"])
+def test_stored_property_fix_resolves_in_both_briefs_without_inference(unavailable):
+    conn = setup()
+    llm = FailingLlm() if unavailable == "failure" else None
+    initial = run(conn, 0, llm=llm)
+    for text in (dm(initial), digest(initial)):
+        assert "since Nov 14 (0 wks)" in concern_lines(text)[0]
+    friday(conn, concern=False)
+    fixed = run(conn, 1, llm=llm)
+    for text in (dm(fixed), digest(fixed)):
+        assert not concern_lines(text)
+        assert len(resolved_lines(text)) == 1
