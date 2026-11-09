@@ -171,7 +171,8 @@ def _shift_report(args, notion, now) -> int:
     try:
         run_shift_report(conn, notion, cfg.jo_data_source, cfg.contacts_data_source, cfg.projects_data_source,
                          args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
-                         log=lambda text: print(text, file=sys.stderr, flush=True), target=target)
+                         log=lambda text: print(text, file=sys.stderr, flush=True), target=target,
+                         llm=_shift_llm(cfg))
     except (GatewayError, NotionUnavailable) as exc:
         print(f"shift-report failed: {exc}", file=sys.stderr)
         return 1
@@ -194,6 +195,13 @@ def _shift_target(cfg) -> ShiftTarget:
     """A gateway client authenticated with SHIFT_SECRET, never PSR_SECRET."""
     shift = cfg.shift
     return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.chat_id, shift.topic_id, shift.ops_chat_id)
+
+
+def _shift_llm(cfg):
+    """Haiku for the task summaries when the OpenRouter key is set; None means the first three words."""
+    if cfg.shift is not None and cfg.shift.openrouter_api_key:
+        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+    return None
 
 
 def _brief(args, notion, now) -> int:
@@ -266,7 +274,8 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                 run_shift_report(conn_jo, notion, cfg.jo_data_source, cfg.contacts_data_source,
                                  cfg.projects_data_source, kind[len("shift"):], moment,
                                  banner=cfg.shift.test_banner, log=lambda text: print(text, flush=True),
-                                 target=_shift_target(cfg) if shift_target is None else shift_target)
+                                 target=_shift_target(cfg) if shift_target is None else shift_target,
+                                 llm=_shift_llm(cfg))
             finally:
                 conn_jo.close()
             return

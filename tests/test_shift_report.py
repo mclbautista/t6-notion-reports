@@ -295,7 +295,7 @@ def test_run_logs_one_counts_line_with_no_text():
     _, _, log = run(conn, world(jo("j1", "1", "AE", task="Secret Task")), "1900", PM)
     assert len(log) == 1 and "Secret Task" not in log[0]
     assert re.fullmatch(r"shift slot=1900 snapshot=\d+ baseline=False unfinished=1 received=\d+ processed=\d+ "
-                        r"accomplished=\d+ parts=1", log[0])
+                        r"accomplished=\d+ parts=1 summaries=0 cached=0 fallback=0", log[0])
 
 
 # ---- CLI ----------------------------------------------------------------------------------------
