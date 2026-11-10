@@ -59,15 +59,27 @@ its value. The SQLite file lives in `./data`, which the non-root container user 
 
 ### Tailnet and gateway networking
 
-The pinned Tailscale sidecar follows [t6-netops' sidecar pattern](https://github.com/mclbautista/t6-netops#tailscale-sidecar).
+The Tailscale sidecar is **opt-in**. The default deploy below (`docker compose up`, with or
+without the existing `compose.override.yaml`) does not start it and is unchanged. It lives in
+`compose.tailscale.yaml`, which Compose loads only when selected. While it is enabled, select
+the files in this order for **every** Compose command (deploy, restart, logs, rollback):
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.override.yaml:compose.tailscale.yaml
+docker compose up -d --build
+```
+
+If there is no override, omit `:compose.override.yaml`. The overlay must come last.
+
+The pinned sidecar follows [t6-netops' sidecar pattern](https://github.com/mclbautista/t6-netops#tailscale-sidecar).
 For initial enrollment, put `TS_AUTHKEY=<key>` in a mode-0600 `.env.tailscale` file, using a
 **non-ephemeral** key authorized for `tag:t6-reports`. Remove any `TS_AUTHKEY` from the shared
 `.env` first: that file is injected into the reports container. Do not put the key in shell history,
 command arguments, logs, or version control. Compose loads `.env.tailscale` only into the sidecar;
 container configuration remains accessible to Docker administrators. Once enrollment is confirmed,
 remove the key file and revoke the key; normal Compose commands do not require it. A new key is
-needed if the saved identity is lost or must be re-enrolled. Compose 2.24.0 or newer is required
-for the optional env file. The sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
+needed if the saved identity is lost or must be re-enrolled. Compose 2.24.4 or newer is required
+for the optional env file and `!reset`. The sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
 in the Compose `tailscale_state` volume. Keep the volume and Compose project name across redeploys
 and reboots. Do not use `docker compose down -v` or remove the volume: that loses the identity and
 can create a duplicate device. Kernel networking requires `/dev/net/tun` and `NET_ADMIN` in Colima.
@@ -78,18 +90,15 @@ tailnet IP, not an assumed MagicDNS name. Tailnet ACLs, not this Compose file, m
 tag to queue port 8790 and deny tap port 8791; see the t6-netops policy. This change adds connectivity,
 not the Frame.io queue client.
 
-**Existing external `sixto` network:** Before deploying, back up the untracked local
-`compose.override.yaml`. It currently attaches `notion-reports` to the external `sixto` network;
-that is incompatible with `network_mode: service:tailscale`. Move that service's network attachment,
-including any needed aliases, to `tailscale` instead. Preserve unrelated override settings and the
-existing gateway's attachment. See `compose.sixto.example.yaml` for the network and the
-`notion-reports` alias; merge its relevant parts into the existing override, rather than replacing
-it blindly. The example is not auto-loaded. The network must already exist. If the gateway is on
-`sixto`, this preserves the shared Docker network path; keep
-the configured gateway `/notify` URL unchanged. If it uses a different network, attach the sidecar
-to that network instead. Validate the merged model with `docker compose config --quiet` without
-printing the resolved secrets. The sidecar may need the default network too if another existing
-attachment depends on it; explicitly retain all required networks when overriding.
+**Existing external `sixto` network:** Before enabling, back up the untracked local
+`compose.override.yaml`. It attaches `notion-reports` to the external `sixto` network, which
+cannot be combined with `network_mode: service:tailscale`. The overlay handles this without
+editing the override: it clears the networks on `notion-reports` and attaches the sidecar to
+`sixto` with the `notion-reports` alias, so the shared Docker network path to the gateway is
+kept. Keep the configured gateway `/notify` URL unchanged. The network must already exist. If the
+override gives `notion-reports` other networks or aliases, add them to `tailscale` in a further
+local file loaded after the overlay; they do not transfer automatically. Validate the merged
+model with `docker compose config --quiet` without printing the resolved secrets.
 
 After an approved deployment, check `docker compose ps` and `docker compose logs tailscale` (avoid
 sharing logs containing sensitive information). Verify a controlled `/notify` through the existing
@@ -134,13 +143,13 @@ running image; without that tag there is nothing to roll back to:
     # or: git checkout <old-commit> && docker compose up -d --build
 
 `./data` is never touched by a rollback. Snapshots are append-only.
-The image-only rollback keeps the sidecar and its state. To roll back the **network topology** too,
-stop the sidecar while the new configuration is still in place (`docker compose stop tailscale`),
-then restore the pre-sidecar Compose revision and the backed-up override together (reattach
-`notion-reports` to `sixto`), then recreate the service using that revision's Compose configuration.
-Keep the `tailscale_state` volume even if the old revision does not use it; do not run `down -v`.
-Check `/notify` again. This stops use of the reports tailnet node, so queue access is lost until the
-sidecar topology is restored. Do not remove the device or volume as part of rollback.
+With the sidecar enabled, the image-only rollback keeps the sidecar and its state as long as
+`COMPOSE_FILE` is still set. To roll back the **network topology** too, stop both services with
+the overlay still selected (`docker compose stop notion-reports tailscale`), then `unset COMPOSE_FILE`
+and run `docker compose up -d` so the default configuration and the existing override reattach
+`notion-reports` to `sixto`. Remove only the stopped sidecar container if it remains. Keep the
+`tailscale_state` volume; do not run `down -v` or remove the device. Check `/notify` again. Queue
+access is lost until the overlay is enabled again.
 
 ### Manual snapshot
 

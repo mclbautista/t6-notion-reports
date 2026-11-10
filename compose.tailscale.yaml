@@ -1,0 +1,50 @@
+# Opt-in Tailscale sidecar. Not loaded by plain `docker compose up`; select it explicitly and
+# put it last, after any existing compose.override.yaml (see "Tailnet and gateway networking"
+# in the README). The sidecar owns the network namespace, so it carries the shared `sixto`
+# network and alias instead of notion-reports.
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c
+    restart: unless-stopped
+    env_file:
+      - path: .env.tailscale
+        required: false
+    environment:
+      TS_EXTRA_ARGS: --advertise-tags=tag:t6-reports
+      TS_HOSTNAME: t6-reports
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    networks:
+      sixto:
+        aliases:
+          - notion-reports
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+  notion-reports:
+    network_mode: service:tailscale
+    networks: !reset {}
+    depends_on:
+      tailscale:
+        condition: service_started
+        restart: true
+
+networks:
+  sixto:
+    external: true
+    name: sixto
+
+volumes:
+  tailscale_state:
