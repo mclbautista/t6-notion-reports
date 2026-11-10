@@ -13,7 +13,7 @@ briefing sends through the gateway. The Monday run also drafts the minutes in No
 
 Anyone can read this repo and its whole history. Never commit:
 
-- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. They go in `.env` only.
+- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
 - real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
 - data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
 - real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
@@ -60,12 +60,20 @@ its value. The SQLite file lives in `./data`, which the non-root container user 
 ### Tailnet and gateway networking
 
 The pinned Tailscale sidecar follows [t6-netops' sidecar pattern](https://github.com/mclbautista/t6-netops#tailscale-sidecar).
-Set `TS_AUTHKEY` in `.env` to a **non-ephemeral** auth key authorized for `tag:t6-reports`;
-the sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
+For initial enrollment, put `TS_AUTHKEY=<key>` in a mode-0600 `.env.tailscale` file, using a
+**non-ephemeral** key authorized for `tag:t6-reports`. Remove any `TS_AUTHKEY` from the shared
+`.env` first: that file is injected into the reports container. Do not put the key in shell history,
+command arguments, logs, or version control. Compose loads `.env.tailscale` only into the sidecar;
+container configuration remains accessible to Docker administrators. Once enrollment is confirmed,
+remove the key file and revoke the key; normal Compose commands do not require it. A new key is
+needed if the saved identity is lost or must be re-enrolled. Compose 2.24.0 or newer is required
+for the optional env file. The sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
 in the Compose `tailscale_state` volume. Keep the volume and Compose project name across redeploys
 and reboots. Do not use `docker compose down -v` or remove the volume: that loses the identity and
 can create a duplicate device. Kernel networking requires `/dev/net/tun` and `NET_ADMIN` in Colima.
-Reports shares the sidecar's network namespace and waits for its health check. Use the VPS's 100.x
+Reports shares the sidecar's network namespace and waits for it to start, not to become healthy;
+a tailnet outage should not alone block the scheduler at Compose startup. Tailnet connectivity may
+still be unavailable until the health check passes. Use the VPS's 100.x
 tailnet IP, not an assumed MagicDNS name. Tailnet ACLs, not this Compose file, must allow the reports
 tag to queue port 8790 and deny tap port 8791; see the t6-netops policy. This change adds connectivity,
 not the Frame.io queue client.
@@ -96,9 +104,14 @@ docker compose exec notion-reports python -c 'import socket; socket.create_conne
 The first must succeed and the second fail. A failed connection alone does not prove the ACL:
 confirm the tap service is listening and reachable from an authorized gateway node, and check the
 applied policy. Record the sidecar's `Self.ID` from `docker compose exec tailscale tailscale status --json`
-(keep that output private), and confirm it is unchanged after a sidecar restart and reboot. Compose-initiated sidecar restarts
-restart reports, but an automatic sidecar crash/restart can leave reports in a stale namespace;
-recover with `docker compose up -d --force-recreate notion-reports` and recheck connectivity.
+(keep that output private), and confirm it is unchanged after a sidecar restart and reboot.
+**Recovery is not automatic:** Compose's `restart: true` only covers explicit Compose operations,
+not runtime crashes. A sidecar crash/restart or recreation can leave reports without working network
+connectivity, including the gateway path. Monitor both containers and an end-to-end gateway check;
+if connectivity fails, run `docker compose up -d --force-recreate notion-reports`, then recheck
+`/notify` and tailnet connectivity. This topology has not been validated for automatic crash/reboot
+recovery; a daemon-backed lifecycle test and an approved monitoring/recovery mechanism are required
+before relying on unattended operation. No privileged Docker-socket watchdog is installed here.
 
 ### Deploy
 
