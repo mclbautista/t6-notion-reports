@@ -66,6 +66,11 @@ def test_enrollment_key_is_sidecar_only_and_optional_after_enrollment(tmp_path):
     assert "TS_AUTHKEY" not in json.loads(after.stdout)["services"]["tailscale"]["environment"]
 
 
+def test_sidecar_secret_excluded_from_docker_build_context():
+    patterns = (ROOT / ".dockerignore").read_text().splitlines()
+    assert ".env.*" in patterns or ".env.tailscale" in patterns
+
+
 def test_external_sixto_network_is_attached_to_sidecar_not_app(tmp_path):
     config = model(tmp_path, "compose.sixto.example.yaml")
     app = config["services"]["notion-reports"]
