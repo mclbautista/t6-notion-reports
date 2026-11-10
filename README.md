@@ -13,7 +13,7 @@ briefing sends through the gateway. The Monday run also drafts the minutes in No
 
 Anyone can read this repo and its whole history. Never commit:
 
-- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET` or any other token or key. They go in `.env` only.
+- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
 - real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
 - data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
 - real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
@@ -57,6 +57,71 @@ Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
 
+### Tailnet and gateway networking
+
+The Tailscale sidecar is **opt-in**. The default deploy below (`docker compose up`, with or
+without the existing `compose.override.yaml`) does not start it and is unchanged. It lives in
+`compose.tailscale.yaml`, which Compose loads only when selected. While it is enabled, select
+the files in this order for **every** Compose command (deploy, restart, logs, rollback):
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.override.yaml:compose.tailscale.yaml
+docker compose up -d --build
+```
+
+If there is no override, omit `:compose.override.yaml`. The overlay must come last.
+
+The pinned sidecar follows [t6-netops' sidecar pattern](https://github.com/mclbautista/t6-netops#tailscale-sidecar).
+For initial enrollment, put `TS_AUTHKEY=<key>` in a mode-0600 `.env.tailscale` file, using a
+**non-ephemeral** key authorized for `tag:t6-reports`. Remove any `TS_AUTHKEY` from the shared
+`.env` first: that file is injected into the reports container. Do not put the key in shell history,
+command arguments, logs, or version control. Compose loads `.env.tailscale` only into the sidecar;
+container configuration remains accessible to Docker administrators. Once enrollment is confirmed,
+remove the key file and revoke the key; normal Compose commands do not require it. A new key is
+needed if the saved identity is lost or must be re-enrolled. Compose 2.24.4 or newer is required
+for the optional env file and `!reset`. The sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
+in the Compose `tailscale_state` volume. Keep the volume and Compose project name across redeploys
+and reboots. Do not use `docker compose down -v` or remove the volume: that loses the identity and
+can create a duplicate device. Kernel networking requires `/dev/net/tun` and `NET_ADMIN` in Colima.
+Reports shares the sidecar's network namespace and waits for it to start, not to become healthy;
+a tailnet outage should not alone block the scheduler at Compose startup. Tailnet connectivity may
+still be unavailable until the health check passes. Use the VPS's 100.x
+tailnet IP, not an assumed MagicDNS name. Tailnet ACLs, not this Compose file, must allow the reports
+tag to queue port 8790 and deny tap port 8791; see the t6-netops policy. This change adds connectivity,
+not the Frame.io queue client.
+
+**Existing external `sixto` network:** Before enabling, back up the untracked local
+`compose.override.yaml`. It attaches `notion-reports` to the external `sixto` network, which
+cannot be combined with `network_mode: service:tailscale`. The overlay handles this without
+editing the override: it clears the networks on `notion-reports` and attaches the sidecar to
+`sixto` with the `notion-reports` alias, so the shared Docker network path to the gateway is
+kept. Keep the configured gateway `/notify` URL unchanged. The network must already exist. If the
+override gives `notion-reports` other networks or aliases, add them to `tailscale` in a further
+local file loaded after the overlay; they do not transfer automatically. Validate the merged
+model with `docker compose config --quiet` without printing the resolved secrets.
+
+After an approved deployment, check `docker compose ps` and `docker compose logs tailscale` (avoid
+sharing logs containing sensitive information). Verify a controlled `/notify` through the existing
+gateway address using the normal approved delivery procedure, and test TCP from the running reports
+container with a VPS tailnet IP substituted below (never a real key):
+
+```sh
+docker compose exec notion-reports python -c 'import socket; socket.create_connection(("<VPS_TAILNET_IP>", 8790), 5).close(); print("queue reachable")'
+docker compose exec notion-reports python -c 'import socket; socket.create_connection(("<VPS_TAILNET_IP>", 8791), 5).close(); print("WARNING: tap reachable")'
+```
+
+The first must succeed and the second fail. A failed connection alone does not prove the ACL:
+confirm the tap service is listening and reachable from an authorized gateway node, and check the
+applied policy. Record the sidecar's `Self.ID` from `docker compose exec tailscale tailscale status --json`
+(keep that output private), and confirm it is unchanged after a sidecar restart and reboot.
+**Recovery is not automatic:** Compose's `restart: true` only covers explicit Compose operations,
+not runtime crashes. A sidecar crash/restart or recreation can leave reports without working network
+connectivity, including the gateway path. Monitor both containers and an end-to-end gateway check;
+if connectivity fails, run `docker compose up -d --force-recreate notion-reports`, then recheck
+`/notify` and tailnet connectivity. This topology has not been validated for automatic crash/reboot
+recovery; a daemon-backed lifecycle test and an approved monitoring/recovery mechanism are required
+before relying on unattended operation. No privileged Docker-socket watchdog is installed here.
+
 ### Deploy
 
     git clone https://github.com/mclbautista/t6-notion-reports && cd t6-notion-reports   # first time only
@@ -78,6 +143,13 @@ running image; without that tag there is nothing to roll back to:
     # or: git checkout <old-commit> && docker compose up -d --build
 
 `./data` is never touched by a rollback. Snapshots are append-only.
+With the sidecar enabled, the image-only rollback keeps the sidecar and its state as long as
+`COMPOSE_FILE` is still set. To roll back the **network topology** too, stop both services with
+the overlay still selected (`docker compose stop notion-reports tailscale`), then `unset COMPOSE_FILE`
+and run `docker compose up -d` so the default configuration and the existing override reattach
+`notion-reports` to `sixto`. Remove only the stopped sidecar container if it remains. Keep the
+`tailscale_state` volume; do not run `down -v` or remove the device. Check `/notify` again. Queue
+access is lost until the overlay is enabled again.
 
 ### Manual snapshot
 
