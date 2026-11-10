@@ -1,0 +1,13 @@
+# Optional example: merge into the existing local compose.override.yaml.
+# Attach the shared namespace owner, not the network_mode service.
+services:
+  tailscale:
+    networks:
+      sixto:
+        aliases:
+          - notion-reports
+
+networks:
+  sixto:
+    external: true
+    name: sixto

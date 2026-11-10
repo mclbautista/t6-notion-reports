@@ -13,7 +13,7 @@ briefing sends through the gateway. The Monday run also drafts the minutes in No
 
 Anyone can read this repo and its whole history. Never commit:
 
-- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET` or any other token or key. They go in `.env` only.
+- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. They go in `.env` only.
 - real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
 - data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
 - real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
@@ -57,6 +57,49 @@ Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
 
+### Tailnet and gateway networking
+
+The pinned Tailscale sidecar follows [t6-netops' sidecar pattern](https://github.com/mclbautista/t6-netops#tailscale-sidecar).
+Set `TS_AUTHKEY` in `.env` to a **non-ephemeral** auth key authorized for `tag:t6-reports`;
+the sidecar advertises that tag, identifies itself as `t6-reports`, and saves its node identity
+in the Compose `tailscale_state` volume. Keep the volume and Compose project name across redeploys
+and reboots. Do not use `docker compose down -v` or remove the volume: that loses the identity and
+can create a duplicate device. Kernel networking requires `/dev/net/tun` and `NET_ADMIN` in Colima.
+Reports shares the sidecar's network namespace and waits for its health check. Use the VPS's 100.x
+tailnet IP, not an assumed MagicDNS name. Tailnet ACLs, not this Compose file, must allow the reports
+tag to queue port 8790 and deny tap port 8791; see the t6-netops policy. This change adds connectivity,
+not the Frame.io queue client.
+
+**Existing external `sixto` network:** Before deploying, back up the untracked local
+`compose.override.yaml`. It currently attaches `notion-reports` to the external `sixto` network;
+that is incompatible with `network_mode: service:tailscale`. Move that service's network attachment,
+including any needed aliases, to `tailscale` instead. Preserve unrelated override settings and the
+existing gateway's attachment. See `compose.sixto.example.yaml` for the network and the
+`notion-reports` alias; merge its relevant parts into the existing override, rather than replacing
+it blindly. The example is not auto-loaded. The network must already exist. If the gateway is on
+`sixto`, this preserves the shared Docker network path; keep
+the configured gateway `/notify` URL unchanged. If it uses a different network, attach the sidecar
+to that network instead. Validate the merged model with `docker compose config --quiet` without
+printing the resolved secrets. The sidecar may need the default network too if another existing
+attachment depends on it; explicitly retain all required networks when overriding.
+
+After an approved deployment, check `docker compose ps` and `docker compose logs tailscale` (avoid
+sharing logs containing sensitive information). Verify a controlled `/notify` through the existing
+gateway address using the normal approved delivery procedure, and test TCP from the running reports
+container with a VPS tailnet IP substituted below (never a real key):
+
+```sh
+docker compose exec notion-reports python -c 'import socket; socket.create_connection(("<VPS_TAILNET_IP>", 8790), 5).close(); print("queue reachable")'
+docker compose exec notion-reports python -c 'import socket; socket.create_connection(("<VPS_TAILNET_IP>", 8791), 5).close(); print("WARNING: tap reachable")'
+```
+
+The first must succeed and the second fail. A failed connection alone does not prove the ACL:
+confirm the tap service is listening and reachable from an authorized gateway node, and check the
+applied policy. Record the sidecar's `Self.ID` from `docker compose exec tailscale tailscale status --json`
+(keep that output private), and confirm it is unchanged after a sidecar restart and reboot. Compose-initiated sidecar restarts
+restart reports, but an automatic sidecar crash/restart can leave reports in a stale namespace;
+recover with `docker compose up -d --force-recreate notion-reports` and recheck connectivity.
+
 ### Deploy
 
     git clone https://github.com/mclbautista/t6-notion-reports && cd t6-notion-reports   # first time only
@@ -78,6 +121,13 @@ running image; without that tag there is nothing to roll back to:
     # or: git checkout <old-commit> && docker compose up -d --build
 
 `./data` is never touched by a rollback. Snapshots are append-only.
+The image-only rollback keeps the sidecar and its state. To roll back the **network topology** too,
+stop the sidecar while the new configuration is still in place (`docker compose stop tailscale`),
+then restore the pre-sidecar Compose revision and the backed-up override together (reattach
+`notion-reports` to `sixto`), then recreate the service using that revision's Compose configuration.
+Keep the `tailscale_state` volume even if the old revision does not use it; do not run `down -v`.
+Check `/notify` again. This stops use of the reports tailnet node, so queue access is lost until the
+sidecar topology is restored. Do not remove the device or volume as part of rollback.
 
 ### Manual snapshot
 
