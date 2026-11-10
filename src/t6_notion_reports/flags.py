@@ -108,6 +108,16 @@ def relevant_dates(status: object) -> tuple[str, ...]:
     return ()
 
 
+def stored_decides(state: dict[str, object], concern: str) -> bool:
+    """Whether both dates a date-sanity Concern compares are stored properties now, so its ordering can
+    be judged without the PM Notes."""
+    stored = {n for n in (PLAYDATE, SUBMISSION, ARCHIVAL) if stored_day(state.get(n)) is not None}
+    return any(
+        concern.startswith(f"{first} (") and f") is before {second} (" in concern and {first, second} <= stored
+        for first, second in ((SUBMISSION, PLAYDATE), (ARCHIVAL, SUBMISSION))
+    )
+
+
 def _sanity(dates: dict[str, date | None]) -> list[str]:
     out: list[str] = []
     playdate, submission, archival = dates[PLAYDATE], dates[SUBMISSION], dates[ARCHIVAL]
