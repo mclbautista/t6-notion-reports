@@ -281,3 +281,24 @@ def test_stored_property_fix_resolves_in_both_briefs_without_inference(unavailab
     for text in (dm(fixed), digest(fixed)):
         assert not concern_lines(text)
         assert len(resolved_lines(text)) == 1
+
+
+@pytest.mark.parametrize("unavailable", ["failure", "skipped"])
+@pytest.mark.parametrize("submission, still_wrong", [("2026-12-28", False), ("2026-12-05", True)])
+def test_filling_the_blank_property_settles_a_notes_date_concern_without_inference(unavailable, submission, still_wrong):
+    """#92: once both dates are stored properties, the notes date no longer matters, so no inference is needed."""
+    from fake_notion import rich
+    conn = note_date_setup()
+    run(conn, 0, llm=note_date_llm())
+    page = proj("p1", "ONE", IN_PROGRESS,
+                **staffed(**LISTED, Playdate=date("2026-12-20"), **{"Submission Deadline": date(submission)}),
+                **{"PM Notes": rich(NOTE_DATE_NOTES)})
+    run_snapshot(conn, FakeNotion([page], contacts()), PROJECTS, CONTACTS, "friday", FRIDAY + timedelta(minutes=1))
+    gateway = run(conn, 1, llm=FailingLlm() if unavailable == "failure" else None)
+    for text in (dm(gateway), digest(gateway)):
+        (resolved,) = resolved_lines(text)
+        assert "Submission Deadline (Dec 1, 2026) is before Playdate (Dec 20, 2026)" in resolved
+        # The stale notes-date wording is gone; a still-wrong stored date is its own Concern.
+        open_now = concern_lines(text)
+        assert all("Dec 1, 2026" not in line for line in open_now)
+        assert [("Dec 5, 2026" in line) for line in open_now] == ([True] if still_wrong else [])

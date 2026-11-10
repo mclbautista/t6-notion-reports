@@ -12,7 +12,9 @@ Each Concern also records its source: ``flags`` (code, recomputed every run from
 ``flags_notes`` (code, but resting on a date the project's LLM call read from the PM Notes), ``llm``
 (the project's consolidation call) or ``leave`` (the leave parse). When a source could not be read this run (the
 project's call failed, the leaves were unavailable), its open Concerns are neither re-listed from
-stale text nor resolved: they stay open with their age, because nothing says they went away.
+stale text nor resolved: they stay open with their age, because nothing says they went away. The
+exception is a ``flags_notes`` Concern whose dates have since all become stored properties: the code
+can judge it again, so it is dropped from the kept ones and recomputed like any ``flags`` Concern.
 
 Running the same brief again on the same day changes no stored date.
 """
@@ -21,6 +23,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
+from typing import Callable
 
 from .snapshots import squash
 
@@ -66,11 +69,13 @@ def update_concerns(
     today: date,
     chronic_weeks: int,
     unavailable: set[tuple[str, str]] | None = None,
+    decided: Callable[[str, str], bool] = lambda page_id, text: False,
 ) -> dict[str, AgedConcerns]:
     """Record this run's Concerns (project id → (text, source) pairs) and return what each project shows.
 
     ``unavailable`` holds (project id, source) pairs whose source could not be read this run: their
-    open Concerns stay open and shown, unchanged. Writes inside the connection's open transaction; the
+    open Concerns stay open and shown, unchanged, unless ``decided(project id, text)`` says this run could
+    judge that Concern anyway. Writes inside the connection's open transaction; the
     caller commits, or rolls back for a dry run.
     """
     ensure_source_column(conn)
@@ -83,7 +88,8 @@ def update_concerns(
     }
     # Open Concerns of a source that could not be read: kept as they are, in the order they were stored.
     kept = sorted(
-        (r for r in rows.values() if r[5] is None and (r[0], r[6]) in unavailable),
+        (r for r in rows.values() if r[5] is None and (r[0], r[6]) in unavailable
+         and not (r[6] == FLAGS_NOTES and decided(r[0], r[2]))),
         key=lambda r: (r[3], r[1]),
     )
     current = {p: list(items) for p, items in current.items()}

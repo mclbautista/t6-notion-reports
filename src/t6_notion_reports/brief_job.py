@@ -13,7 +13,7 @@ from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
-from .flags import project_flags
+from .flags import project_flags, stored_decides
 from .gateway import GatewayError
 from .holidays import leave_lines
 from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
@@ -150,7 +150,11 @@ def run_brief(
             *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
-    aged = update_concerns(conn, current, today, brief.concern_chronic_weeks, unavailable)
+    # A notes-dependent Concern whose dates are all stored now needs no inference: it is in ``current`` or fixed.
+    aged = update_concerns(
+        conn, current, today, brief.concern_chronic_weeks, unavailable,
+        lambda p, text: p in new_state and stored_decides(new_state[p], text),
+    )
     # A dry run shows the ages and the resolved line but leaves the store as it was.
     if dry_print or gateway is None:
         conn.rollback()
