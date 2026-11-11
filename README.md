@@ -156,7 +156,7 @@ access is lost until the overlay is enabled again.
     docker compose run --rm notion-reports snapshot --config /app/config.yaml --kind manual
 
 `--kind` is `monday`, `friday` or `manual`. The first snapshot ever taken is flagged as the
-baseline (planned: Mon 2026-11-09 11:00, after Cyril's go-ahead).
+baseline.
 
 ## Saturday briefing
 
