@@ -532,7 +532,7 @@ def test_oversized_linked_jo_label_splits_into_valid_parts():
 
 
 def test_turnover_format_requested_by_coordinators():
-    """Leizette's 2026-11-12 format: emoji-only health, one "#" in the JO ID, no list number in the task,
+    """The 2026-11-12 coordinator format: emoji-only health, one "#" in the JO ID, no list number in the task,
     bold names with a blank line between them, "Nov 3 / Tue (18:00)" dates, sentence-case tally."""
     conn = connect()
     prior(conn, world(), MID, "1130")
