@@ -69,9 +69,14 @@ def page_url(page_id: str) -> str:
     return NOTION_PAGE + page_id.replace("-", "")
 
 
+def moment_text(moment: datetime) -> str:
+    """``Nov 13 / Fri (23:59)`` in Manila time: the one date format of the turnover reports."""
+    return moment.astimezone(MANILA).strftime("%b %-d / %a (%H:%M)")
+
+
 def deadline_text(fields: Fields) -> str:
     moment = parse_instant(fields.get("Deadline"))
-    return "no deadline" if moment is None else moment.astimezone(MANILA).strftime("%a %b %-d %H:%M")
+    return "no deadline" if moment is None else moment_text(moment)
 
 
 def _names(refs: object, empty: str) -> str:
@@ -118,10 +123,11 @@ def department_order(present: set[str | None]) -> list[str | None]:
 
 
 def jo_id_text(fields: Fields) -> str:
-    """``<project code> #<JO Number>``: several projects joined with "/", none gives "no project", no number "#?"."""
+    """``<project code>#<JO Number>``: one "#" even when the JO Number has its own, several projects joined
+    with "/", none gives "no project", no number "#?"."""
     names = [str(r.get("name") or r["id"]) for r in fields.get("Projects") or [] if isinstance(r, dict)]
-    number = str(fields.get("JO Number") or "").strip()
-    return f"{'/'.join(names) or 'no project'} #{number or '?'}"
+    number = str(fields.get("JO Number") or "").strip().lstrip("#").strip()
+    return f"{'/'.join(names) or 'no project'}#{number or '?'}"
 
 
 def assignee_names(fields: Fields) -> list[str]:
@@ -129,10 +135,10 @@ def assignee_names(fields: Fields) -> list[str]:
 
 
 def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owner: str | None) -> Line:
-    """``[health ]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
+    """``[health emoji]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
     health = fields.get("Health")
     others = [n for n in assignee_names(fields) if n != owner]
-    parts: list = [f"{health} " if health in FLAGGED_HEALTH else "",
+    parts: list = [str(health).split()[0] if health in FLAGGED_HEALTH else "",
                    link(jo_id_text(fields), page_url(page_id)),
                    f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",
@@ -143,7 +149,8 @@ def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owne
 
 
 def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer) -> list[Block]:
-    """One block per assignee (alphabetical, Unassigned last); a JO with several assignees is in each."""
+    """One block per assignee, bold name, a blank line between blocks (alphabetical, Unassigned last); a JO
+    with several assignees is in each."""
     by_person: dict[str | None, list[tuple[str, Fields]]] = {}
     for item in items:
         for name in assignee_names(item[1]) or [None]:
@@ -151,7 +158,9 @@ def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer)
     people = sorted((n for n in by_person if n is not None), key=lambda n: (n.casefold(), n))
     blocks: list[Block] = []
     for person in people + ([None] if None in by_person else []):
-        blocks.append(line(person or UNASSIGNED))
+        if blocks:
+            blocks.append(Line())
+        blocks.append(line(bold(person or UNASSIGNED)))
         blocks += [turnover_line(p, f, summarizer, person) for p, f in sort_by_deadline(by_person[person])]
     return blocks
 
@@ -159,7 +168,7 @@ def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer)
 def last_edit_footer(page_ids: set[str], pages: dict[str, Fields]) -> Line:
     """``Last JO edit: <time>``: the newest last-edited time among the JOs counted in the report."""
     edits = [m for p in page_ids if (m := parse_instant(pages[p].get("last_edited_time")))]
-    text = max(edits).astimezone(MANILA).strftime("%a %b %-d %H:%M") if edits else "none"
+    text = moment_text(max(edits)) if edits else "none"
     return line(f"Last JO edit: {text}")
 
 
@@ -248,7 +257,7 @@ def build_end_of_shift(
     moment = current.taken_at.astimezone(MANILA)
     blocks: list[Block] = [
         line(bold(report_slot.title)),
-        line(f"{moment.strftime('%a %b %-d')} / {moment.strftime('%A')} ({moment.strftime('%H:%M')})"),
+        line(moment_text(moment)),
     ]
 
     active = [(p, f) for p, f in current.pages.items() if is_active(f)]
@@ -289,9 +298,9 @@ def build_end_of_shift(
 
 def _count_blocks(counts: WindowCounts, with_flow: bool) -> list[Block]:
     def text(c: Counts) -> str:
-        parts = [f"received {c.received}"]
+        parts = [f"Received {c.received}"]
         if with_flow:
-            parts += [f"processed {c.processed}", f"accomplished {c.accomplished}"]
+            parts += [f"Processed {c.processed}", f"Accomplished {c.accomplished}"]
         return SEP.join(parts)
 
     rows = [line(f"{d or NO_DEPARTMENT}: {text(c)}")

@@ -5,6 +5,7 @@ a Haiku call, later a ``t6.llm`` task) is wiring, not rendering.
 """
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 MAX_WORDS = 3
@@ -27,12 +28,22 @@ class FirstWordsSummarizer:
         return first_words(task_text) or None
 
 
+LIST_NUMBER = re.compile(r"^\s*\(?\d+[.)]\s+")
+
+
 def task_label(task: object, summarizer: TaskSummarizer) -> str:
     """What a report line shows for a Task: the summarizer's reply when it is a valid one of at most
-    three words, otherwise the first three words of the Task; an empty Task shows "no task"."""
+    three words, otherwise the first three words of the Task; an empty Task shows "no task". A leading
+    list number ("1. process D15") is dropped and what is left starts with a capital letter."""
     text = str(task or "").strip()
     if not text:
         return NO_TASK
+    label = _label(text, summarizer)
+    unnumbered = LIST_NUMBER.sub("", label)
+    return unnumbered[:1].upper() + unnumbered[1:] if unnumbered and unnumbered != label else label
+
+
+def _label(text: str, summarizer: TaskSummarizer) -> str:
     try:
         reply = summarizer.summarize(text)
     except Exception:  # a summarizer failure never stops a report
