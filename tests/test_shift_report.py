@@ -52,8 +52,12 @@ def prior(conn, fake=None, when=MID, kind="1130"):
     run_jo_snapshot(conn, fake or world(), JOB_ORDERS, CONTACTS, PROJECTS, kind, when)
 
 
+PERSON_NAMES = {"Oto", "Rex", "Unassigned"}
+
+
 def headings(text):
-    return re.findall(r"^<b>(.+?)</b>$", text, re.M)
+    """Bold section headings; bold assignee names are not headings."""
+    return [h for h in re.findall(r"^<b>(.+?)</b>$", text, re.M) if h.strip() not in PERSON_NAMES]
 
 
 class FakeSummarizer:
@@ -66,8 +70,15 @@ class FakeSummarizer:
 
 
 def blocks_of(text, heading):
-    """The lines under a bold heading, up to the next blank line."""
-    return text.split(f"<b>{heading}</b>\n")[1].split("\n\n")[0].splitlines()
+    """The lines under a bold heading, up to the next section: blank lines between assignee blocks are
+    skipped and bold names are given as plain text."""
+    lines = []
+    for chunk in text.split(f"<b>{heading}</b>\n")[1].split("\n\n"):
+        first = chunk.split("\n", 1)[0]
+        if lines and not re.fullmatch(r"<b>(Oto|Rex|Unassigned)\s*</b>", first):
+            break
+        lines += [re.sub(r"^<b>(.+?)</b>$", r"\1", l) for l in chunk.splitlines()]
+    return lines
 
 
 def test_headers_and_section_order_per_slot():
@@ -79,13 +90,13 @@ def test_headers_and_section_order_per_slot():
     assert headings(text) == [
         "END OF SHIFT REPORT (DAY SHIFT)", "🔵 For TOC (Night Shift)", "🟢 For AE", "⚫️ For OE", "🟡 For COLOR",
         "🟠 For SOUND", "🟤 For VFX", "🟣 For COOR &amp; ADMIN", "Zed", "🔴 No Department", "✅ Since 11:30 report"]
-    assert text.splitlines()[2] == "Tue Nov 3 / Tuesday (19:00)"
+    assert text.splitlines()[2] == "Nov 3 / Tue (19:00)"
     prior_night = connect()
     prior(prior_night, world(), PM, "1900")
     _, text, _ = run(prior_night, world(), "0500", NEXT_AM)
     assert headings(text) == ["END OF SHIFT REPORT (NIGHT SHIFT)", "🔵 For TOC (Day Shift)", "🟢 For AE",
                               "✅ Since 19:00 report"]
-    assert text.splitlines()[2] == "Wed Nov 4 / Wednesday (05:00)"
+    assert text.splitlines()[2] == "Nov 4 / Wed (05:00)"
 
 
 def test_toc_ae_and_tally_always_appear_others_left_out_when_empty_or_finished():
@@ -114,7 +125,7 @@ def test_blocks_alphabetical_unassigned_last_shared_jo_in_each_block_and_deadlin
     assert names == ["Oto", "Rex", "Unassigned"]
     oto = ae[1:ae.index("Rex")]
     assert [re.search(r"#(\d+)", l).group(1) for l in oto] == ["3", "1", "2"]
-    assert oto[1].endswith("Wed Nov 4 09:00 - also: Rex")
+    assert oto[1].endswith("Nov 4 / Wed (09:00) - also: Rex")
     assert ae[ae.index("Rex") + 1].endswith("- also: Oto")
     assert not ae[-1].count("also")
 
@@ -134,9 +145,9 @@ def test_line_format_health_emoji_link_and_escaping():
                      summarizer=summarizer)
     text = "\n".join(out)
     lines = [l for l in text.splitlines() if "notion.so" in l]
-    assert lines[0] == ('🔥 Urgent <a href="https://www.notion.so/abcd1234">FAKEX #48</a> - Export &lt;v2&gt; &amp; - '
-                        "In progress - Tue Nov 3 18:00")
-    assert lines[1].startswith('🔴 Blocked <a ') and lines[2].startswith('⚠️ Delayed <a ')
+    assert lines[0] == ('🔥<a href="https://www.notion.so/abcd1234">FAKEX#48</a> - Export &lt;v2&gt; &amp; - '
+                        "In progress - Nov 3 / Tue (18:00)")
+    assert lines[1].startswith('🔴<a ') and lines[2].startswith('⚠️<a ')
     assert lines[3].startswith('<a ') and lines[4].startswith('<a ')
     assert_valid_html(text)
 
@@ -152,7 +163,7 @@ def test_jo_id_fallbacks():
     ])
     _, text, _ = run(conn, fake, "1900", PM)
     ids = re.findall(r">([^<]+)</a>", text)
-    assert ids == ["FAKEX/Second Show #1", "no project #2", "Second Show #4", "FAKEX #?"]
+    assert ids == ["FAKEX/Second Show#1", "no project#2", "Second Show#4", "FAKEX#?"]
 
 
 def test_task_comes_from_the_summarizer_with_fallbacks():
@@ -187,8 +198,8 @@ def test_empty_relations_and_missing_deadline():
     conn = connect()
     prior(conn)
     _, text, _ = run(conn, world(jo("j1", "5", "TOC", deadline=None)), "1900", PM)
-    assert "no project #5</a> - Export - Pending - no deadline" in text
-    assert "Unassigned\n" in text
+    assert "no project#5</a> - Export - Pending - no deadline" in text
+    assert "<b>Unassigned</b>\n" in text
 
 
 def test_window_counts_per_department_and_total():
@@ -216,10 +227,10 @@ def test_window_counts_per_department_and_total():
     report, text, _ = run(conn, fake, "1900", PM)
     breakdown = blocks_of(text, "✅ Since 11:30 report")
     assert breakdown == [
-        "AE: received 1 · processed 2 · accomplished 2",
-        "VFX: received 0 · processed 1 · accomplished 0",
-        "No department: received 1 · processed 0 · accomplished 0",
-        "<b>Total</b>: received 2 · processed 3 · accomplished 2",
+        "AE: Received 1 · Processed 2 · Accomplished 2",
+        "VFX: Received 0 · Processed 1 · Accomplished 0",
+        "No department: Received 1 · Processed 0 · Accomplished 0",
+        "<b>Total</b>: Received 2 · Processed 3 · Accomplished 2",
     ]
     tally = text.split("Since 11:30 report")[1]
     assert "ADMIN" not in tally and "OE:" not in tally and "COOR:" not in tally
@@ -233,7 +244,7 @@ def test_baseline_reports_received_only_with_a_note():
     assert "First snapshot: processed and accomplished start next time." in text
     window = text.split("<b>✅ Since 11:30 report</b>\n")[1]
     assert "processed" not in window.split("Last JO edit")[0].replace("start next time", "").replace("processed and accomplished", "")
-    assert "AE: received 1" in window and "VFX: received 1" in window and "<b>Total</b>: received 2" in window
+    assert "AE: Received 1" in window and "VFX: Received 1" in window and "<b>Total</b>: Received 2" in window
     assert "baseline=True" in log[0]
     assert report.counts.processed == report.counts.accomplished == 0
 
@@ -244,7 +255,7 @@ def test_fallback_comparison_note_when_bounding_snapshot_is_missing():
     fake = world(jo("j1", "1", "AE", st="Done"))
     _, text, _ = run(conn, fake, "1900", PM)
     assert "Compared with 19:00 on Mon Nov 2" in text
-    assert "accomplished 1" in text
+    assert "Accomplished 1" in text
 
 
 def test_no_note_when_the_expected_snapshot_exists():
@@ -271,7 +282,7 @@ def test_footer_is_newest_edit_among_the_jos_counted():
         jo("gone", "4", "OE", st="Cancelled", edited="2026-11-03T09:59:00.000Z"),  # cancelled: ignored
     )
     _, text, _ = run(conn, fake, "1900", PM)
-    assert text.splitlines()[-1] == "Last JO edit: Tue Nov 3 16:15"
+    assert text.splitlines()[-1] == "Last JO edit: Nov 3 / Tue (16:15)"
 
 
 def test_long_report_splits_into_valid_parts_with_banner():
@@ -286,7 +297,7 @@ def test_long_report_splits_into_valid_parts_with_banner():
         assert part.startswith("🧪 TEST\n")
         assert_valid_html(part)
     assert f"parts={len(report.messages)}" in log[0]
-    assert report.messages[-1].endswith("Last JO edit: Tue Nov 3 09:00")
+    assert report.messages[-1].endswith("Last JO edit: Nov 3 / Tue (09:00)")
 
 
 def test_run_logs_one_counts_line_with_no_text():
@@ -326,7 +337,7 @@ def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
     assert cli.main(["shift-report", "--slot", "1900", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     captured = capsys.readouterr()
-    assert "For TOC (Night Shift)" in captured.out and "no project #48" in captured.out
+    assert "For TOC (Night Shift)" in captured.out and "no project#48" in captured.out
     assert captured.err.startswith("shift slot=1900 ") and "baseline=True" in captured.err
     assert not (fake.created or fake.appended or fake.trashed or fake.sent_marked)
 
@@ -410,9 +421,9 @@ def test_tally_counts_coor_and_admin_separately_and_windows_run_report_to_report
                  jo("old", "3", "COOR", posted=at(3, 18)))  # received before the 19:00 snapshot: outside
     _, text, _ = run(conn, fake, "0500", NEXT_AM)
     assert blocks_of(text, "✅ Since 19:00 report") == [
-        "COOR: received 1 · processed 0 · accomplished 0",
-        "ADMIN: received 1 · processed 0 · accomplished 0",
-        "<b>Total</b>: received 2 · processed 0 · accomplished 0",
+        "COOR: Received 1 · Processed 0 · Accomplished 0",
+        "ADMIN: Received 1 · Processed 0 · Accomplished 0",
+        "<b>Total</b>: Received 2 · Processed 0 · Accomplished 0",
     ]
     assert "🟣 For COOR &amp; ADMIN" in text
 
@@ -429,7 +440,7 @@ def test_1130_header_sections_and_every_unfinished_jo_listed():
     _, text, _ = run(conn, fake, "1130", MID)
     assert headings(text) == ["MID SHIFT DAY REPORT", "🔵 For TOC (Day Shift)", "🟢 For AE", "⚫️ For OE",
                               "✅ Since 05:00 report"]
-    assert text.splitlines()[2] == "Tue Nov 3 / Tuesday (11:30)"
+    assert text.splitlines()[2] == "Nov 3 / Tue (11:30)"
     ae = "\n".join(blocks_of(text, "🟢 For AE"))
     assert all(f"#{n}<" in ae for n in "123") and "#4<" not in ae and "#5<" not in text
     assert "#6<" in "\n".join(blocks_of(text, "⚫️ For OE"))
@@ -454,9 +465,9 @@ def test_1130_tally_counts_from_the_0500_snapshot_of_that_day():
                  jo("old", "4", "AE", st="Pending", posted=at(3, 4)))  # received before 05:00: outside
     _, text, _ = run(conn, fake, "1130", MID)
     assert blocks_of(text, "✅ Since 05:00 report") == [
-        "AE: received 1 · processed 1 · accomplished 1",
-        "OE: received 0 · processed 1 · accomplished 0",
-        "<b>Total</b>: received 1 · processed 2 · accomplished 1",
+        "AE: Received 1 · Processed 1 · Accomplished 1",
+        "OE: Received 0 · Processed 1 · Accomplished 0",
+        "<b>Total</b>: Received 1 · Processed 2 · Accomplished 1",
     ]
     assert "Compared with" not in text
 
@@ -465,7 +476,7 @@ def test_1130_baseline_and_fallback_notes():
     conn = connect()
     _, text, _ = run(conn, world(jo("a", "1", "AE", posted=at(3, 6))), "1130", MID)
     assert "First snapshot: processed and accomplished start next time." in text
-    assert "AE: received 1" in text  # window opens at 05:00 today
+    assert "AE: Received 1" in text  # window opens at 05:00 today
     conn = connect()
     prior(conn, world(), PREV_1900, "1900")  # no 05:00 snapshot today
     _, text, _ = run(conn, world(), "1130", MID)
@@ -477,7 +488,7 @@ def test_1900_tally_opens_from_the_1130_snapshot_when_it_exists():
     prior(conn, world(jo("a", "1", "AE", st="Pending")), MID, "1130")
     _, text, _ = run(conn, world(jo("a", "1", "AE", st="Done")), "1900", PM)
     assert "✅ Since 11:30 report" in text and "Compared with" not in text
-    assert "AE: received 0 · processed 1 · accomplished 1" in text
+    assert "AE: Received 0 · Processed 1 · Accomplished 1" in text
 
 
 def test_1130_baseline_window_start_is_0500_today():
@@ -503,7 +514,7 @@ def test_empty_tally_shows_none_and_still_a_zero_total():
     prior(conn, world(), MID, "1130")
     _, text, _ = run(conn, world(), "1900", PM)
     assert blocks_of(text, "✅ Since 11:30 report") == [
-        "none", "<b>Total</b>: received 0 · processed 0 · accomplished 0"]
+        "none", "<b>Total</b>: Received 0 · Processed 0 · Accomplished 0"]
 
 
 def test_oversized_linked_jo_label_splits_into_valid_parts():
@@ -518,3 +529,35 @@ def test_oversized_linked_jo_label_splits_into_valid_parts():
     for message in report.messages:
         assert len(message) <= 4096
         assert_valid_html(message)
+
+
+def test_turnover_format_requested_by_coordinators():
+    """Leizette's 2026-11-12 format: emoji-only health, one "#" in the JO ID, no list number in the task,
+    bold names with a blank line between them, "Nov 3 / Tue (18:00)" dates, sentence-case tally."""
+    conn = connect()
+    prior(conn, world(), MID, "1130")
+    fake = world(
+        jo("t1", "#62", "TOC", health="⚠️ Delayed", task="1. process D15 and more", Projects=relation("pr1"),
+           Assigned=relation("c1")),
+        jo("t2", "0014", "TOC", task="Upload TLR guide", Projects=relation("pr1"), Assigned=relation("c2")),
+    )
+    _, text, _ = run(conn, fake, "1900", PM)
+    lines = text.splitlines()
+    assert lines[2] == "Nov 3 / Tue (19:00)"
+    toc = text.split("<b>🔵 For TOC (Night Shift)</b>\n")[1].split("\n\n<b>🟢")[0].splitlines()
+    assert toc == [
+        "<b>Oto</b>",
+        '⚠️<a href="https://www.notion.so/t1">FAKEX#62</a> - Process D15 - Pending - Nov 3 / Tue (18:00)',
+        "",
+        "<b>Rex</b>",
+        '<a href="https://www.notion.so/t2">FAKEX#0014</a> - Upload TLR guide - Pending - Nov 3 / Tue (18:00)',
+    ]
+    assert "<b>Total</b>: Received 0 · Processed 0 · Accomplished 0" in text
+    assert lines[-1] == "Last JO edit: Nov 3 / Tue (09:00)"
+
+
+@pytest.mark.parametrize("task, label", [("1. process D15", "Process D15"), ("2) export reel", "Export reel"),
+                                         ("3 clips export", "3 clips export"), ("iPhone b-roll", "iPhone b-roll")])
+def test_task_list_numbers_are_dropped_but_counts_and_case_are_kept(task, label):
+    from t6_notion_reports.task_summary import FirstWordsSummarizer, task_label
+    assert task_label(task, FirstWordsSummarizer()) == label
