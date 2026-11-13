@@ -15,6 +15,9 @@ from typing import Callable, Protocol, TypeVar
 from pydantic import BaseModel, ValidationError
 
 DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+# JO shift report task summaries. A Qwen model with zero-data-retention endpoints on OpenRouter
+# (Qwen Flash has none, so every ZDR call to it fails).
+DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 T = TypeVar("T", bound=BaseModel)

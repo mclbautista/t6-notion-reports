@@ -12,6 +12,7 @@ from t6_notion_reports import cli
 from t6_notion_reports.config import ConfigError, Destination, load_config
 from t6_notion_reports.gateway import GatewayClient, GatewayError
 from t6_notion_reports.jo_snapshots import connect
+from t6_notion_reports.llm import DEFAULT_SHIFT_MODEL
 from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
 from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 
@@ -482,6 +483,15 @@ def test_briefing_and_shift_can_share_gateway_and_banner(tmp_path):
     assert cfg.shift.test_banner and cfg.brief.test_banner
 
 
+def test_shift_summaries_use_their_own_model_and_leave_the_briefing_on_llm_model(tmp_path):
+    cfg = load_config(write(tmp_path, **SHIFT, psr_group_chat_id=-1, cyril_contact_id=PROJECTS_ID,
+                            llm_model="anthropic/claude-haiku-4.5"), {**ENV, "PSR_SECRET": "psr"})
+    assert cfg.shift.llm_model == DEFAULT_SHIFT_MODEL == "qwen/qwen3.8-27b"
+    assert cfg.brief.llm_model == "anthropic/claude-haiku-4.5"
+    cfg = load_config(write(tmp_path, **SHIFT, shift_llm_model="other/model"), ENV)
+    assert cfg.shift.llm_model == "other/model"
+
+
 @pytest.mark.parametrize("over,key", [
     ({"shift_destinations": None}, "shift_destinations"),
     ({"ops_chat_id": 1.5}, "ops_chat_id"),
@@ -490,6 +500,7 @@ def test_briefing_and_shift_can_share_gateway_and_banner(tmp_path):
     ({"gateway_url": "ftp://x"}, "gateway_url"),
     ({"test_banner": "hunter2"}, "test_banner"),
     ({"jo_data_source": None}, "jo_data_source"),
+    ({"shift_llm_model": ""}, "shift_llm_model"),
 ])
 def test_missing_or_invalid_shift_keys_fail_boot_naming_the_key(tmp_path, over, key):
     cfg = {**BASE, **SHIFT, **over}

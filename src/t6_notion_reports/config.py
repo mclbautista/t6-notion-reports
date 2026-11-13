@@ -15,14 +15,14 @@ from .concerns import DEFAULT_CHRONIC_WEEKS
 from .consolidate import DEFAULT_PM_NOTES_WEEKS
 from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .leaves import DEFAULT_CLASH_DAYS
-from .llm import DEFAULT_MODEL
+from .llm import DEFAULT_MODEL, DEFAULT_SHIFT_MODEL
 from .people_match import MatchSettings
 
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
-SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id"}
+SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
@@ -75,7 +75,7 @@ class ShiftSettings:
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
     openrouter_api_key: str | None = None  # unset: task summaries are the first three words, no LLM call
-    llm_model: str = DEFAULT_MODEL
+    llm_model: str = DEFAULT_SHIFT_MODEL  # shift_llm_model; the briefing's llm_model is separate
 
 
 @dataclass(frozen=True)
@@ -246,7 +246,7 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         test_banner=_banner(raw),
         shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
         openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
-        llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
+        llm_model=_string(raw, "shift_llm_model", default=DEFAULT_SHIFT_MODEL),
     )
 
 
