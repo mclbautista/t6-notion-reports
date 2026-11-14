@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from fake_llm import AskLlm
 from datetime import datetime, timezone
 
 import pytest
@@ -66,8 +67,8 @@ def conn_unstaffed():
     return seeded(staffed=False)
 
 
-class EmptyLlm:
-    def complete(self, system, user, schema):
+class EmptyLlm(AskLlm):
+    def ask(self, system, user, schema):
         return schema()
 
 
@@ -282,7 +283,7 @@ def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.setenv("PSR_SECRET", "s3cret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    monkeypatch.setattr("t6_notion_reports.cli.OpenRouterClient", lambda key, model: EmptyLlm())
+    monkeypatch.setattr("t6_notion_reports.cli.openrouter_llm", lambda key, model, log: EmptyLlm())
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret: GatewayClient(url, secret, lambda *a: (500, None), sleep=lambda _: None))
     cfg = write_config(tmp_path, seeded_db(tmp_path))
@@ -300,11 +301,11 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     assert len(gw.sent) == 1
 
 
-class FakeLlm:
+class FakeLlm(AskLlm):
     def __init__(self, fail_for=()):
         self.users, self.fail_for = [], set(fail_for)
 
-    def complete(self, system, user, schema):
+    def ask(self, system, user, schema):
         from t6_notion_reports.llm import LlmError
         data = json.loads(user)
         self.users.append(data)

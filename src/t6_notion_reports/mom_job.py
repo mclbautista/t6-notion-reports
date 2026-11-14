@@ -10,7 +10,7 @@ from .contacts import load_contacts
 from .holidays import upcoming_entries
 from .llm import LlmClient
 from .mom import build_draft, condense_draft, render_blocks
-from .redact import Redactor
+from .masking import Masker
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
@@ -58,7 +58,7 @@ def run_draft_mom(
     all_contacts = load_contacts(notion, contacts_ds)
     condensed = raw = 0
     if llm is not None:
-        condensed, raw = condense_draft(draft, llm, new_state, Redactor.build(all_contacts.values(), (old_state, new_state)))
+        condensed, raw = condense_draft(draft, llm, new_state, Masker.build(all_contacts.values(), (old_state, new_state)))
 
     description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
     others = upcoming_entries(description, meeting_date)

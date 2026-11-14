@@ -13,7 +13,7 @@ from .condense import condense_bullets
 from .diff import ProjectChange, diff_snapshots, display_names, last_updated_text
 from .llm import LlmClient
 from .pm_notes import last_updated
-from .redact import Redactor
+from .masking import Masker
 from .snapshots import squash
 
 # (key, emoji, title). Page order: critical, at risk, on track, archiving, incoming, then Others.
@@ -125,7 +125,7 @@ def entry_label(display_name: str, code: object) -> str:
 
 
 def condense_draft(
-    draft: Draft, llm: LlmClient, new: dict[str, dict[str, object]], redactor: Redactor = Redactor(),
+    draft: Draft, llm: LlmClient, new: dict[str, dict[str, object]], masker: Masker = Masker(),
 ) -> tuple[int, int]:
     """Condense each notes-sourced entry in place. Returns (condensed, raw fallbacks)."""
     done = raw = 0
@@ -133,7 +133,7 @@ def condense_draft(
         if not e.source or e.bullets != e.source:
             continue
         result = condense_bullets(llm, e.label, str(new[e.page_id].get("PM Notes") or ""), e.source,
-                                 draft.meeting_date, redactor=redactor, page_id=e.page_id)
+                                 draft.meeting_date, masker=masker, page_id=e.page_id)
         e.bullets, e.raw_fallback = result.bullets, result.raw
         done, raw = done + (not result.raw), raw + result.raw
     return done, raw

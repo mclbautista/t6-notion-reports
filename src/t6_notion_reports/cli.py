@@ -17,7 +17,7 @@ from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient, UnavailableLlm
+from .llm import UnavailableLlm, openrouter_llm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
 from .gateway import GatewayClient, GatewayError
@@ -197,10 +197,14 @@ def _shift_target(cfg) -> ShiftTarget:
     return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.destinations, shift.ops_chat_id)
 
 
+def _log(text: str) -> None:
+    print(text, flush=True)
+
+
 def _shift_llm(cfg):
     """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
     if cfg.shift is not None and cfg.shift.openrouter_api_key:
-        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+        return openrouter_llm(cfg.shift.openrouter_api_key, cfg.shift.llm_model, _log)
     return None
 
 
@@ -260,7 +264,7 @@ def _llm(cfg, dry_print=False):
     if cfg.brief is None:
         return None
     if cfg.brief.openrouter_api_key:
-        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
+        return openrouter_llm(cfg.brief.openrouter_api_key, cfg.brief.llm_model, _log)
     return None if dry_print else UnavailableLlm()
 
 

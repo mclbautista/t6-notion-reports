@@ -21,7 +21,7 @@ from .llm import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
 from .people_match import MatchSettings
-from .redact import Redactor
+from .masking import Masker
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
@@ -106,12 +106,12 @@ def run_brief(
                 minutes = load_minutes(notion, meeting_notes_ds, today)
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
-        # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(contacts.values(), (raw_old, raw_new))
+        # Contacts people, other projects and ids are masked in free text before it is sent.
+        masker = Masker.build(contacts.values(), (raw_old, raw_new))
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
-                redactor, p,
+                masker, p,
             ) for p, s in new_state.items()
         }
         for page_id in sorted(payloads, key=lambda p: (names[p].lower(), p)):
@@ -123,7 +123,7 @@ def run_brief(
     if (llm is not None or show_llm_input) and projects_ds:
         leaves = leave_concerns(
             notion, projects_ds, llm, today, new_state, contacts,
-            brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
+            brief.leave_clash_days, matching, show_llm_input, out, log, masker,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
@@ -217,7 +217,7 @@ class Leaves:
 
 def leave_concerns(
     notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log,
-    redactor: Redactor = Redactor(),
+    masker: Masker = Masker(),
 ) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
 
@@ -237,9 +237,9 @@ def leave_concerns(
     if not lines:
         return Leaves()
     if show_input:
-        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today, redactor), ensure_ascii=False, indent=2)}\n")
+        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today, masker.session()), ensure_ascii=False, indent=2)}\n")
         return Leaves(available=False)
-    result = parse_leaves(llm, lines, today, redactor=redactor)
+    result = parse_leaves(llm, lines, today, masker=masker)
     if result.failed:
         log("brief leaves unavailable")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)

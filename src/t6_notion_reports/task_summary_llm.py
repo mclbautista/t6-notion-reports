@@ -1,9 +1,8 @@
 """Haiku task summaries behind the ``TaskSummarizer`` seam, with a cache (#73, #77).
 
-``LlmTaskSummarizer`` sends only the Task text, masked by ``redact`` and restored after. ``summarize_tasks``
-is the report job's step between the snapshot and the render: it fills the ``jo_task_summaries`` cache so
-a Task is never summarised twice, and hands the renderer a lookup. Moving onto the t6 adapter (#68) swaps
-``LlmTaskSummarizer`` and its wiring only.
+``LlmTaskSummarizer`` sends only the Task text, masked by t6-core's pseudonymizer and restored after.
+``summarize_tasks`` is the report job's step between the snapshot and the render: it fills the
+``jo_task_summaries`` cache so a Task is never summarised twice, and hands the renderer a lookup.
 """
 from __future__ import annotations
 
@@ -13,9 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel
+from t6.privacy import Masked
 
 from .llm import LlmClient, LlmError
-from .redact import Mapping, Redactor, unresolved
+from .masking import Masker
 from .task_summary import MAX_WORDS, TaskSummarizer
 
 SYSTEM = (
@@ -29,18 +29,16 @@ class SummaryReply(BaseModel):
 
 
 class LlmTaskSummarizer:
-    def __init__(self, client: LlmClient, redactor: Redactor | None = None):
-        self._client, self._redactor = client, redactor or Redactor()
+    def __init__(self, client: LlmClient, masker: Masker | None = None):
+        self._client, self._masker = client, masker or Masker()
 
     def summarize(self, task_text: str) -> str | None:
-        mapping = Mapping()
-        masked = self._redactor.redact(task_text, "", mapping)
+        session = self._masker.session()
         try:
-            reply = self._client.complete(SYSTEM, masked, SummaryReply)
+            reply = self._client.complete("task-summary-v1", SYSTEM, session.mask(task_text), SummaryReply, session)
         except LlmError:
             return None
-        restored = mapping.restore(reply.summary)
-        return None if unresolved(restored) else restored
+        return reply.summary
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 import json
 import re
 import sqlite3
+from fake_llm import AskLlm
 from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, project, relation, rich, select
@@ -50,13 +51,13 @@ class Gateway:
         return len(self.sent)
 
 
-class Llm:
+class Llm(AskLlm):
     """Records the projects it is asked about and finds nothing to report."""
 
     def __init__(self):
         self.projects = []
 
-    def complete(self, system, user, schema):
+    def ask(self, system, user, schema):
         self.projects.append(json.loads(user)["project"]["name"])
         return schema()
 
@@ -181,8 +182,8 @@ def test_the_first_brief_has_the_banner_and_no_changes():
     conn.executescript(SCHEMA)
     run_snapshot(conn, FakeNotion([proj("p1", "ONE", stage="Online")], contacts()), PROJECTS, CONTACTS, "friday", FRIDAY)
 
-    class ChangeLlm:
-        def complete(self, system, user, schema):
+    class ChangeLlm(AskLlm):
+        def ask(self, system, user, schema):
             return schema(changes=[{"text": "Online started", "source": "snapshot"}])
 
     gw = brief(conn, llm=ChangeLlm())

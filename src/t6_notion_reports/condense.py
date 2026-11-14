@@ -10,15 +10,13 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+from t6.privacy import Masked
 
 from .dates import mentions
 from .llm import LlmClient, LlmError
-
-if TYPE_CHECKING:
-    from .redact import Redactor
+from .masking import Masker, mask_and_read_back
 
 SYSTEM = """You turn one project's raw PM Notes into short bullets for the weekly PSR minutes (MOM style).
 You get "new_blocks" (what was added this week: the bullets to condense) and "pm_notes" (the full log, older blocks first).
@@ -210,27 +208,27 @@ def upcoming(md: tuple[int, int], meeting: date, horizon_days: int = 183) -> boo
 
 def condense_bullets(
     llm: LlmClient, label: str, notes: str, source: list[str], meeting: date,
-    *, redactor: Redactor | None = None, page_id: str = "",
+    *, masker: Masker | None = None, page_id: str = "",
 ) -> Condensed:
     """Never raises: a failed call or a rejected answer is the raw bullets with ``raw=True``."""
-    # Local import: redact shares the grounding vocabulary defined in this module.
-    from .redact import Mapping, Redactor, unresolved
+    session = (masker or Masker()).session(page_id)
 
-    redactor = redactor or Redactor()
-    mapping = Mapping()
-    hidden_source = [redactor.redact(text, page_id, mapping) for text in source]
-    hidden_notes = redactor.redact(notes, page_id, mapping)
-    prompt = json.dumps({"project": redactor.redact(label, page_id, mapping),
-                         "new_blocks": hidden_source, "pm_notes": hidden_notes}, ensure_ascii=False)
+    def hide(text: str) -> str:
+        return session.mask(text).text
+
+    prompt = json.dumps({"project": hide(label), "new_blocks": [hide(text) for text in source],
+                         "pm_notes": hide(notes)}, ensure_ascii=False)
     try:
-        reply = llm.complete(SYSTEM, prompt, CondensedBullets)
+        reply = llm.complete("condense-v1", SYSTEM, Masked(prompt), CondensedBullets, session)
     except LlmError:
         return Condensed(list(source), True)
-    bullets = [mapping.canonicalize(b.strip()) for b in reply.bullets
-               if b.strip() and not unresolved(mapping.restore(b))]
-    if check_grounding(bullets, hidden_notes, hidden_source, meeting) is not None:
+    bullets = [b.strip() for b in reply.bullets if b.strip()]
+    # The reply comes back with the names restored (an id reads "[id]"), so it is checked against the
+    # notes and blocks as they read back.
+    if check_grounding(bullets, mask_and_read_back(session, notes)[1],
+                       [mask_and_read_back(session, text)[1] for text in source], meeting) is not None:
         return Condensed(list(source), True)
-    return Condensed([mapping.restore(b) for b in bullets], False)
+    return Condensed(bullets, False)
 
 
 def ungrounded(text: str, sources: str, today: date | None = None) -> str | None:

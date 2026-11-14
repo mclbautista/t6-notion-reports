@@ -1,5 +1,6 @@
 """Aged Concerns (#46), through the brief job over several weekly runs."""
 import re
+from fake_llm import AskLlm
 from dataclasses import replace
 from datetime import timedelta
 
@@ -143,8 +144,8 @@ def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_sho
     assert not resolved_lines(dm(run(conn, 2)))
 
 
-class FailingLlm:
-    def complete(self, system, user, schema):
+class FailingLlm(AskLlm):
+    def ask(self, system, user, schema):
         from t6_notion_reports.llm import LlmError
         raise LlmError("down")
 

@@ -188,12 +188,12 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
 - **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
-  (OpenRouter, `llm_model` in config, ZDR on every request, temperature 0, never retried). The payload is that
+  (OpenRouter through t6-core's `t6.llm` typed tasks, `llm_model` in config, zero data retention required and sent on every request, never retried; a failed or leaking reply shows the project as "(LLM unavailable)"; each call logs a trace line with the task, model, token counts and result, never text). The payload is that
   project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
   relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
   date, the property changes since the last brief and since the PSR, and the project's lines from the latest
   PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at).
-  **Free-text privacy policy (owner approved for #94):** redact known Contacts names, aliases and handles,
+  **Free-text privacy policy (owner approved for #94), now t6-core's `strict` pseudonymizer (`masking.py`):** redact known Contacts names, aliases and handles,
   known contact/project page ids, Telegram identifiers/links, Notion identifiers/links, and known references
   to other snapshot projects before sending free text, including bracketed and punctuated values.
   Full contact names and aliases match in every casing even when they are ordinary words: a known

@@ -1,5 +1,6 @@
 from datetime import date
 
+from fake_llm import AskLlm
 from t6_notion_reports.condense import (Condensed, check_grounding, condense_bullets, extract_facts)
 from t6_notion_reports.llm import LlmError
 
@@ -11,11 +12,11 @@ NOTES = OLD + "\n" + NEW
 SOURCE = ["Ep 3 locked, Ep 4 pa rin sa offline", "Oto will confirm 12 shooting days", "Lalabas na ang DCP"]
 
 
-class FakeLlm:
+class FakeLlm(AskLlm):
     def __init__(self, bullets=None, error=False):
         self.bullets, self.error, self.prompts = bullets, error, []
 
-    def complete(self, system, user, schema):
+    def ask(self, system, user, schema):
         self.prompts.append(user)
         if self.error:
             raise LlmError("down")
@@ -123,8 +124,8 @@ def drafted(answers):
     run_snapshot(conn, FakeNotion(snap(NEW_ALL), []), PROJECTS, CONTACTS, "monday", MON)
     notion = FakeNotion(snap(NEW_ALL), [])
 
-    class Llm:
-        def complete(self, system, user, schema):
+    class Llm(AskLlm):
+        def ask(self, system, user, schema):
             code = json.loads(user)["project"].split()[0]
             if isinstance(answers[code], Exception):
                 raise answers[code]
@@ -193,8 +194,8 @@ def test_minutes_job_redacts_contacts_other_projects_and_ids_then_restores_bulle
     run_snapshot(conn, FakeNotion(before, people), PROJECTS, CONTACTS, "friday", FRI)
     run_snapshot(conn, FakeNotion(after, people), PROJECTS, CONTACTS, "monday", MON)
     notion = FakeNotion(after, people)
-    class Llm:
-        def complete(self, system, user, schema):
+    class Llm(AskLlm):
+        def ask(self, system, user, schema):
             assert all(private not in user for private in ("Dario", "Other Show", "123456789", "person-page"))
             return schema(bullets=json.loads(user)["new_blocks"])
     run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, MEET, log=lambda _: None, llm=Llm())
