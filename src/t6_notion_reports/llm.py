@@ -1,147 +1,95 @@
-"""LLM client (spec section 11): OpenRouter, Claude Haiku by default, zero data retention enforced.
+"""LLM access (spec section 11) through t6-core: typed tasks that need zero data retention.
 
-``LlmClient`` is the one interface the rest of the code sees; tests use a fake. Every request sent
-by ``OpenRouterClient`` carries ``provider.zdr = true``, and a failed call is never retried, least
-of all without it.
+``LlmClient`` is the one interface the rest of the code sees; tests use a fake. Every call is a
+``t6.llm`` task with the strictest data policy (``zdr_enforced`` and ``pseudonymize``): the prompt
+must be ``Masked`` text from a ``t6.privacy.Session``, t6-core sends ``provider.zdr = true`` to
+OpenRouter, restores the names in the reply and fails the call on a leak or a leftover placeholder.
+A failed call is never retried, so the caller shows "unavailable". Nothing here holds prompt text
+in a log line: a trace has the task, the model, token counts, time and the failure reason.
 """
 from __future__ import annotations
 
 import json
-import re
-import urllib.error
-import urllib.request
-from typing import Callable, Protocol, TypeVar
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Protocol, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
+from urllib.parse import urljoin
+
+from t6.llm import DECISIONS_URL, DataPolicy, Failed, Message, OpenAIChat, Provider, Request, Task, run
+from t6.privacy import Masked, Session
 
 DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
 # JO shift report task summaries. A Qwen model with zero-data-retention endpoints on OpenRouter
 # (Qwen Flash has none, so every ZDR call to it fails).
 DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# The OpenRouter host comes from t6-core (ADR 0002: the app names no provider host itself).
+OPENROUTER_BASE_URL = urljoin(DECISIONS_URL, "/api/v1")
 
 T = TypeVar("T", bound=BaseModel)
-# (url, headers, body) -> (status, parsed JSON body or None)
-Transport = Callable[[str, dict, dict], "tuple[int, dict | None]"]
 
 
 class LlmError(Exception):
-    """The call failed or its answer did not validate. The message never holds prompt text or the key."""
+    """The call failed or its answer did not validate. The message is the failure reason only."""
 
 
 class LlmClient(Protocol):
-    def complete(self, system: str, user: str, schema: type[T]) -> T:
-        """Ask for JSON matching ``schema`` and return it validated. Raises ``LlmError``."""
+    def complete(self, tag: str, system: str, user: Masked, schema: type[T], session: Session) -> T:
+        """Ask for JSON matching ``schema``. Returns it validated, with the names in ``session`` restored.
+
+        ``tag`` names the prompt for the trace. Raises ``LlmError``.
+        """
         ...
 
 
-def _urllib_transport(url: str, headers: dict, body: dict) -> tuple[int, dict | None]:
-    req = urllib.request.Request(url, json.dumps(body).encode(), headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.status, _json(resp.read())
-    except urllib.error.HTTPError as exc:
-        return exc.code, None
+@dataclass(frozen=True)
+class Prompt:
+    """The task input: the whole user message, already masked."""
+
+    text: Masked
 
 
-def _json(raw: bytes) -> dict | None:
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
+def _render(system: str, schema: type[BaseModel]) -> Callable[[Prompt], Request]:
+    schema_text = json.dumps(schema.model_json_schema())
+    full = f"{system}\n\nAnswer with one JSON object matching this JSON Schema, and nothing else:\n{schema_text}"
+
+    def render(prompt: Prompt) -> Request:
+        return (Message(role="system", content=full), Message(role="user", content=prompt.text.text))
+
+    return render
+
+
+def openrouter_provider(api_key: str, model: str) -> Provider:
+    """OpenRouter, declared ``zdr_enforced``: t6-core sends ``provider.zdr`` on every zero-retention task."""
+    return OpenAIChat(base_url=OPENROUTER_BASE_URL, api_key=api_key, model=model, retention="zdr_enforced")
+
+
+class T6Llm:
+    def __init__(self, provider: Provider, log: Callable[[str], None] = lambda text: None):
+        self._provider, self._log = provider, log
+
+    def complete(self, tag: str, system: str, user: Masked, schema: type[T], session: Session) -> T:
+        task = Task(tag, Prompt, schema, _render(system, schema), DataPolicy(), repair_quotes=True)
+        result = run(task, Prompt(user), provider=self._provider, session=session)
+        trace = result.trace
+        reason = result.reason if isinstance(result, Failed) else "ok"
+        self._log(
+            f"llm task={trace.prompt_tag} model={trace.model} result={reason} tokens={trace.tokens.total} "
+            f"latency_ms={trace.latency_ms} repaired={trace.repaired}"
+        )
+        if isinstance(result, Failed):
+            raise LlmError(result.reason)
+        return result.value
+
+
+def openrouter_llm(api_key: str, model: str, log: Callable[[str], None] = lambda text: None) -> T6Llm:
+    """The LLM client for one OpenRouter key and model."""
+    return T6Llm(openrouter_provider(api_key, model), log)
 
 
 class UnavailableLlm:
     """Stands in when no OpenRouter key is set: every call fails, so briefings say "unavailable"."""
 
-    def complete(self, system: str, user: str, schema: type[T]) -> T:
+    def complete(self, tag: str, system: str, user: Masked, schema: type[T], session: Session) -> T:
         raise LlmError("OPENROUTER_API_KEY is not set")
-
-
-class OpenRouterClient:
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, transport: Transport = _urllib_transport):
-        self._headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        self._model, self._transport = model, transport
-
-    def complete(self, system: str, user: str, schema: type[T]) -> T:
-        schema_text = json.dumps(schema.model_json_schema())
-        body = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": f"{system}\n\nAnswer with one JSON object matching this JSON Schema, and nothing else:\n{schema_text}"},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0,
-            "provider": {"zdr": True},  # never dropped, never retried without
-        }
-        try:
-            status, data = self._transport(OPENROUTER_URL, self._headers, body)
-        except Exception as exc:  # network errors: type only, messages may carry the URL
-            raise LlmError(f"request failed ({type(exc).__name__})") from None
-        if status != 200 or not data:
-            raise LlmError(f"OpenRouter answered status {status}")
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            raise LlmError("OpenRouter answer has no message content") from None
-        try:
-            text = _strip_fence(content)
-        except TypeError:
-            raise LlmError("OpenRouter answer did not match the schema") from None
-        try:
-            return schema.model_validate_json(text)
-        except ValidationError as exc:
-            if not any(err["type"] == "json_invalid" for err in exc.errors()):
-                raise LlmError("OpenRouter answer did not match the schema") from None
-        # Not valid JSON: models sometimes leave double quotes unescaped inside a string (a quote
-        # field quoting a phrase). Repair that one defect; anything else still fails.
-        try:
-            return schema.model_validate_json(_repair_quotes(text))
-        except ValidationError:
-            raise LlmError("OpenRouter answer did not match the schema") from None
-
-
-def _strip_fence(text: object) -> str:
-    if not isinstance(text, str):
-        raise TypeError("content is not text")
-    match = re.fullmatch(r"\s*```(?:json)?\s*(.*?)\s*```\s*", text, re.DOTALL)
-    return match.group(1) if match else text
-
-
-_AFTER_STRING = {",", "}", "]", ":"}
-
-
-def _repair_quotes(text: str) -> str:
-    """Escape double quotes (and raw newlines) that sit inside a JSON string value.
-
-    Inside a string, a quote closes it only if the next non-space character is ``, } ] :`` or the
-    text ends; otherwise it is part of the content and gets a backslash. Valid escapes are kept.
-    """
-    out: list[str] = []
-    in_string = False
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if not in_string:
-            in_string = ch == '"'
-            out.append(ch)
-        elif ch == "\\" and i + 1 < n:
-            out.append(text[i : i + 2])
-            i += 1
-        elif ch == '"':
-            j = i + 1
-            while j < n and text[j] in " \t\r\n":
-                j += 1
-            if j >= n or text[j] in _AFTER_STRING:
-                in_string = False
-                out.append(ch)
-            else:
-                out.append('\\"')
-        elif ch in "\n\r\t":
-            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out)

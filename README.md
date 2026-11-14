@@ -188,12 +188,12 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
 - **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
-  (OpenRouter, `llm_model` in config, ZDR on every request, temperature 0, never retried). The payload is that
+  (OpenRouter through t6-core's `t6.llm` typed tasks, `llm_model` in config, zero data retention required and sent on every request, never retried; a failed or leaking reply shows the project as "(LLM unavailable)"; each call logs a trace line with the task, model, token counts and result, never text). The payload is that
   project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
   relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
   date, the property changes since the last brief and since the PSR, and the project's lines from the latest
   PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at).
-  **Free-text privacy policy (owner approved for #94):** redact known Contacts names, aliases and handles,
+  **Free-text privacy policy (owner approved for #94), now t6-core's `strict` pseudonymizer (`masking.py`):** redact known Contacts names, aliases and handles,
   known contact/project page ids, Telegram identifiers/links, Notion identifiers/links, and known references
   to other snapshot projects before sending free text, including bracketed and punctuated values.
   Full contact names and aliases match in every casing even when they are ordinary words: a known
@@ -226,6 +226,15 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   Concern, aged through the Concern store. Holidays and office closures never clash. Names nobody matched are
   listed in Cyril's digest only. If the call fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
+- Frame.io review activity: with `frameio_read_url` (the Frame.io worker's read API) and `T6_FRAMEIO_READ_SECRET`,
+  each project lists the Active share links with activity since the previous Friday snapshot (a week back for the
+  first brief) as "Frame.io · name · activity Nov 12", in the DM and the digest. The brief holds no Frame.io token
+  and shows no share URLs. A show with no linked Projects page is listed in Cyril's digest only. A worker that
+  fails or needs a sign-in adds a "Frame.io unavailable" note and the brief goes on. Unset: no Frame.io lines.
+- Instagantt dates: with `instagantt_export_path` (an Instagantt CSV export) and `external_links_data_source`, each show
+  tied to a Project through External Links lists its next three tasks (ending today or later) as
+  "Instagantt · name · Nov 20 – Nov 24". Exports with no linked Project are listed in Cyril's digest only. An
+  unreadable export or failed External Links read adds a note; the brief goes on.
 - `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
   what would leave the machine first.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
@@ -279,7 +288,7 @@ Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's r
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
     shift_destinations:              # at least one destination in total
-      mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
+      mid:   [{chat: -1000000000001}]             # a chat, with an optional topic (never 1: Telegram rejects it)
       day:   [100000001, 100000002]               # a bare positive number is a user id (a DM)
       night: [100000001, {chat: -1000000000001, topic: 2}]
     ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)

@@ -1,19 +1,17 @@
 """Diff two snapshots: added, removed and per-field changes, PM Notes compared by block."""
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
+from t6.domain.project_rules import code_labels, health_rank
+from t6.domain.dateformats import flag_date
+
+from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, project_from_state, stored_day
 from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
 from .status_gate import gate
-
-# Project Health order inside a section; a blank one sorts last.
-HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
-HEALTH_BLANK = 9
 
 
 @dataclass(frozen=True)
@@ -66,6 +64,8 @@ class ProjectChange:
     summary: tuple[str, ...] = ()  # consolidated change lines, validated
     llm_failed: bool = False  # the LLM call failed: the raw changes are shown, marked "(LLM unavailable)"
     llm_update: date | None = None  # the "As of" date the LLM judged to be the last real update
+    instagantt: tuple[str, ...] = ()  # the show's next Instagantt tasks
+    frameio: tuple[str, ...] = ()  # Frame.io share-link activity since the last brief, one line per link
 
 
 @dataclass
@@ -171,7 +171,7 @@ def _dates(state: dict[str, object]) -> tuple[str, ...]:
     for name in (PLAYDATE, SUBMISSION, ARCHIVAL):
         day = stored_day(state.get(name))
         if day is not None:
-            out.append(f"{name} {day:%b} {day.day}, {day.year}")
+            out.append(f"{name} {flag_date(day)}")
     return tuple(out)
 
 
@@ -195,14 +195,6 @@ def _sort_key(ch: ProjectChange):
     return (health_rank(ch.health), ch.name.lower(), ch.page_id)
 
 
-def health_rank(health: str | None) -> int:
-    """CRITICAL, AT RISK, ON TRACK, INCOMING, then any other value, then blank."""
-    key = squash(health or "").casefold()
-    if not key:
-        return HEALTH_BLANK
-    return HEALTH_ORDER.get(key, HEALTH_BLANK - 1)
-
-
 def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChange | None:
     old_text, new_text = old_text or "", new_text or ""
     old = parse_pm_notes(old_text, old_date)
@@ -224,16 +216,10 @@ def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChan
 
 
 def display_names(old, new) -> dict[str, str]:
+    """Each project's display code (t6-core's rule): its code, "CODE (Name)" when several share the code."""
     states: dict[str, dict[str, object]] = {**old, **new}
-    codes = Counter(squash(str(s["Project Code"])) for s in states.values() if s.get("Project Code"))
-    out = {}
-    for page_id, s in states.items():
-        code, name = s.get("Project Code"), s.get("Name")
-        if code and name and codes[squash(str(code))] > 1:
-            out[page_id] = f"{code} ({name})"
-        else:
-            out[page_id] = str(code or name or "(unnamed)")
-    return out
+    labels = code_labels(project_from_state(page_id, s) for page_id, s in states.items())
+    return {page_id: labels[page_id] or "(unnamed)" for page_id in states}
 
 
 def _cmp(value: object) -> object:

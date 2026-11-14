@@ -20,12 +20,14 @@ from datetime import date
 from typing import Iterable
 
 from pydantic import BaseModel
+from t6.privacy import Masked, Session
+from t6.domain.dateformats import flag_date
 
 from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .llm import LlmClient, LlmError
 from .people_match import MatchSettings, match_person
-from .redact import Mapping, Redactor, unresolved
+from .masking import Masker, mask_and_read_back
 from .snapshots import RELATION_FIELDS, squash
 
 DEFAULT_CLASH_DAYS = 14
@@ -71,31 +73,26 @@ class LeaveResult:
     failed: bool = False
 
 
-def payload(lines: Iterable[str], today: date, redactor: Redactor = Redactor(), mapping: Mapping | None = None) -> dict:
+def payload(lines: Iterable[str], today: date, session: Session) -> dict:
     """What leaves the machine: the leave lines and today's date, and nothing about projects."""
-    mapping = mapping if mapping is not None else Mapping()
-    return {"today": today.isoformat(), "lines": [redactor.redact(line, "", mapping) for line in lines]}
+    return {"today": today.isoformat(), "lines": [session.mask(line).text for line in lines]}
 
 
-def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Redactor = Redactor()) -> LeaveResult:
+def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, masker: Masker = Masker()) -> LeaveResult:
     """One call. Never raises: a failed call is ``failed``; an entry that fails its checks is dropped."""
-    mapping = Mapping()
-    data = payload(lines, today, redactor, mapping)
+    session = masker.session()
+    data = payload(lines, today, session)
     try:
-        reply = llm.complete(SYSTEM, json.dumps(data, ensure_ascii=False), LeaveParse)
+        reply = llm.complete("leaves-v1", SYSTEM, Masked(json.dumps(data, ensure_ascii=False)), LeaveParse, session)
     except LlmError:
         return LeaveResult(failed=True)
-    # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
-    exact = {_BULLET.sub("", ln.strip()) for ln in data["lines"]}
+    # The reply has its names restored (an id reads "[id]"), so the quote is checked against the lines as
+    # they read back. Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
+    exact = {_BULLET.sub("", mask_and_read_back(session, ln)[1].strip()) for ln in lines}
     kept: list[Leave] = []
-    dropped = False
     for item in reply.entries:
-        who, quote = mapping.restore(item.who), mapping.restore(item.quote)
-        if unresolved(who) or unresolved(quote):
-            dropped = True
-            continue
-        if (item.kind not in KINDS or not squash(who)
-                or _BULLET.sub("", mapping.canonicalize(item.quote).strip()) not in exact):
+        who = item.who
+        if item.kind not in KINDS or not squash(who) or _BULLET.sub("", item.quote.strip()) not in exact:
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)
@@ -103,7 +100,7 @@ def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Red
             continue
         if start <= end:
             kept.append(Leave(squash(who), item.kind, start, end))
-    return LeaveResult(tuple(dict.fromkeys(kept)), failed=dropped and not kept)
+    return LeaveResult(tuple(dict.fromkeys(kept)))
 
 
 @dataclass(frozen=True)
@@ -167,6 +164,6 @@ def _span(leave: Leave) -> str:
 
 
 def _show(when: date) -> str:
-    return f"{when:%b} {when.day}, {when.year}"
+    return flag_date(when)
 
 

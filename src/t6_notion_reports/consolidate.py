@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ValidationError, field_validator
+from t6.privacy import Masked, Session
+from t6.domain.dateformats import flag_date
 
 from .condense import ungrounded
 from .dates import has_future_date, is_period, mentions
@@ -22,7 +24,7 @@ from .diff import FieldChange
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, relevant_dates, stored_day
 from .llm import LlmClient, LlmError
 from .pm_notes import parse_pm_notes
-from .redact import Mapping, Redactor, unresolved
+from .masking import Masker, mask_and_read_back
 from .schedule import MANILA
 from .snapshots import squash
 
@@ -138,16 +140,17 @@ class SourceLine:
 class Payload:
     """What leaves the machine for one project, and the lines the reply may cite.
 
-    ``lines`` hold the text as sent (redacted), so quotes are checked against what the LLM saw;
-    ``mapping`` puts the redacted values back into accepted items.
+    ``data`` is what is sent, with identities masked by ``session``. The reply comes back with the names
+    restored (``llm.py``), so ``lines`` and ``health`` hold the text as written: quotes and facts are
+    checked against that.
     """
 
     data: dict
     lines: dict[int, SourceLine]
     facts: str  # every value in the payload as text, for the grounding check
-    mapping: Mapping = field(default_factory=Mapping)
-    redactor: Redactor = field(default_factory=Redactor)
+    session: Session
     page_id: str = ""
+    health: str | None = None  # the project's Health as written
 
     def json(self, indent: int | None = None) -> str:
         return json.dumps(self.data, ensure_ascii=False, indent=indent)
@@ -208,23 +211,26 @@ def build_payload(
     minutes_lines: tuple[str, ...] = (),
     minutes_meta: dict[str, str | None] | None = None,
     notes_weeks: int = DEFAULT_PM_NOTES_WEEKS,
-    redactor: Redactor = Redactor(),
+    masker: Masker = Masker(),
     page_id: str = "",
 ) -> Payload:
     """The payload for one project. Known identities and identifiers in free text are protected:
-    the PM Notes and Minutes lines pass through ``redactor`` first (see its approved #94 boundary).
+    the PM Notes and Minutes lines pass through the ``strict`` pseudonymizer first (``masking.py``).
     The target project identity remains available; unknown names may remain in source text.
 
     ``minutes_meta`` holds the minutes page's date, last-edited time and Sent at; it is sent only with
     lines about this project.
     """
     build = _Build()
-    mapping = Mapping()
+    session = masker.session(page_id)
 
     def hide(text: str) -> str:
-        return redactor.redact(text, page_id, mapping)
+        return session.mask(text).text
 
-    notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build, hide)
+    def both(text: str) -> tuple[str, str]:
+        return mask_and_read_back(session, text)
+
+    notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build, both)
     dates = {name: stored_day(state.get(name)) for name in DATE_KEYS}
     relevant = relevant_dates(state.get("Status"))
     data: dict = {
@@ -246,36 +252,41 @@ def build_payload(
             "page_date": minutes_meta.get("page_date"),
             "last_edited": minutes_meta.get("last_edited"),
             "sent_at": minutes_meta.get("sent_at"),
-            "lines": [{"line_id": build.add(SourceLine("minutes", t)), "text": t} for t in map(hide, minutes_lines)],
+            "lines": [{"line_id": build.add(SourceLine("minutes", seen)), "text": masked}
+                      for masked, seen in map(both, minutes_lines)],
         }
     for w in windows:  # numbered like the other lines, so a snapshot change cites one exactly
         changes = []
         for c in w.changes:
-            old, new = (hide(v) if isinstance(v, str) else v for v in (_plain(c.old), _plain(c.new)))
-            text = f"{c.field}: {_show(old)} → {_show(new)}"
-            changes.append({"line_id": build.add(SourceLine("snapshot", text)), "field": c.field,
-                            "old": old, "new": new, "text": text})
+            sent = [both(v) if isinstance(v, str) else (v, v) for v in (_plain(c.old), _plain(c.new))]
+            (old, shown_old), (new, shown_new) = sent
+            line_id = build.add(SourceLine("snapshot", f"{c.field}: {_show(shown_old)} → {_show(shown_new)}"))
+            changes.append({"line_id": line_id, "field": c.field, "old": old, "new": new,
+                            "text": f"{c.field}: {_show(old)} → {_show(new)}"})
         data["snapshot_changes"].append({
             "window": w.name,
             "from": w.start.astimezone(MANILA).isoformat(timespec="seconds"),
             "to": w.end.astimezone(MANILA).isoformat(timespec="seconds"),
             "changes": changes,
         })
-    return Payload(data, build.lines, _facts(data), mapping, redactor, page_id)
+    health = squash(str(state.get("Project Health") or "")) or None
+    return Payload(data, build.lines, _facts(data), session, page_id, health)
 
 
 UNDATED_BLOCKS_KEPT = 3  # PM Notes blocks whose header has no readable date count as old past the last three
 
 
-def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build: _Build, hide) -> list[dict]:
+def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build: _Build, both) -> list[dict]:
     """Numbered PM Notes lines from the last ``weeks`` weeks, plus older blocks that hold a future date.
 
-    Which blocks go in is judged on the text as written; each line is redacted by ``hide`` as it is sent.
+    Which blocks go in is judged on the text as written. ``both(text)`` gives each line masked as it is
+    sent and as the reply's quote of it reads once restored, which is what the line is kept as.
     """
     parsed = parse_pm_notes(str(raw) if raw else "", snapshot_day)
     out: list[dict] = []
-    for text in map(hide, parsed.preamble.splitlines()):
-        out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": None, "text": text})
+    for text in parsed.preamble.splitlines():
+        masked, seen = both(text)
+        out.append({"line_id": build.add(SourceLine("pm_notes", seen)), "block": None, "text": masked})
     cutoff = today - timedelta(weeks=weeks)
     latest = parsed.blocks[-UNDATED_BLOCKS_KEPT:]
     for block in parsed.blocks:
@@ -284,12 +295,12 @@ def _notes_lines(raw: object, today: date, snapshot_day: date, weeks: int, build
         old = block.header_date < cutoff if block.header_date else not any(block is b for b in latest)
         if old and not has_future_date("\n".join(block.bullets), block.header_date or snapshot_day, today):
             continue
-        header = hide(block.header)
-        out.append({"line_id": build.add(SourceLine("pm_notes", header, True, block.header_date)),
+        header, header_seen = both(block.header)
+        out.append({"line_id": build.add(SourceLine("pm_notes", header_seen, True, block.header_date)),
                     "block": header, "text": header})
         for bullet in block.bullets:
-            text = hide(f"• {bullet}")
-            out.append({"line_id": build.add(SourceLine("pm_notes", text)), "block": header, "text": text})
+            masked, seen = both(f"• {bullet}")
+            out.append({"line_id": build.add(SourceLine("pm_notes", seen)), "block": header, "text": masked})
     return out
 
 
@@ -331,14 +342,14 @@ def _facts(data: dict) -> str:
             when = date.fromisoformat(iso)
         except ValueError:
             continue
-        values.append(f"{when:%b} {when.day}, {when.year}")
+        values.append(flag_date(when))
     return "\n".join(values)
 
 
 def consolidate(llm: LlmClient, payload: Payload, today: date) -> Outcome:
     """Ask about one project. Never raises: a failed call or invalid JSON is ``Outcome(failed=True)``."""
     try:
-        reply = llm.complete(SYSTEM, payload.json(), Consolidation)
+        reply = llm.complete("consolidate-v1", SYSTEM, Masked(payload.json()), Consolidation, payload.session)
     except LlmError:
         return Outcome(failed=True)
     return validate(reply, payload, today)
@@ -346,75 +357,29 @@ def consolidate(llm: LlmClient, payload: Payload, today: date) -> Outcome:
 
 def validate(reply: Consolidation, payload: Payload, today: date) -> Outcome:
     """Keep the items that check out; drop each failing item on its own."""
-    items, dropped = restore_consolidation(reply, payload.mapping)
-    health = payload.data["project"]["project_health"]
     changes: dict[str, ChangeLine] = {}
-    for item, restored in items["changes"]:
+    for item in reply.changes:
         if not _item_ok(payload, item.text, item.source, item.line_id, item.quote, snapshot_ok=True):
             continue
-        text = squash(restored.text)
+        text = squash(item.text)
         key = text.casefold()
         kept = changes.get(key)
         changes[key] = ChangeLine(kept.text if kept else text, item.after_psr or bool(kept and kept.after_psr))
     concerns: list[str] = []
-    for item, restored in items["concerns"]:
-        if item.kind not in CONCERN_KINDS or (item.kind == "health_vs_evidence" and not health):
+    for item in reply.concerns:
+        if item.kind not in CONCERN_KINDS or (item.kind == "health_vs_evidence" and not payload.health):
             continue
         if _concern_ok(payload, item):
-            concerns.append(squash(restored.text))
-    dates = _note_dates(items["dates_from_notes"], payload)
-    return Outcome(
-        _last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)),
-        dates, failed=dropped and not (changes or concerns or dates),
-    )
+            concerns.append(squash(item.text))
+    dates = _note_dates(reply.dates_from_notes, payload)
+    return Outcome(_last_update(reply.last_update, payload, today), tuple(changes.values()), tuple(dict.fromkeys(concerns)), dates)
 
 
-def restore_consolidation(reply: Consolidation, mapping: Mapping) -> tuple[dict[str, list[tuple[Any, Any]]], bool]:
-    """Restore all text fields once, retaining redacted counterparts for grounding and citations.
-
-    Pydantic has validated the reply's shape. Every string on an item goes through this boundary,
-    including future free-text fields. One unresolved field drops its whole item.
-    """
-    result: dict[str, list[tuple[Any, Any]]] = {}
-    dropped = False
-    for name in _ITEM_TYPES:
-        result[name] = []
-        for item in getattr(reply, name):
-            canonical = _map_strings(item.model_dump(), mapping.canonicalize)
-            restored = _map_strings(canonical, mapping.restore)
-            if any(unresolved(value) for value in _strings(restored)):
-                dropped = True
-                continue
-            result[name].append((type(item)(**canonical), type(item)(**restored)))
-    return result, dropped
-
-
-def _map_strings(value, transform):
-    if isinstance(value, str):
-        return transform(value)
-    if isinstance(value, dict):
-        return {key: _map_strings(item, transform) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_map_strings(item, transform) for item in value]
-    return value
-
-
-def _strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
-
-
-def _note_dates(items: list[tuple[DateFromNotes, DateFromNotes]], payload: Payload) -> tuple[NoteDate, ...]:
+def _note_dates(items: list[DateFromNotes], payload: Payload) -> tuple[NoteDate, ...]:
     """The dates that check out: a blank, relevant property, an exact quote, and a value the quoted line holds."""
     blank = set(payload.data["blank_date_properties"])
     found: dict[str, NoteDate] = {}
-    for item, restored in items:
+    for item in items:
         name = _PROPERTY_BY_KEY.get(item.property)
         if name is None or item.property not in blank or name in found:
             continue
@@ -430,7 +395,7 @@ def _note_dates(items: list[tuple[DateFromNotes, DateFromNotes]], payload: Paylo
                 found[name] = NoteDate(name, day=day)
         elif (item.fuzzy_text and is_period(item.fuzzy_text)
               and squash(item.fuzzy_text).casefold() in squash(line.text).casefold()):
-            found[name] = NoteDate(name, fuzzy=squash(restored.fuzzy_text or ""))
+            found[name] = NoteDate(name, fuzzy=squash(item.fuzzy_text))
     return tuple(found.values())
 
 
@@ -439,8 +404,7 @@ def _item_ok(payload: Payload, text: str, source: str, line_id: int | None, quot
     if not squash(text) or not _citation_ok(payload, source, line_id, quote, snapshot_ok):
         return False
     line = payload.lines[line_id]
-    # A known name in any case is ungrounded too: the payload never holds one (redact.py).
-    return ungrounded(text, _facts({"line": line.text}), date.fromisoformat(payload.data["today"])) is None and payload.redactor.names_in(text, payload.page_id) is None
+    return ungrounded(text, _facts({"line": line.text}), date.fromisoformat(payload.data["today"])) is None
 
 
 def _concern_ok(payload: Payload, item: Concern) -> bool:
@@ -456,10 +420,10 @@ def _concern_ok(payload: Payload, item: Concern) -> bool:
             return False
         evidence.append(payload.lines[citation.line_id].text)
     if item.kind == "health_vs_evidence":
-        evidence.append(str(payload.data["project"]["project_health"] or ""))
+        evidence.append(payload.health or "")
     return bool(squash(item.text)) and ungrounded(
         item.text, _facts({"evidence": evidence}), date.fromisoformat(payload.data["today"])
-    ) is None and payload.redactor.names_in(item.text, payload.page_id) is None
+    ) is None
 
 
 def _citation_ok(payload: Payload, source: str, line_id: int | None, quote: str | None,

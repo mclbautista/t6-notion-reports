@@ -3,7 +3,11 @@ name = "t6-notion-reports"
 version = "0.0.1"
 description = "Snapshot Notion Projects and Job Orders into SQLite, draft weekly PSR briefings/minutes, and generate daily shift status reports."
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6", "pydantic>=2", "tzdata", "rapidfuzz>=3.9"]
+dependencies = [
+    "PyYAML>=6", "pydantic>=2", "tzdata", "rapidfuzz>=3.9",
+    # t6-core release tag. A tarball, so the image needs no git.
+    "t6[llm,privacy,notion,frameio,instagantt] @ https://github.com/mclbautista/t6-core/archive/refs/tags/v0.3.4.tar.gz",
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]

@@ -1,6 +1,7 @@
 """Leave clash Concerns (#49), through the brief job with a fake Notion, LLM and gateway."""
 import json
 import sqlite3
+from fake_llm import AskLlm
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -30,13 +31,13 @@ def contacts():
     return people  # Uma has no TelegramUserID
 
 
-class LeaveLlm:
+class LeaveLlm(AskLlm):
     """Answers the leave call from a script, and records every payload it is sent."""
 
     def __init__(self, entries=None, fail=False):
         self.entries, self.fail, self.payloads = entries, fail, []
 
-    def complete(self, system, user, schema):
+    def ask(self, system, user, schema):
         payload = json.loads(user)
         if schema.__name__ != "LeaveParse":
             return schema()

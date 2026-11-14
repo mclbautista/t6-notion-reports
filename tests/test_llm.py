@@ -1,10 +1,13 @@
-"""OpenRouterClient: a 200 whose JSON has unescaped quotes is repaired, real failures still raise."""
+"""The t6-core backed client: a 200 whose JSON has unescaped quotes is repaired, real failures still raise."""
 import json
 
 import pytest
 from pydantic import BaseModel
 
-from t6_notion_reports.llm import LlmError, OpenRouterClient
+from t6.privacy import Masked
+
+from fake_llm import blank_session, transport_llm
+from t6_notion_reports.llm import LlmError
 
 
 class Item(BaseModel):
@@ -21,11 +24,11 @@ def client(content):
     def transport(url, headers, body):
         return 200, {"choices": [{"message": {"content": content}}]}
 
-    return OpenRouterClient("key", transport=transport)
+    return transport_llm(transport)
 
 
 def ask(content):
-    return client(content).complete("sys", "user", Reply)
+    return client(content).complete("test-v1", "sys", Masked("user"), Reply, blank_session())
 
 
 def test_valid_json_unchanged():

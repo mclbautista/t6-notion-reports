@@ -7,7 +7,13 @@ import sys
 import time
 from datetime import date, datetime, timezone
 
-from .config import ConfigError, load_config
+from t6.frameio import FrameioReader
+from t6.instagantt import link_timelines, read_export
+from t6.notion import NotionClient as T6NotionClient
+from t6.notion.external_links import ExternalLinks
+from t6.worker.client import HttpTransport
+
+from .config import FRAMEIO_SECRET_ENV, ConfigError, load_config
 from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
@@ -17,7 +23,7 @@ from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient, UnavailableLlm
+from .llm import UnavailableLlm, openrouter_llm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
 from .gateway import GatewayClient, GatewayError
@@ -197,10 +203,14 @@ def _shift_target(cfg) -> ShiftTarget:
     return ShiftTarget(GatewayClient(shift.gateway_url, shift.shift_secret), shift.destinations, shift.ops_chat_id)
 
 
+def _log(text: str) -> None:
+    print(text, flush=True)
+
+
 def _shift_llm(cfg):
     """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
     if cfg.shift is not None and cfg.shift.openrouter_api_key:
-        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+        return openrouter_llm(cfg.shift.openrouter_api_key, cfg.shift.llm_model, _log)
     return None
 
 
@@ -230,7 +240,7 @@ def _brief(args, notion, now) -> int:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
-                  projects_ds=cfg.projects_data_source, matching=cfg.matching,
+                  projects_ds=cfg.projects_data_source, matching=cfg.matching, frameio=_frameio(cfg), instagantt=_instagantt(cfg),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -252,7 +262,31 @@ def _slots(cfg):
 def _brief_secrets(cfg):
     if cfg.brief is None:
         return []
-    return [("PSR_SECRET", cfg.brief.psr_secret)]
+    secrets = [("PSR_SECRET", cfg.brief.psr_secret)]
+    if cfg.brief.frameio_read_url:
+        secrets.append((FRAMEIO_SECRET_ENV, cfg.brief.frameio_read_secret))
+    return secrets
+
+
+def _frameio(cfg):
+    """The Frame.io worker's read client; none without a URL and its secret (a dry print may go without)."""
+    brief = cfg.brief
+    if brief is None or not brief.frameio_read_url or not brief.frameio_read_secret:
+        return None
+    return FrameioReader(HttpTransport(brief.frameio_read_url, timeout=120), brief.frameio_read_secret)
+
+
+def _instagantt(cfg):
+    """A function giving the Instagantt export's LinkReport, read when the brief runs; none unless configured."""
+    brief = cfg.brief
+    if brief is None or not brief.instagantt_export_path or not brief.external_links_data_source:
+        return None
+
+    def load():
+        links = ExternalLinks(T6NotionClient(cfg.notion_token), brief.external_links_data_source)
+        return link_timelines(read_export(brief.instagantt_export_path), links)
+
+    return load
 
 
 def _llm(cfg, dry_print=False):
@@ -260,7 +294,7 @@ def _llm(cfg, dry_print=False):
     if cfg.brief is None:
         return None
     if cfg.brief.openrouter_api_key:
-        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
+        return openrouter_llm(cfg.brief.openrouter_api_key, cfg.brief.llm_model, _log)
     return None if dry_print else UnavailableLlm()
 
 
@@ -287,7 +321,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
                       meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
-                      matching=cfg.matching, log=lambda text: print(text, flush=True))
+                      matching=cfg.matching, frameio=_frameio(cfg), instagantt=_instagantt(cfg), log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:

@@ -9,11 +9,12 @@ from typing import Callable, Mapping, Sequence
 
 from .config import Destination
 from .gateway import GatewayError
+from .notion import error_name, is_outage
 from .jo_snapshot_job import Notion, run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, load_latest
 from .contacts import load_contacts
 from .llm import LlmClient
-from .redact import Redactor
+from .masking import Masker
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
@@ -242,10 +243,10 @@ def _llm_summarizer(notion: Notion, contacts_ds: str, current: JoSnapshot, llm: 
     try:
         labels = {r["id"]: r["name"] for f in current.pages.values() for r in f.get("Projects") or [] if r.get("name")}
         states = {pid: {"Name": name, "Project Code": name} for pid, name in labels.items()}
-        redactor = Redactor.build(load_contacts(notion, contacts_ds).values(), [states])
+        masker = Masker.build(load_contacts(notion, contacts_ds).values(), [states])
     except Exception:
         return None
-    return LlmTaskSummarizer(llm, redactor)
+    return LlmTaskSummarizer(llm, masker)
 
 
 def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now, target, log, clock, sleep) -> None:
@@ -257,8 +258,10 @@ def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, no
         try:
             run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
             return
-        except OSError as exc:  # URLError, HTTPError and timeouts; type only, messages may hold data
-            error = type(exc).__name__
+        except Exception as exc:  # noqa: BLE001
+            if not is_outage(exc):
+                raise
+            error = error_name(exc)  # the type or Notion's error code; messages may hold data
             if clock() + RETRY_EVERY > give_up:
                 break
             sleep(RETRY_EVERY.total_seconds())

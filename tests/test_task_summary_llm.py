@@ -2,9 +2,9 @@
 import re
 from datetime import datetime, timedelta, timezone
 
+from fake_llm import transport_llm
 from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
 from t6_notion_reports.jo_snapshots import connect, take_snapshot
-from t6_notion_reports.llm import OpenRouterClient
 from t6_notion_reports.shift_job import run_shift_report
 from t6_notion_reports.task_summary_llm import LlmTaskSummarizer, summarize_tasks
 from test_shift_report import PM, jo, prior, world
@@ -24,14 +24,14 @@ class Transport:
 
 
 def summarizer(transport):
-    return LlmTaskSummarizer(OpenRouterClient("key", transport=transport))
+    return LlmTaskSummarizer(transport_llm(transport))
 
 
-def test_valid_reply_is_returned_and_only_the_task_is_sent_zdr_at_temperature_zero():
+def test_valid_reply_is_returned_and_only_the_task_is_sent_with_zero_data_retention():
     t = Transport()
     assert summarizer(t).summarize("Color grade the final cut") == "Color grade"
     body = t.bodies[0]
-    assert body["provider"] == {"zdr": True} and body["temperature"] == 0
+    assert body["provider"] == {"zdr": True}
     assert [m["content"] for m in body["messages"] if m["role"] == "user"] == ["Color grade the final cut"]
 
 
@@ -106,7 +106,7 @@ def test_names_in_the_task_are_masked_on_the_way_out_and_restored():
     prior(db)
     out = []
     run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, lambda _: None,
-                     llm=OpenRouterClient("key", transport=transport))
+                     llm=transport_llm(transport))
     assert seen == ["Ask [person 1] about grade"] and "Oto" not in seen[0]
     assert "</a> - Ask Oto - Pending" in "\n".join(out)
 
@@ -117,16 +117,16 @@ def test_report_logs_summary_counts_and_survives_an_llm_failure():
     fake = world(jo("j1", "1", "TOC", task="Color grade the final cut"))
     log, out = [], []
     run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport(status=500)))
+                     llm=transport_llm(Transport(status=500)))
     assert log[0].endswith("summaries=0 cached=0 fallback=1") and "Color grade" not in log[0]
     assert "</a> - Color grade the - Pending" in "\n".join(out)
     log.clear()
     run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport()))
+                     llm=transport_llm(Transport()))
     assert log[0].endswith("summaries=1 cached=0 fallback=0")
     log.clear()
     run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport(status=500)))
+                     llm=transport_llm(Transport(status=500)))
     assert log[0].endswith("summaries=0 cached=1 fallback=0")
 
 

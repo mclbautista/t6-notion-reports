@@ -2,6 +2,7 @@
 import json
 import re
 import sqlite3
+from fake_llm import AskLlm
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -33,13 +34,13 @@ def make_db(last_friday, monday, friday):
     return conn
 
 
-class Llm:
+class Llm(AskLlm):
     """Records every payload it gets and answers with ``reply(payload)``, or fails for the named projects."""
 
     def __init__(self, reply=None, fail_for=()):
         self.payloads, self.reply, self.fail_for = [], reply or (lambda p: {}), set(fail_for)
 
-    def complete(self, system, user, schema):
+    def ask(self, system, user, schema):
         payload = json.loads(user)
         self.payloads.append(payload)
         if payload["project"]["name"] in self.fail_for:
@@ -348,8 +349,8 @@ def test_a_failing_call_marks_that_project_only_and_the_digest_names_it():
 
 
 def test_invalid_json_counts_as_a_failure():
-    class BadJson:
-        def complete(self, system, user, schema):
+    class BadJson(AskLlm):
+        def ask(self, system, user, schema):
             raise LlmError("OpenRouter answer did not match the schema")
 
     gw, _ = run(conn_one(), BadJson())
@@ -461,7 +462,7 @@ def test_names_ids_and_other_projects_in_free_text_never_reach_the_llm():
     assert payload["project"]["name"] == "Show ONE"  # the project's own name stays
 
 
-def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name_is_dropped():
+def test_an_accepted_item_shows_the_real_names():
     def row(p):
         return next(r for r in p["pm_notes"] if "send the files" in r["text"])
 
@@ -475,13 +476,27 @@ def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name
         oto, ida = placeholders(p)
         cite = {"source": "pm_notes", "line_id": row(p)["line_id"], "quote": row(p)["text"]}
         return {"concerns": [{"kind": "open_item", "text": f"{oto} still has to send the files to {ida}", **cite}],
-                "changes": [{"text": "files go to ida", **cite}, {"text": "files sent by oto", **cite},
-                            {"text": "files to send", **cite}]}
+                "changes": [{"text": "files to send", **cite}]}
     gw, _ = run(leaky_db(), Llm(reply))
     text = dm(gw)
     assert "Oto still has to send the files to ida" in text
     assert "• files to send" in text
-    assert "files go to ida" not in text and "files sent by oto" not in text
+
+
+def test_a_reply_with_a_known_name_written_out_in_any_case_makes_the_project_unavailable():
+    def reply(p):
+        if p["project"]["name"] != "Show ONE":
+            return {}
+        row = next(r for r in p["pm_notes"] if "send the files" in r["text"])
+        cite = {"source": "pm_notes", "line_id": row["line_id"], "quote": row["text"]}
+        return {"changes": [{"text": "files go to ida", **cite}, {"text": "files to send", **cite}]}
+    class Strict(Llm):
+        check_leaks = True
+
+    gw, _ = run(leaky_db(), Strict(reply))
+    text = dm(gw)
+    assert "files go to ida" not in text and "• files to send" not in text
+    assert "LLM unavailable" in text
 
 
 def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():

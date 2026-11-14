@@ -15,4 +15,5 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e '.[dev]'
+      - run: t6 check-consumer src   # ADR 0002: no direct Notion, OpenRouter or Frame.io call
       - run: pytest -q

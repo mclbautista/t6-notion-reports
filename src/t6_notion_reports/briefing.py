@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from t6.domain.dateformats import briefing_date
+
 from .concerns import RESOLVED_LABEL
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
@@ -85,7 +87,7 @@ def build_briefing(
     changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
-    stamp = f"{today:%a %b} {today.day}"
+    stamp = briefing_date(today)
     notice = [line(FIRST_BRIEF)] if first else []
     messages: list[OutboundMessage] = []
     fallbacks: list[str] = []
@@ -293,6 +295,8 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
         blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
+    blocks += [line(f"🗓 {text}") for text in ch.instagantt]
+    blocks += [line(f"🎞 {text}") for text in ch.frameio]
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
         blocks += [line(f"• {text}") for text in ch.concerns]

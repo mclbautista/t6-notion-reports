@@ -1,19 +1,17 @@
 """Read Notion Projects and Contacts and store one snapshot."""
 from __future__ import annotations
 
-import re
 import sqlite3
 from datetime import datetime
 from typing import Protocol
 
+from .status_gate import is_snapshotted
 from .snapshots import LAST_EDITED, RELATION_FIELDS, ProjectRecord, SnapshotResult, take_snapshot
-
-# Never snapshotted (spec section 4). Matched on the word, ignoring emoji and whitespace.
-EXCLUDED_STATUSES = {"archived", "lost"}
 
 
 def _is_excluded(status: object) -> bool:
-    return re.sub(r"[^\w\s]", "", str(status or "")).strip().lower() in EXCLUDED_STATUSES
+    """Archived and Lost projects are never snapshotted (spec section 4); t6-core owns the rule."""
+    return not is_snapshotted(status)
 
 # Only these Notion properties are read. Formula fields are never touched.
 NOTION_NAMES = {
