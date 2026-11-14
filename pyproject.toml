@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "PyYAML>=6", "pydantic>=2", "tzdata", "rapidfuzz>=3.9",
     # t6-core release tag. A tarball, so the image needs no git.
-    "t6[llm,privacy,notion] @ https://github.com/mclbautista/t6-core/archive/refs/tags/v0.3.4.tar.gz",
+    "t6[llm,privacy,notion,frameio,instagantt] @ https://github.com/mclbautista/t6-core/archive/refs/tags/v0.3.4.tar.gz",
 ]
 
 [project.optional-dependencies]
