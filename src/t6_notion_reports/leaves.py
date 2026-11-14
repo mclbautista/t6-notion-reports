@@ -21,6 +21,7 @@ from typing import Iterable
 
 from pydantic import BaseModel
 from t6.privacy import Masked, Session
+from t6.domain.dateformats import flag_date
 
 from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
@@ -163,6 +164,6 @@ def _span(leave: Leave) -> str:
 
 
 def _show(when: date) -> str:
-    return f"{when:%b} {when.day}, {when.year}"
+    return flag_date(when)
 
 

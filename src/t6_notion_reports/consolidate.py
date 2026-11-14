@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError, field_validator
 from t6.privacy import Masked, Session
+from t6.domain.dateformats import flag_date
 
 from .condense import ungrounded
 from .dates import has_future_date, is_period, mentions
@@ -341,7 +342,7 @@ def _facts(data: dict) -> str:
             when = date.fromisoformat(iso)
         except ValueError:
             continue
-        values.append(f"{when:%b} {when.day}, {when.year}")
+        values.append(flag_date(when))
     return "\n".join(values)
 
 

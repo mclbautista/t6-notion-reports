@@ -94,22 +94,34 @@ def changed(pages_by_status):
 
 
 def test_other_statuses_appear_nowhere_and_never_reach_the_llm():
-    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "DONE", "✅ Done", {}), ("p3", "NEGO", "🔏 Negotiations", {}),
+    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "DONE", "✅ Done", {}),
             ("p4", "ARCH", "📦 Archived", {}), ("p5", "LOST", "🧭 Lost", {})]
     llm, logs = Llm(), []
     gw = brief(make_db(*changed(rows)), llm=llm, logs=logs)
     text = dm(gw) + digest(gw)
     assert "KEEP" in text
-    assert not any(code in text for code in ("DONE", "NEGO", "ARCH", "LOST"))
+    assert not any(code in text for code in ("DONE", "ARCH", "LOST"))
     assert llm.projects == ["Show KEEP"]
 
 
+def test_every_incoming_status_is_gated_in_as_leads():
+    """t6-core's rule: Leads, Lead, Negotiations and Proposal Made are all Incoming."""
+    past = {"Playdate": {"type": "date", "date": {"start": "2026-11-01", "end": None}}}
+    rows = [("p1", "LEA", "🌱 Leads", past), ("p2", "LED", "Lead", past), ("p3", "NEGO", "🔏 Negotiations", past),
+            ("p4", "PROP", "Proposal Made", past)]
+    llm = Llm()
+    gw = brief(make_db(*changed(rows)), llm=llm)
+    assert sorted(llm.projects) == ["Show LEA", "Show LED", "Show NEGO", "Show PROP"]
+    assert all(code in digest(gw) for code in ("LEA", "LED", "NEGO", "PROP"))
+    assert not any(code in dm(gw) for code in ("LEA", "LED", "NEGO", "PROP"))
+
+
 def test_an_excluded_status_that_looks_like_in_progress_is_logged_by_name():
-    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "TYPO", "In-Progress", {}), ("p3", "DONE", "✅ Done", {})]
+    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "TYPO", "In Progress", {}), ("p3", "DONE", "✅ Done", {})]
     logs = []
     gw = brief(make_db(*changed(rows)), llm=Llm(), logs=logs)
     assert "TYPO" not in dm(gw)
-    assert any("TYPO" in line and "In-Progress" in line for line in logs)
+    assert any("TYPO" in line and "In Progress" in line for line in logs)
     assert not any("DONE" in line for line in logs)
 
 

@@ -10,6 +10,12 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from datetime import datetime
 
+from t6.domain import JobOrderStatus
+from t6.domain.dateformats import deadline as deadline_format
+from t6.domain.job_order_rules import JobOrderStatusGroup, health_flags, jo_id, status_group
+from t6.domain.job_order_rules import is_active as status_is_active
+from t6.notion.departments import display_rank
+
 from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
 from .task_summary import FirstWordsSummarizer, TaskSummarizer, for_page, task_label
@@ -17,13 +23,9 @@ from .telegram_html import Block, Line, bold, line, link, render_messages
 
 SEP = " · "
 
-DONE, CANCELLED = "Done", "Cancelled"
-NOT_STARTED = ("Needs Intake Review", "Pending")
-STARTED = ("In progress", "Needs Completion Review", DONE)
-
-# Section order after TOC and AE (COOR and ADMIN share one section); any other Department value follows
-# them under its own name, then "No Department". Counts in the tally are per department, in this order.
-OTHER_DEPARTMENTS = ("OE", "COOR", "COLOR", "VFX", "SOUND", "ADMIN")
+# Which Status is not started, started or cancelled, which Health values flag a Job Order, the JO ID and the
+# order of the Departments (any other value follows them under its own name, then none) are t6-core's.
+# Sections after TOC and AE put COOR and ADMIN together; the tally counts per department in core's order.
 NO_DEPARTMENT = "No department"
 SLOT_LABEL = {"0500": "05:00", "1130": "11:30", "1900": "19:00", "1200": "12:00", "1800": "18:00", "manual": "manual"}
 
@@ -35,7 +37,6 @@ SECTIONS = (  # (heading, departments in it), after TOC and AE
     ("🟣 For COOR & ADMIN", ("COOR", "ADMIN")),
 )
 NO_DEPARTMENT_HEADING = "🔴 No Department"
-FLAGGED_HEALTH = ("🔴 Blocked", "⚠️ Delayed", "🔥 Urgent")
 UNASSIGNED = "Unassigned"
 
 
@@ -62,7 +63,7 @@ def parse_instant(value: object) -> datetime | None:
 
 
 def is_active(fields: Fields) -> bool:
-    return fields.get("Status") not in (DONE, CANCELLED)
+    return status_is_active(str(fields["Status"]) if fields.get("Status") else None)
 
 
 def page_url(page_id: str) -> str:
@@ -71,7 +72,7 @@ def page_url(page_id: str) -> str:
 
 def moment_text(moment: datetime) -> str:
     """``Nov 13 / Fri (23:59)`` in Manila time: the one date format of the turnover reports."""
-    return moment.astimezone(MANILA).strftime("%b %-d / %a (%H:%M)")
+    return deadline_format(moment)
 
 
 def deadline_text(fields: Fields) -> str:
@@ -117,28 +118,34 @@ def group_by_department(items: list[tuple[str, Fields]]) -> dict[str | None, lis
 
 def department_order(present: set[str | None]) -> list[str | None]:
     """TOC, AE, OE, COOR, COLOR, VFX, SOUND, ADMIN, any other value, then no department."""
-    known = ("TOC", "AE") + OTHER_DEPARTMENTS
-    extras = sorted(d for d in present if d is not None and d not in known)
-    return [d for d in known if d in present] + extras + ([None] if None in present else [])
+    return sorted(present, key=display_rank)
 
 
 def jo_id_text(fields: Fields) -> str:
-    """``<project code>#<JO Number>``: one "#" even when the JO Number has its own, several projects joined
-    with "/", none gives "no project", no number "#?"."""
+    """``<project code>#<JO Number>`` (t6-core's JO ID) from the Job Order's projects and number."""
     names = [str(r.get("name") or r["id"]) for r in fields.get("Projects") or [] if isinstance(r, dict)]
-    number = str(fields.get("JO Number") or "").strip().lstrip("#").strip()
-    return f"{'/'.join(names) or 'no project'}#{number or '?'}"
+    return jo_id(names, str(fields.get("JO Number") or ""))
 
 
 def assignee_names(fields: Fields) -> list[str]:
     return [str(r.get("name") or r["id"]) for r in fields.get("Assigned") or [] if isinstance(r, dict)]
 
 
+def _text(status: object) -> str | None:
+    return str(status) if status else None
+
+
+def _health_emoji(health: object) -> str:
+    """The emoji in front of a flagged Health (Blocked, Delayed, Urgent), else nothing."""
+    first = str(health or "").split()[:1]
+    return first[0] if first and health_flags(str(health)) and not first[0].isalnum() else ""
+
+
 def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owner: str | None) -> Line:
     """``[health emoji]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
     health = fields.get("Health")
     others = [n for n in assignee_names(fields) if n != owner]
-    parts: list = [str(health).split()[0] if health in FLAGGED_HEALTH else "",
+    parts: list = [_health_emoji(health),
                    link(jo_id_text(fields), page_url(page_id)),
                    f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",
@@ -211,7 +218,7 @@ def window_counts(
     counted: set[str] = set()
     for page_id, f in newer.items():
         status = f.get("Status")
-        if status == CANCELLED:
+        if status_group(_text(status)) is JobOrderStatusGroup.CANCELLED:
             continue
         posted = parse_instant(f.get("Date"))
         received = int(posted is not None and start < posted <= end)
@@ -219,8 +226,9 @@ def window_counts(
         if older is not None:
             before = older.get(page_id, {}).get("Status") if page_id in older else None
             absent = page_id not in older
-            processed = int(status in STARTED and (absent or before in NOT_STARTED))
-            accomplished = int(status == DONE and (absent or before != DONE))
+            processed = int(status_group(_text(status)) is JobOrderStatusGroup.STARTED
+                            and (absent or status_group(_text(before)) is JobOrderStatusGroup.NOT_STARTED))
+            accomplished = int(status == JobOrderStatus.DONE and (absent or before != JobOrderStatus.DONE))
         row = Counts(received, processed, accomplished)
         if row.zero:
             continue

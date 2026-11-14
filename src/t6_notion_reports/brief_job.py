@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
+from t6.domain.dateformats import flag_date
+
 from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
 from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
 from .config import BriefSettings
@@ -332,7 +334,7 @@ def note_date_lines(outcome: Outcome) -> tuple[str, ...]:
     """"Submission Deadline (from PM Notes): Dec 1, 2026 · not in property", or the fuzzy wording as stated."""
     return tuple(
         f"{d.property} (from PM Notes): {d.fuzzy}" if d.day is None
-        else f"{d.property} (from PM Notes): {d.day:%b} {d.day.day}, {d.day.year} · not in property"
+        else f"{d.property} (from PM Notes): {flag_date(d.day)} · not in property"
         for d in outcome.dates
     )
 

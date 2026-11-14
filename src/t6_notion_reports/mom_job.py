@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable
 
+from t6.domain.dateformats import minutes_title
+
 from .contacts import load_contacts
 from .holidays import upcoming_entries
 from .llm import LlmClient
@@ -30,7 +32,7 @@ class MomResult:
 
 
 def title_for(meeting_date: date) -> str:
-    return f"{TITLE_PREFIX} {meeting_date.isoformat()}"
+    return minutes_title(meeting_date)
 
 
 def run_draft_mom(

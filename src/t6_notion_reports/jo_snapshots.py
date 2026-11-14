@@ -16,9 +16,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from t6.domain.studio_time import MANILA
+
 from .snapshots import squash
 
-MANILA = ZoneInfo("Asia/Manila")
 # 1200 and 1800 are the retired slot kinds: old rows keep them, new snapshots no longer take them.
 KINDS = ("0500", "1130", "1900", "1200", "1800", "manual")
 RETENTION_DAYS = 90

@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+from t6.domain.project_rules import StatusGroup, status_gate, status_key
+
 from .condense import condense_bullets
 from .diff import ProjectChange, diff_snapshots, display_names, last_updated_text
 from .llm import LlmClient
@@ -30,21 +32,18 @@ HEALTH_NOT_SET = "Health not set"
 RAW_TOGGLE = "Raw source"
 
 ARCHIVING_STAGES = {"archiving", "for drives turnover", "waiting for payment"}
-INCOMING_STATUSES = {"leads", "lead", "negotiations", "proposal made"}
 CHANGE_FIELDS = {"Project Health", "Stage", "Status"}
 _HEALTH_GROUP = {"critical": "critical", "at risk": "at_risk", "on track": "on_track"}
 
 
-def norm(value: object) -> str:
-    """Compare form for Status and Stage: no emoji, whitespace squashed, lower case."""
-    return squash(re.sub(r"[^\w\s-]", "", str(value or ""))).lower()
+norm = status_key  # Compare form for Status and Stage: no emoji, whitespace squashed, lower case.
 
 
 def group_of(state: dict[str, object]) -> str:
     """First match wins (spec 8.2). Empty or unknown Health lands in on_track."""
     if norm(state.get("Status")) == "archiving" or norm(state.get("Stage")) in ARCHIVING_STAGES:
         return "archiving"
-    if norm(state.get("Status")) in INCOMING_STATUSES:
+    if status_gate(state.get("Status")) is StatusGroup.INCOMING:
         return "incoming"
     return _HEALTH_GROUP.get(norm(state.get("Project Health")), "on_track")
 
