@@ -17,10 +17,10 @@ database_path: /app/data/psr.db
 # Saturday briefing (optional; leave all of these out to run snapshots only).
 # When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
 # The secret PSR_SECRET goes in .env. Briefings fire Saturday 12:00 Asia/Manila (Friday snapshot at 23:30).
-# The Minutes go to the same chat and topic: PSR group -1000000000001, topic 1.
+# The Minutes go to the same chat and topic: PSR group -1000000000001, topic 3 (leave the topic out for General; Telegram rejects topic 1).
 # gateway_url: "http://192.0.2.10:8780"
 # psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
-# psr_group_topic_id: 1                    # PSR topic: Minutes go here
+# psr_group_topic_id: 3                    # PSR topic: Minutes go here (optional; never 1)
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
 # Coordinator delivery only; the digest and LLM still include every eligible project.
 # Omit coordinator_recipients for all coordinators; [] disables their DMs and group fallbacks.
@@ -47,7 +47,7 @@ database_path: /app/data/psr.db
 # and fail the boot if they are still here.
 # shift_reports_enabled: true
 # shift_destinations:                      # one list per report; every name and list is optional
-#   mid:   [{chat: -1000000000001, topic: 1}]   # 11:30 report: a chat with an optional topic
+#   mid:   [{chat: -1000000000001}]             # 11:30 report: a chat; add topic: N for a topic (never 1)
 #   day:   [100000001, 100000002]               # 19:00 report: a bare number is a user id (a DM)
 #   night: [100000001, {chat: -1000000000001, topic: 2}]   # 05:00 report: DMs and chats can mix
 # The ids above are placeholders. Put the real ids only in the deployed config.yaml. A person must have

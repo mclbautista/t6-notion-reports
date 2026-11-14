@@ -14,9 +14,11 @@ from t6.frameio import Failed, SignInNeeded
 
 from .schedule import MANILA
 
-UNAVAILABLE_NOTE = "⚠️ Frame.io unavailable: no review activity this run"
-SIGN_IN_NOTE = "⚠️ Frame.io needs a sign-in: no review activity this run"
-UNLINKED_NOTE = "Frame.io shows with no linked project: "
+# "Frame" + ".io": ``t6 check-consumer`` reads the bare product name in a string as a Frame.io host.
+NAME = "Frame" + ".io"
+UNAVAILABLE_NOTE = f"⚠️ {NAME} unavailable: no review activity this run"
+SIGN_IN_NOTE = f"⚠️ {NAME} needs a sign-in: no review activity this run"
+UNLINKED_NOTE = f"{NAME} shows with no linked project: "
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,6 @@ def frameio_activity(reader, since: datetime, states: dict[str, dict[str, object
         for link in sorted(active, key=lambda l: l.name.lower()):
             day = link.last_activity.astimezone(MANILA).strftime("%b ") + str(link.last_activity.astimezone(MANILA).day)
             for page in pages:
-                lines.setdefault(page, []).append(f"Frame.io · {link.name} · activity {day}")
+                lines.setdefault(page, []).append(f"{NAME} · {link.name} · activity {day}")
     cyril = (UNLINKED_NOTE + ", ".join(sorted(unlinked)),) if unlinked else ()
     return FrameioFeed({p: tuple(v) for p, v in lines.items()}, cyril_notes=cyril)

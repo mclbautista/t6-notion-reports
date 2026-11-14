@@ -15,14 +15,17 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel
-from t6.llm import DataPolicy, Failed, Message, OpenAIChat, Provider, Request, Task, run
+from urllib.parse import urljoin
+
+from t6.llm import DECISIONS_URL, DataPolicy, Failed, Message, OpenAIChat, Provider, Request, Task, run
 from t6.privacy import Masked, Session
 
 DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
 # JO shift report task summaries. A Qwen model with zero-data-retention endpoints on OpenRouter
 # (Qwen Flash has none, so every ZDR call to it fails).
 DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# The OpenRouter host comes from t6-core (ADR 0002: the app names no provider host itself).
+OPENROUTER_BASE_URL = urljoin(DECISIONS_URL, "/api/v1")
 
 T = TypeVar("T", bound=BaseModel)
 

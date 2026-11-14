@@ -288,7 +288,7 @@ Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's r
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
     shift_destinations:              # at least one destination in total
-      mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
+      mid:   [{chat: -1000000000001}]             # a chat, with an optional topic (never 1: Telegram rejects it)
       day:   [100000001, 100000002]               # a bare positive number is a user id (a DM)
       night: [100000001, {chat: -1000000000001, topic: 2}]
     ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)

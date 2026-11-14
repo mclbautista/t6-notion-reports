@@ -7,20 +7,34 @@ from t6_notion_reports.notion import NotionClient
 from t6_notion_reports.snapshots import connect, latest_snapshot_ids, snapshot_info
 
 
-def test_client_paginates_and_sends_auth():
-    calls = []
+class CoreStub:
+    """Stands in for t6's NotionClient: records each call."""
 
-    def transport(url, headers, body):
-        calls.append((url, headers, body))
-        if "start_cursor" not in body:
-            return {"results": [{"id": "a"}], "has_more": True, "next_cursor": "n1"}
-        return {"results": [{"id": "b"}], "has_more": False, "next_cursor": None}
+    def __init__(self):
+        self.calls = []
 
-    pages = NotionClient("tok", transport).query_data_source("ds1")
+    def query_data_source(self, ds, *, filter=None):
+        self.calls.append(("query", ds, filter))
+        return [{"id": "a"}, {"id": "b"}]
+
+    def create_page(self, body):
+        self.calls.append(("create", body))
+        return {"id": "pg"}
+
+    def update_page(self, page_id, body):
+        self.calls.append(("update", page_id, body))
+        return {"id": page_id}
+
+    def append_block_children(self, block_id, children):
+        self.calls.append(("append", block_id, children))
+        return []
+
+
+def test_client_reads_through_the_core_client():
+    stub = CoreStub()
+    pages = NotionClient("tok", stub).query_data_source("ds1", {"property": "x"})
     assert [p["id"] for p in pages] == ["a", "b"]
-    assert calls[0][0] == "https://api.notion.com/v1/data_sources/ds1/query"
-    assert calls[0][1]["Authorization"] == "Bearer tok"
-    assert calls[1][2]["start_cursor"] == "n1"
+    assert stub.calls == [("query", "ds1", {"property": "x"})]
 
 
 def test_cli_snapshot_writes_db_and_logs_counts_only(tmp_path, capsys):
@@ -37,18 +51,21 @@ def test_cli_snapshot_writes_db_and_logs_counts_only(tmp_path, capsys):
     assert "baseline" in out and "Secret Show" not in out
 
 
-def test_client_writes_use_data_source_parent_and_methods():
-    calls = []
-
-    def transport(url, headers, body, method="POST"):
-        calls.append((method, url, body))
-        return {"id": "pg"}
-
-    c = NotionClient("tok", transport)
+def test_client_writes_use_data_source_parent_and_core_methods():
+    stub = CoreStub()
+    c = NotionClient("tok", stub)
     c.create_page("ds1", {"Name": {}}, [{"x": 1}])
     c.update_page("pg", {"in_trash": True})
     c.append_children("pg", [{"y": 2}])
-    c.retrieve_data_source("ds1")
-    assert calls[0][0] == "POST" and calls[0][2]["parent"] == {"type": "data_source_id", "data_source_id": "ds1"}
-    assert [(m, u.rsplit("/v1", 1)[1]) for m, u, _ in calls[1:]] == [
-        ("PATCH", "/pages/pg"), ("PATCH", "/blocks/pg/children"), ("GET", "/data_sources/ds1")]
+    assert stub.calls[0][1]["parent"] == {"type": "data_source_id", "data_source_id": "ds1"}
+    assert stub.calls[1:] == [("update", "pg", {"in_trash": True}), ("append", "pg", [{"y": 2}])]
+
+
+def test_an_outage_is_no_answer_a_rate_limit_or_a_5xx_but_not_a_refusal():
+    from t6.notion.errors import NotionError
+    from t6_notion_reports.notion import error_name, is_outage
+
+    assert all(is_outage(NotionError(s, "c", "m")) for s in (None, 429, 500, 503))
+    assert not any(is_outage(NotionError(s, "c", "m")) for s in (400, 401, 404))
+    assert is_outage(OSError("down")) and not is_outage(ValueError("x"))
+    assert error_name(NotionError(None, "timeout", "secret text")) == "timeout"
