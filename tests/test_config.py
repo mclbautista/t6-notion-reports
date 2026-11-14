@@ -192,3 +192,12 @@ def test_bad_leave_clash_days_fails_boot_naming_key_not_value(tmp_path, bad):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, BRIEF_YAML + f"\nleave_clash_days: {bad}\n"), ENV)
     assert "leave_clash_days" in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_frameio_read_url_and_secret_are_read_and_the_url_is_checked(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.frameio_read_url is None
+    cfg = load_config(write(tmp_path, BRIEF_YAML + "\nframeio_read_url: http://w:8791\n"), {**ENV, "T6_FRAMEIO_READ_SECRET": " k "})
+    assert (cfg.brief.frameio_read_url, cfg.brief.frameio_read_secret) == ("http://w:8791", "k")
+    with pytest.raises(ConfigError) as err:
+        load_config(write(tmp_path, BRIEF_YAML + "\nframeio_read_url: ftp://x\n"), ENV)
+    assert "frameio_read_url" in str(err.value)

@@ -64,6 +64,7 @@ class ProjectChange:
     summary: tuple[str, ...] = ()  # consolidated change lines, validated
     llm_failed: bool = False  # the LLM call failed: the raw changes are shown, marked "(LLM unavailable)"
     llm_update: date | None = None  # the "As of" date the LLM judged to be the last real update
+    frameio: tuple[str, ...] = ()  # Frame.io share-link activity since the last brief, one line per link
 
 
 @dataclass

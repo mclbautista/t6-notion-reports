@@ -7,7 +7,10 @@ import sys
 import time
 from datetime import date, datetime, timezone
 
-from .config import ConfigError, load_config
+from t6.frameio import FrameioReader
+from t6.worker.client import HttpTransport
+
+from .config import FRAMEIO_SECRET_ENV, ConfigError, load_config
 from .notion import NotionClient
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
@@ -234,7 +237,7 @@ def _brief(args, notion, now) -> int:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
-                  projects_ds=cfg.projects_data_source, matching=cfg.matching,
+                  projects_ds=cfg.projects_data_source, matching=cfg.matching, frameio=_frameio(cfg),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -256,7 +259,18 @@ def _slots(cfg):
 def _brief_secrets(cfg):
     if cfg.brief is None:
         return []
-    return [("PSR_SECRET", cfg.brief.psr_secret)]
+    secrets = [("PSR_SECRET", cfg.brief.psr_secret)]
+    if cfg.brief.frameio_read_url:
+        secrets.append((FRAMEIO_SECRET_ENV, cfg.brief.frameio_read_secret))
+    return secrets
+
+
+def _frameio(cfg):
+    """The Frame.io worker's read client; none without a URL and its secret (a dry print may go without)."""
+    brief = cfg.brief
+    if brief is None or not brief.frameio_read_url or not brief.frameio_read_secret:
+        return None
+    return FrameioReader(HttpTransport(brief.frameio_read_url, timeout=120), brief.frameio_read_secret)
 
 
 def _llm(cfg, dry_print=False):
@@ -291,7 +305,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
                       meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
-                      matching=cfg.matching, log=lambda text: print(text, flush=True))
+                      matching=cfg.matching, frameio=_frameio(cfg), log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:

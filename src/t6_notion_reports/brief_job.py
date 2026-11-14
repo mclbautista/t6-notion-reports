@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from t6.domain.dateformats import flag_date
@@ -15,6 +15,7 @@ from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact, load_contacts
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
+from .frameio_feed import FrameioFeed, frameio_activity
 from .flags import project_flags, stored_decides
 from .gateway import GatewayError
 from .holidays import leave_lines
@@ -60,6 +61,7 @@ def run_brief(
     show_llm_input: bool = False,
     projects_ds: str | None = None,
     matching: MatchSettings = MatchSettings(),
+    frameio=None,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
@@ -70,6 +72,10 @@ def run_brief(
     With ``llm`` and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
     Names nobody matched, and a failed parse, are noted in Cyril's digest only.
+
+    With ``frameio`` (a t6 ``FrameioReader``), each project shows the Frame.io share links with activity since
+    the previous brief (a week back for the first). A worker that fails or needs a sign-in adds a note and
+    never stops the brief.
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     pair = default_diff_pair(conn)
@@ -127,6 +133,11 @@ def run_brief(
             notion, projects_ds, llm, today, new_state, contacts,
             brief.leave_clash_days, matching, show_llm_input, out, log, masker,
         )
+    feed = FrameioFeed({})
+    if frameio is not None and not show_llm_input:
+        last = None if first else previous_friday(conn, new_id)
+        since = datetime.fromisoformat(snapshot_info(conn, last).taken_at) if last is not None else now - timedelta(days=7)
+        feed = frameio_activity(frameio, since, new_state, log)
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
     flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
@@ -164,6 +175,7 @@ def run_brief(
         conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
+    changes = with_frameio(changes, feed.lines, names, new_state, new_day)
     # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
     cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
@@ -177,8 +189,8 @@ def run_brief(
     )
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first, notes=list(leaves.notes),
-        cyril_notes=list(leaves.cyril_notes),
+        llm_failed, active_coordinators_in(new_state), first=first, notes=[*leaves.notes, *feed.notes],
+        cyril_notes=list(leaves.cyril_notes) + list(feed.cyril_notes),
     )
     no_digest = digest_missing(settings)
 
@@ -362,6 +374,24 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
         if page_id not in shown and (f.lines or a.open or a.resolved or notes):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
             ch.flags, ch.concerns, ch.resolved, ch.note_dates = f.lines, a.open, a.resolved, notes
+            extra.append(ch)
+    return sort_projects(changes + extra) if extra else changes
+
+
+def with_frameio(changes, lines, names, state, snap_day):
+    """Attach each project's Frame.io lines; review activity counts as activity, so a quiet project is listed too."""
+    if not lines:
+        return changes
+    shown = set()
+    for ch in changes:
+        if ch.kind != "removed" and ch.page_id in lines:
+            ch.frameio = lines[ch.page_id]
+        shown.add(ch.page_id)
+    extra = []
+    for page_id, found in lines.items():
+        if page_id not in shown:
+            ch = unchanged_project(page_id, names, state[page_id], snap_day)
+            ch.frameio = found
             extra.append(ch)
     return sort_projects(changes + extra) if extra else changes
 

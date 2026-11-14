@@ -226,6 +226,11 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   Concern, aged through the Concern store. Holidays and office closures never clash. Names nobody matched are
   listed in Cyril's digest only. If the call fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
+- Frame.io review activity: with `frameio_read_url` (the Frame.io worker's read API) and `T6_FRAMEIO_READ_SECRET`,
+  each project lists the Active share links with activity since the previous Friday snapshot (a week back for the
+  first brief) as "Frame.io · name · activity Nov 12", in the DM and the digest. The brief holds no Frame.io token
+  and shows no share URLs. A show with no linked Projects page is listed in Cyril's digest only. A worker that
+  fails or needs a sign-in adds a "Frame.io unavailable" note and the brief goes on. Unset: no Frame.io lines.
 - `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
   what would leave the machine first.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
