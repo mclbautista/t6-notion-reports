@@ -198,7 +198,7 @@ def _shift_target(cfg) -> ShiftTarget:
 
 
 def _shift_llm(cfg):
-    """Haiku for the task summaries when the OpenRouter key is set; None means the first three words."""
+    """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
     if cfg.shift is not None and cfg.shift.openrouter_api_key:
         return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
     return None

@@ -50,6 +50,19 @@ database_path: /app/data/psr.db
 # The ids above are placeholders. Put the real ids only in the deployed config.yaml. A person must have
 # started the bot before a DM can reach them.
 # ops_chat_id: 100000001                   # optional; where the ops alert will go (later ticket)
+# shift_llm_model: "qwen/qwen3.8-27b"      # OpenRouter model for the three-word task summaries (default shown).
+#   It is separate from llm_model above, which only the Saturday briefing uses now. Every call requires
+#   zero data retention, so pick a model with a ZDR endpoint (https://openrouter.ai/api/v1/endpoints/zdr).
+#   A model without one fails every call, and the report shows each Task's first three words instead.
+#
+#   NEXT DEPLOY (the image that adds shift_llm_model):
+#   1. Leave the deployed config.yaml as it is. Its llm_model line keeps the briefing on Haiku, and the
+#      summaries switch to the default above with no config change.
+#   2. Only to pin or change the summary model, add shift_llm_model AFTER the new image is running.
+#      An older image rejects the key as unknown and fails to boot.
+#   3. Check the next shift report: the reports log line "shift slot=..." should show fallback=0, and the
+#      jo_task_summaries table gets new rows (a changed model does not clear the cache, so tasks already
+#      summarised keep their Haiku summary until their Task text changes).
 
 # People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,
 # then a guarded fuzzy match). Defaults shown match the JO watchdog. A fuzzy match needs fuzzy_min_score or
