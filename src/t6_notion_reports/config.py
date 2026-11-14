@@ -26,7 +26,7 @@ SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days", "frameio_read_url"}
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days", "frameio_read_url", "instagantt_export_path", "external_links_data_source"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
 KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
@@ -56,6 +56,8 @@ class BriefSettings:
     pm_notes_weeks: int = DEFAULT_PM_NOTES_WEEKS  # PM Notes blocks older than this go to the LLM only if they hold a future date
     coordinator_recipients: tuple[str, ...] | None = None  # None: all coordinators; (): no DMs or group fallbacks
     frameio_read_url: str | None = None  # the Frame.io worker's read API; unset: no Frame.io section in the briefing
+    instagantt_export_path: str | None = None  # the Instagantt CSV export; needs external_links_data_source
+    external_links_data_source: str | None = None  # the External Links database that ties each timeline to a Project
     frameio_read_secret: str | None = None  # None when T6_FRAMEIO_READ_SECRET is unset; needed with frameio_read_url
 
 
@@ -186,6 +188,8 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
                 raise ConfigError(f"invalid config key: coordinator_recipients (entry {i} is not a Notion id)")
         coordinator_recipients = tuple(item.strip() for item in val)
 
+    if ("instagantt_export_path" in raw) != ("external_links_data_source" in raw):
+        raise ConfigError("invalid config key: instagantt_export_path and external_links_data_source go together")
     return BriefSettings(
         gateway_url=url,
         group_chat_id=_integer(raw, "psr_group_chat_id"),
@@ -203,6 +207,8 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         leave_clash_days=_days(raw, "leave_clash_days", DEFAULT_CLASH_DAYS),
         frameio_read_url=_http_url(raw, "frameio_read_url") if "frameio_read_url" in raw else None,
         frameio_read_secret=env.get(FRAMEIO_SECRET_ENV, "").strip() or None,
+        instagantt_export_path=_string(raw, "instagantt_export_path") if "instagantt_export_path" in raw else None,
+        external_links_data_source=_notion_id(raw, "external_links_data_source") if "external_links_data_source" in raw else None,
     )
 
 

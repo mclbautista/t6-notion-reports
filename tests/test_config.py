@@ -201,3 +201,12 @@ def test_frameio_read_url_and_secret_are_read_and_the_url_is_checked(tmp_path):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, BRIEF_YAML + "\nframeio_read_url: ftp://x\n"), ENV)
     assert "frameio_read_url" in str(err.value)
+
+
+def test_instagantt_export_and_external_links_go_together(tmp_path):
+    ds = "0123456789abcdef0123456789abcdef"
+    cfg = load_config(write(tmp_path, BRIEF_YAML + f"\ninstagantt_export_path: /data/ig.csv\nexternal_links_data_source: {ds}\n"), ENV)
+    assert cfg.brief.instagantt_export_path == "/data/ig.csv" and cfg.brief.external_links_data_source == ds
+    with pytest.raises(ConfigError) as err:
+        load_config(write(tmp_path, BRIEF_YAML + "\ninstagantt_export_path: /data/ig.csv\n"), ENV)
+    assert "external_links_data_source" in str(err.value)

@@ -8,6 +8,9 @@ import time
 from datetime import date, datetime, timezone
 
 from t6.frameio import FrameioReader
+from t6.instagantt import link_timelines, read_export
+from t6.notion import NotionClient as T6NotionClient
+from t6.notion.external_links import ExternalLinks
 from t6.worker.client import HttpTransport
 
 from .config import FRAMEIO_SECRET_ENV, ConfigError, load_config
@@ -237,7 +240,7 @@ def _brief(args, notion, now) -> int:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
                   gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
-                  projects_ds=cfg.projects_data_source, matching=cfg.matching, frameio=_frameio(cfg),
+                  projects_ds=cfg.projects_data_source, matching=cfg.matching, frameio=_frameio(cfg), instagantt=_instagantt(cfg),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -273,6 +276,19 @@ def _frameio(cfg):
     return FrameioReader(HttpTransport(brief.frameio_read_url, timeout=120), brief.frameio_read_secret)
 
 
+def _instagantt(cfg):
+    """A function giving the Instagantt export's LinkReport, read when the brief runs; none unless configured."""
+    brief = cfg.brief
+    if brief is None or not brief.instagantt_export_path or not brief.external_links_data_source:
+        return None
+
+    def load():
+        links = ExternalLinks(T6NotionClient(cfg.notion_token), brief.external_links_data_source)
+        return link_timelines(read_export(brief.instagantt_export_path), links)
+
+    return load
+
+
 def _llm(cfg, dry_print=False):
     """No key: a dry print leaves the LLM out (raw changes); a real send marks every project "(LLM unavailable)"."""
     if cfg.brief is None:
@@ -305,7 +321,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
         if kind == "brief":
             run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
                       meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
-                      matching=cfg.matching, frameio=_frameio(cfg), log=lambda text: print(text, flush=True))
+                      matching=cfg.matching, frameio=_frameio(cfg), instagantt=_instagantt(cfg), log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:

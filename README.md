@@ -231,6 +231,10 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   first brief) as "Frame.io · name · activity Nov 12", in the DM and the digest. The brief holds no Frame.io token
   and shows no share URLs. A show with no linked Projects page is listed in Cyril's digest only. A worker that
   fails or needs a sign-in adds a "Frame.io unavailable" note and the brief goes on. Unset: no Frame.io lines.
+- Instagantt dates: with `instagantt_export_path` (an Instagantt CSV export) and `external_links_data_source`, each show
+  tied to a Project through External Links lists its next three tasks (ending today or later) as
+  "Instagantt · name · Nov 20 – Nov 24". Exports with no linked Project are listed in Cyril's digest only. An
+  unreadable export or failed External Links read adds a note; the brief goes on.
 - `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
   what would leave the machine first.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).

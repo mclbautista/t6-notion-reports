@@ -33,6 +33,8 @@ database_path: /app/data/psr.db
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
 # frameio_read_url: http://t6-frameio-worker:8791   # the Frame.io worker's read API; needs T6_FRAMEIO_READ_SECRET. Unset: no Frame.io lines
+# instagantt_export_path: /data/instagantt.csv   # the Instagantt CSV export, with external_links_data_source: each show's next tasks in the brief
+# external_links_data_source: <External Links data source id>
 # leave_clash_days: 14                   # a team member's leave within this many days of a project date is a Concern
 # concern_chronic_weeks: 4               # a Concern open longer than this many weeks gets a chronic marker
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)

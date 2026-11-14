@@ -295,6 +295,7 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
         blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
+    blocks += [line(f"🗓 {text}") for text in ch.instagantt]
     blocks += [line(f"🎞 {text}") for text in ch.frameio]
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
