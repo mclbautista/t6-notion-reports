@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import runpy
 
-HARNESS = Path(__file__).resolve().parents[1] / 'evaluations' / 'psr' / 'evaluate.py'
+HARNESS = Path(__file__).resolve().parents[1] / 'evaluations' / 'psr' / 'harness.py'
 
 
 def test_export_and_triage_distinguish_missing_dropped_and_accepted_replies(tmp_path):
@@ -31,3 +31,13 @@ def test_export_and_triage_distinguish_missing_dropped_and_accepted_replies(tmp_
     assert results['open-tbc']['accepted_item_counts']['concerns'] == 0
     assert results['open-waiting']['status'].startswith('NOT RUN')
     assert all(r['human_review'] == 'PENDING' for r in results.values())
+
+
+def test_offline_run_rejects_broken_expected_property(tmp_path):
+    harness = runpy.run_path(str(HARNESS))
+    cases = harness['load_cases']()
+    assert len(cases) == 21
+    assert all(result.passed for result in harness['offline_run'](cases).results)
+    broken = cases[0].model_copy(update={'expected_properties': ['required_kind:stale_milestone']})
+    result = harness['offline_run']([broken]).results[0]
+    assert not result.passed

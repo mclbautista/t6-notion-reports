@@ -1,4 +1,4 @@
-# Synthetic PSR evaluation preparation (#97 and #98)
+# Synthetic PSR evaluation harness (#97 and #98)
 
 **Draft. Human review pending. Live model evaluation not run. Neither issue is accepted or complete.**
 
@@ -11,15 +11,26 @@ read credentials, contact a service, or send a brief. It produces no evidence of
 From the repository root, with project development dependencies installed:
 
 ```sh
-PYTHONPATH=src python evaluations/psr/evaluate.py export /tmp/psr-eval-inputs
-PYTHONPATH=src python evaluations/psr/evaluate.py evaluate /tmp/psr-eval-outputs /tmp/psr-eval-triage.json
+python evaluations/psr/harness.py offline
+python evaluations/psr/harness.py export /tmp/psr-eval-inputs
+python evaluations/psr/harness.py evaluate /tmp/psr-eval-outputs /tmp/psr-eval-triage.json
 ```
 
-The first command writes exact payloads, system prompt, schema, prompt hash and draft rubric manifest.
-The second reads externally supplied `<case-id>.output.json` structured replies; missing files are
+The offline command runs all 21 cases through `t6.llm.evals` against checked-in synthetic
+outputs, with schema, accepted concern kinds and exact-quote checks. It exits nonzero on a failed
+property; it makes no model calls and is run on every pull request. These outputs exercise the
+graders, not model quality. Recency, fluent language and semantic judgments still require human review.
+
+The export command writes exact payloads, system prompt, schema, prompt hash and draft rubric manifest.
+The evaluate command reads externally supplied `<case-id>.output.json` structured replies; missing files are
 reported as NOT RUN. Empty outputs are not a successful evaluation. Automated triage checks required
 and forbidden Concern kinds after production validation and reports raw/parsed/accepted counts.
 It does not judge meaning, fluency, winner selection, or per-source semantic grounding.
+
+Real corrected briefs must remain outside the repository. `config.example.json` documents the
+off-repo `real_cases_path` for a future live evaluation; this offline harness does not read it.
+A real case may enter the repository only after `t6.privacy` masking, a names denylist check,
+and human review.
 
 ## Human dataset review required before any live run
 

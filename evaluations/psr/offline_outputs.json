@@ -1,0 +1,177 @@
+{
+  "open-pending": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Pending client approval",
+        "text": "Pending client approval"
+      }
+    ]
+  },
+  "open-tbc": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Delivery date TBC",
+        "text": "Delivery date TBC"
+      }
+    ]
+  },
+  "open-waiting": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Waiting for client feedback",
+        "text": "Waiting for client feedback"
+      }
+    ]
+  },
+  "open-confirm": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Confirm delivery format",
+        "text": "Confirm delivery format"
+      }
+    ]
+  },
+  "open-follow-up": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Follow up on missing files",
+        "text": "Follow up on missing files"
+      }
+    ]
+  },
+  "open-taglish": {
+    "concerns": [
+      {
+        "kind": "open_item",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Pending pa ang client approval; follow up bukas",
+        "text": "Pending pa ang client approval; follow up bukas"
+      }
+    ]
+  },
+  "health-on-track": {
+    "concerns": [
+      {
+        "kind": "health_vs_evidence",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Delivery slipped from Nov 16 to Nov 20, 2026",
+        "text": "Delivery slipped from Nov 16 to Nov 20, 2026"
+      }
+    ]
+  },
+  "health-incoming": {
+    "concerns": [
+      {
+        "kind": "health_vs_evidence",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Online blocked by missing files",
+        "text": "Online blocked by missing files"
+      }
+    ]
+  },
+  "health-stale-critical": {
+    "concerns": [
+      {
+        "kind": "health_vs_evidence",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Grade started",
+        "text": "Grade started"
+      }
+    ]
+  },
+  "health-stale-at-risk": {
+    "concerns": [
+      {
+        "kind": "health_vs_evidence",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Grade started",
+        "text": "Grade started"
+      }
+    ]
+  },
+  "forgotten-milestone": {
+    "concerns": [
+      {
+        "kind": "stale_milestone",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Delivery scheduled Nov 5, 2026",
+        "text": "Delivery scheduled Nov 5, 2026"
+      }
+    ]
+  },
+  "milestone-mentioned-later": {
+    "concerns": []
+  },
+  "resolved-action": {
+    "concerns": []
+  },
+  "healthy-negative": {
+    "concerns": []
+  },
+  "risk-recent-negative": {
+    "concerns": []
+  },
+  "recency-pm_notes": {
+    "concerns": []
+  },
+  "recency-snapshot": {
+    "concerns": []
+  },
+  "recency-minutes": {
+    "concerns": []
+  },
+  "recency-equal": {
+    "concerns": [
+      {
+        "kind": "source_conflict",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Submission deadline scheduled Nov 20, 2026",
+        "text": "Submission deadline scheduled Nov 20, 2026"
+      }
+    ]
+  },
+  "recency-missing": {
+    "concerns": [
+      {
+        "kind": "source_conflict",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Submission deadline scheduled Nov 20, 2026",
+        "text": "Submission deadline scheduled Nov 20, 2026"
+      }
+    ]
+  },
+  "recency-same-day-precision": {
+    "concerns": [
+      {
+        "kind": "source_conflict",
+        "source": "pm_notes",
+        "line_id": 2,
+        "quote": "• Submission deadline scheduled Nov 20, 2026",
+        "text": "Submission deadline scheduled Nov 20, 2026"
+      }
+    ]
+  }
+}

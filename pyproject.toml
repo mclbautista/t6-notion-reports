@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["PyYAML>=6", "pydantic>=2", "tzdata", "rapidfuzz>=3.9"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "t6 @ git+https://github.com/mclbautista/t6-core@v0.4.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
