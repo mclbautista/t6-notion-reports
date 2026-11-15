@@ -5,6 +5,11 @@ from datetime import date, datetime
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
+
+from t6.llm.evals import (Attempt, Case, Grader, Provenance, RunRecord,
+                          grade_kinds, grade_quotes, grade_schema, run_evals)
+from t6.llm.transport import Provider
 
 from t6_notion_reports.consolidate import (
     SYSTEM, Consolidation, Window, build_payload, validate,
@@ -55,6 +60,8 @@ def evaluate(directory, output):
                 raw = json.loads(path.read_text())
                 reply = Consolidation.model_validate(raw)
                 accepted = validate(reply, payload, today)
+                graded = grade(next(c for c in load_cases() if c.id == case['id']), raw)
+                result['shared_grader'] = {'passed': graded.passed, 'reason': graded.reason}
                 kinds = {c.kind for c in reply.concerns if c.text.strip() in accepted.concerns}
                 expected = case['expected']
                 result.update(status='AUTOMATED TRIAGE ONLY', accepted=asdict(accepted),
@@ -70,15 +77,74 @@ def evaluate(directory, output):
                                   'results': results}, indent=2, default=str))
 
 
+def load_cases():
+    """Adapt the app-owned synthetic corpus to the shared case contract."""
+    cases = []
+    for source, payload, _ in fixtures():
+        expected = source['expected']
+        properties = ([f"required_kind:{kind}" for kind in expected['kinds']]
+                      + [f"forbidden_kind:{kind}" for kind in expected.get('forbidden', [])]
+                      + [f"review:{expected['review']}"])
+        for key in ('citation', 'newest', 'winning_value'):
+            if key in expected:
+                properties.append(f"{key}:{expected[key]}")
+        provenance: Provenance = {'kind': 'synthetic'}
+        grader: Grader = 'psr'
+        cases.append(Case(id=source['id'], task='psr_consolidation', masked_input=payload.data,
+                          expected_properties=properties, grader=grader, provenance=provenance))
+    return cases
+
+
+def grade(case, output):
+    """Grade a reply using the shared graders and production acceptance rules."""
+    schema = grade_schema(case, output, Consolidation.model_json_schema())
+    if not schema.passed:
+        return Attempt(False, schema.reason)
+    reply = Consolidation.model_validate(output)
+    payload, today = next((payload, today) for source, payload, today in fixtures()
+                          if source['id'] == case.id)
+    accepted = validate(reply, payload, today)
+    kinds = [item.kind for item in reply.concerns if item.text.strip() in accepted.concerns]
+    required = [p.removeprefix('required_kind:') for p in case.expected_properties if p.startswith('required_kind:')]
+    forbidden = [p.removeprefix('forbidden_kind:') for p in case.expected_properties if p.startswith('forbidden_kind:')]
+    kind_result = grade_kinds(case, kinds, required=required, forbidden=forbidden)
+    quotes = [item.quote for group in (reply.changes, reply.concerns, reply.dates_from_notes)
+              for item in group if item.quote is not None]
+    quotes += [citation.quote for item in reply.concerns for citation in item.supporting_citations]
+    quote_result = grade_quotes(case, quotes)
+    results = (schema, kind_result, quote_result)
+    citations = [p.removeprefix('citation:') for p in case.expected_properties if p.startswith('citation:')]
+    citation_ok = all(any(citation in quote for quote in quotes) for citation in citations)
+    return Attempt(all(result.passed for result in results) and citation_ok,
+                   '; '.join(result.reason for result in results) + ('; expected citation missing' if not citation_ok else ''))
+
+
+def offline_run(cases):
+    outputs = json.loads((ROOT / 'offline_outputs.json').read_text())
+    record = RunRecord(model_id='offline-fixtures', provider='offline', prompt_hash=hashlib.sha256(SYSTEM.encode()).hexdigest(),
+                       schema_hash=hashlib.sha256(json.dumps(Consolidation.model_json_schema(), sort_keys=True).encode()).hexdigest(),
+                       t6_version='0.4.0', date=date.today(), results=[])
+    def no_live_call(case, provider):
+        raise RuntimeError('offline run must not call a model')
+    return run_evals(cases, record=record, evaluate=no_live_call, provider=cast(Provider, None), cost_cap=0,
+                     offline=True, offline_evaluate=lambda case: grade(case, outputs[case.id]))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('offline')
     prepare = sub.add_parser('export')
     prepare.add_argument('directory', type=Path)
     score = sub.add_parser('evaluate')
     score.add_argument('directory', type=Path)
     score.add_argument('output', type=Path)
     args = parser.parse_args()
+    if args.command == 'offline':
+        result = offline_run(load_cases())
+        for item in result.results:
+            print(f"{item.case_id}: {'PASS' if item.passed else 'FAIL'}: {item.reason}")
+        raise SystemExit(0 if len(result.results) == len(load_cases()) and all(item.passed for item in result.results) else 1)
     if args.command == 'export':
         export(args.directory)
     else:
