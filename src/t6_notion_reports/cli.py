@@ -19,7 +19,8 @@ from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient, UnavailableLlm
+from .llm import OpenRouterClient
+from .llm_api import ApiLlm, UnavailableLlm, client_from_env as llm_client_from_env
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
 from .gateway import GatewayClient, GatewayError
@@ -234,10 +235,18 @@ def _shift_target(cfg) -> ShiftTarget:
 
 
 def _shift_llm(cfg):
-    """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
-    if cfg.shift is not None and cfg.shift.openrouter_api_key:
-        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+    """The shift report's task summaries through ``llm run`` with ``shift_llm_model``; None (the first three words) when LLM calls are off."""
+    if cfg.shift is not None:
+        return _api_llm(cfg, "shift_task_summary", cfg.shift.llm_model)
     return None
+
+
+def _api_llm(cfg, task: str, model: str):
+    """An ``ApiLlm`` for one task; None when ``llm_enabled`` is false or ``T6_API_URL`` is unset."""
+    client = llm_client_from_env() if cfg.llm_enabled else None
+    if client is None:
+        return None
+    return ApiLlm(client, task, model, log=lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def _brief(args, notion, now) -> int:

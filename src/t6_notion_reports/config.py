@@ -28,7 +28,7 @@ SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
+KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source", "llm_enabled"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -89,6 +89,7 @@ class Config:
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
     matching: MatchSettings = MatchSettings()  # people matching (leave names); defaults match the watchdog
+    llm_enabled: bool = True  # false: no model is called; summaries fall back to three words, a real brief says "LLM unavailable"
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -118,6 +119,7 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
         matching=_matching(raw),
+        llm_enabled=_flag(raw, "llm_enabled"),
     )
 
 
@@ -215,6 +217,13 @@ def _gateway_url(raw: dict) -> str:
     if not url.startswith(("http://", "https://")):
         raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
     return url
+
+
+def _flag(raw: dict, key: str) -> bool:
+    value = raw.get(key, True)
+    if not isinstance(value, bool):
+        raise ConfigError(f"invalid config key: {key} (expected true or false)")
+    return value
 
 
 def _banner(raw: dict) -> bool:

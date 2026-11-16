@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from t6_notion_reports import cli
@@ -192,3 +194,20 @@ def test_bad_leave_clash_days_fails_boot_naming_key_not_value(tmp_path, bad):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, BRIEF_YAML + f"\nleave_clash_days: {bad}\n"), ENV)
     assert "leave_clash_days" in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_llm_enabled_defaults_to_true_and_must_be_a_boolean(tmp_path):
+    assert load_config(write(tmp_path, good()), ENV).llm_enabled is True
+    off = write(tmp_path, good() + "\nllm_enabled: false")
+    assert load_config(off, ENV).llm_enabled is False
+    with pytest.raises(ConfigError, match="llm_enabled"):
+        load_config(write(tmp_path, good(llm_enabled="hunter2")), ENV)
+
+
+def test_shift_llm_is_off_when_llm_calls_are_off_or_the_api_is_not_set(tmp_path, monkeypatch):
+    shift = good() + "\nllm_enabled: %s"
+    for flag, url, expected in (("true", "http://api.invalid", True), ("false", "http://api.invalid", False), ("true", "", False)):
+        monkeypatch.setenv("T6_API_URL", url)
+        cfg = load_config(write(tmp_path, shift % flag), ENV)
+        cfg = type(cfg)(**{**cfg.__dict__, "shift": SimpleNamespace(llm_model="m")})
+        assert (cli._shift_llm(cfg) is not None) is expected
