@@ -243,6 +243,14 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   uses the API, run `python -m t6_notion_reports switch-concerns --config config.yaml`: it copies the database
   file to `<file>.pre-concerns-switch` and drops the old Concern table; the old Concerns are not moved. Rollback:
   put the previous image tag back and copy that file over the database file.
+- Concern scan and "Raise at PSR": before a real brief (not `--dry-print`) the app calls `concern scan` once for each
+  gated project that has exactly one coordinator known to the API, so the API's Concerns are current (60 s for each
+  call, 10 minutes for the step; a refused or failed scan is logged by rule name and the brief goes on; the log line
+  `brief scan ok=<n> skipped=<n> failed=<n>` gives the counts). `concern_scan: false` turns it off. The brief then
+  reads `concern list` and shows the Concerns the API marks quiet (no news for 2 weeks) in a "Raise at PSR" section:
+  in the digest all of them, in a coordinator's DM the ones that coordinator owns, each with its owner and the party
+  it waits on. A quiet Concern is not repeated in its project's lines. If the list cannot be read the section is left out
+  and the digest says "Raise at PSR unavailable".
 - `brief --dry-print --show-llm-input` prints every payload as the app builds it and calls no LLM. The API masks the
   names, so it is not the text the model sees.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).

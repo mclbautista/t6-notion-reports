@@ -30,6 +30,7 @@ database_path: /app/data/psr.db
 # llm_model: "anthropic/claude-haiku-4.5"   # model for the Minutes, leaves and per-project consolidation, named for the t6 API (default shown)
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
+# concern_scan: true                    # before a real brief, the API scans each gated project's PM Notes for Concerns; false turns it off
 # leave_clash_days: 14                   # a team member's leave within this many days of a project date is a Concern
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 

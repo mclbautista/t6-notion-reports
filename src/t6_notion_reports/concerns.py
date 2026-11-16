@@ -13,6 +13,8 @@ from typing import Any, Mapping
 CHRONIC_MARK = "🔁 chronic"
 RESOLVED_LABEL = "Resolved last week"
 NOT_SEEN = "not seen this week"
+QUIET = "quiet"  # a Concern with no new evidence for 2 weeks: it is in "Raise at PSR", not in its project's lines
+QUIET_LABEL = "no news for 2 weeks"
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,20 @@ class AgedConcerns:
 
     open: tuple[str, ...] = ()
     resolved: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class QuietConcern:
+    """A Concern the API marks quiet, for "Raise at PSR": its project (the label the brief shows), text, owner (a Contacts page
+    id and the name shown) and the party it waits on."""
+
+    concern_id: str
+    page_id: str
+    project: str
+    text: str
+    owner_page: str | None = None
+    owner: str | None = None
+    waiting_on: str | None = None
 
 
 def age_text(opened_on: date, weeks: int, chronic: bool) -> str:
@@ -37,10 +53,27 @@ def line_text(concern: Mapping[str, Any]) -> str:
 
 def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dict[str, AgedConcerns]:
     """The reply of ``concern observe`` by project page id. ``page_of`` maps a T6 project id to its page id; a project
-    of the reply that is not in it is not in this brief. The API's order (oldest first) is kept."""
+    of the reply that is not in it is not in this brief. The API's order (oldest first) is kept. A quiet Concern is not
+    a line of its project: "Raise at PSR" shows it."""
     return {
         page_of[p["project_id"]]: AgedConcerns(
-            tuple(line_text(c) for c in p["open"]), tuple(c["text"] for c in p["closed_since_last_run"]),
+            tuple(line_text(c) for c in p["open"] if c["state"] != QUIET), tuple(c["text"] for c in p["closed_since_last_run"]),
         )
         for p in reply["projects"] if p["project_id"] in page_of
     }
+
+
+def quiet_concerns(listed: list[Mapping[str, Any]], labels: Mapping[str, str], page_of: Mapping[str, str],
+                   contact_of: Mapping[str, str], names: Mapping[str, str]) -> list[QuietConcern]:
+    """The quiet Concerns of ``concern list`` that belong to a project of this brief, in the API's order.
+
+    ``labels`` is the label of each project page id, ``page_of`` maps a T6 project id to its page id, ``contact_of``
+    a T6 Person ID to a Contacts page id and ``names`` a Contacts page id to the name shown."""
+    out = []
+    for c in listed:
+        page = page_of.get(c["project_id"])
+        if c["state"] != QUIET or page is None:
+            continue
+        owner = contact_of.get(c.get("owner_id") or "")
+        out.append(QuietConcern(c["id"], page, labels[page], c["text"], owner, names.get(owner) if owner else None, c.get("waiting_on") or None))
+    return out

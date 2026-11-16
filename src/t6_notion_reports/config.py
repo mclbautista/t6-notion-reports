@@ -23,7 +23,7 @@ SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "pm_notes_weeks", "leave_clash_days"}
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_scan", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 # Read, matched or decided by the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
 IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics",
@@ -49,6 +49,7 @@ class BriefSettings:
     digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
     lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
+    concern_scan: bool = True  # scan each gated project's PM Notes for Concerns (in the API) before a real brief
     leave_clash_days: int = DEFAULT_CLASH_DAYS  # a team member's leave within this many days of a project date is a Concern
     pm_notes_weeks: int = DEFAULT_PM_NOTES_WEEKS  # PM Notes blocks older than this go to the LLM only if they hold a future date
     coordinator_recipients: tuple[str, ...] | None = None  # None: all coordinators; (): no DMs or group fallbacks
@@ -161,6 +162,7 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
+        concern_scan=_flag(raw, "concern_scan"),
         leave_clash_days=_days(raw, "leave_clash_days", DEFAULT_CLASH_DAYS),
     )
 

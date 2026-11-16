@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
-from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concern_api import ConcernApiError, observe
-from .concerns import AgedConcerns, aged_from_reply
+from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
+from .concern_api import ConcernApiError, observe, open_concerns, scan
+from .concerns import AgedConcerns, QuietConcern, aged_from_reply, quiet_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact
@@ -36,6 +36,7 @@ class BriefFailed(Exception):
 
 
 CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
+SCAN_BUDGET = 10 * 60  # seconds for the whole PM Notes scan step; a project not reached is skipped
 
 # The sources of a finding, as ``concern observe`` names them.
 FLAG_RULE, PM_NOTES_READ, LEAVE = "flag_rule", "pm_notes_read", "leave"
@@ -66,6 +67,7 @@ def run_brief(
     show_llm_input: bool = False,
     leaves_llm: LlmClient | None = None,
     budget: float = CONSOLIDATION_BUDGET,
+    scan_budget: float = SCAN_BUDGET,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
@@ -168,9 +170,12 @@ def run_brief(
             *((t, PM_NOTES_READ) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
+    if brief.concern_scan and gateway is not None and not dry_print:  # the scan writes Concerns in the API: not on a dry run
+        scan_concerns(notion, new_state, rules, log, scan_budget, monotonic)
     aged, history = observe_concerns(
         notion, current, unavailable, today, dry_print or gateway is None, new_state, rules, log,
     )
+    quiet, quiet_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
@@ -189,8 +194,8 @@ def run_brief(
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state, rules), first=first,
-        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,))],
-        cyril_notes=list(leaves.cyril_notes),
+        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if quiet_ok else (RAISE_UNAVAILABLE_NOTE,))],
+        cyril_notes=list(leaves.cyril_notes), raise_at_psr=quiet,
     )
     no_digest = digest_missing(settings)
 
@@ -216,6 +221,57 @@ def run_brief(
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
+
+
+def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monotonic: Callable[[], float] = time.monotonic) -> None:
+    """``concern scan`` once for each gated project, so the API's Concerns are current when the brief reads them.
+
+    The owner is the project's one coordinator, as the API's person. A project with none or several coordinators (or one
+    the API does not know) is skipped. A refused or failed scan never stops the brief: its rule name is logged and the
+    brief goes on with the Concerns the API holds. The step has a total ``budget``; projects not reached are skipped.
+    """
+    people = {}
+    try:
+        people = notion.t6_person_ids()
+    except OSError as exc:
+        log(f"brief scan unavailable error={type(exc).__name__}")
+    ok = skipped = failed = 0
+    started = monotonic()
+    for page_id in sorted(state):
+        coordinators = [r["id"] for r in state[page_id].get("T6 Post Coordinator") or [] if isinstance(r, dict)]
+        if len(coordinators) != 1:
+            log(f"brief scan skipped reason=coordinators n={len(coordinators)}")
+            skipped += 1
+        elif coordinators[0] not in people:
+            log("brief scan skipped reason=owner")
+            skipped += 1
+        elif monotonic() - started >= budget:
+            skipped += 1
+        else:
+            try:
+                scan(notion.client, rules[page_id].t6_id or page_id, people[coordinators[0]])
+                ok += 1
+            except OSError as exc:  # the rule name of a refusal; for any other error its type only
+                log(f"brief scan failed error={exc if isinstance(exc, ConcernApiError) else type(exc).__name__}")
+                failed += 1
+    log(f"brief scan ok={ok} skipped={skipped} failed={failed}")
+
+
+def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[QuietConcern], bool]:
+    """The quiet Concerns of the gated projects, from ``concern list`` (read after the observe, so a Concern this run
+    found again is not quiet). If the API does not answer the section is left out: ``([], False)``."""
+    try:
+        listed = open_concerns(notion.client)
+        people = notion.t6_person_ids()
+    except OSError as exc:
+        log(f"brief raise at psr unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+        return [], False
+    page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
+    page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
+    return quiet_concerns(
+        listed, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
+        {page: c.name for page, c in contacts.items()},
+    ), True
 
 
 def observe_concerns(

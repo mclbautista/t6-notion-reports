@@ -85,6 +85,7 @@ class FakeConcerns:
         self.runs: list[str] = []
         self.requests: dict[str, tuple[str, dict]] = {}
         self.observed: list[object] = []  # the inputs of each call, dry runs included
+        self.scans: list[object] = []  # the inputs of each ``concern scan``
 
     def close(self, text_part, on):
         """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
@@ -111,7 +112,7 @@ class FakeConcerns:
         for f in inputs.findings:
             project = ref(f.project)
             key = " ".join(f.text.split()).casefold()
-            found = next((i for i in items if i["project"] == project and i["key"] == key and i["state"] != "closed"), None)
+            found = next((i for i in items if ref(i["project"]) == project and i["key"] == key and i["state"] != "closed"), None)
             if found is None:
                 found = {"id": f"t6c_{len(items) + 1}", "project": project, "key": key, "text": f.text, "source": f.source,
                          "opened_on": inputs.run_date, "state": "open", "closed_on": None, "owner": f.owner}
@@ -124,12 +125,12 @@ class FakeConcerns:
         missing = {(ref(u.project), u.source) for u in inputs.unavailable}
         for i in items:
             if i["state"] != "closed" and i["id"] not in seen and i["source"] in ("flag_rule", "pm_notes_read", "leave"):
-                counts["unavailable" if (i["project"], i["source"]) in missing else "not_seen"] += 1
+                counts["unavailable" if (ref(i["project"]), i["source"]) in missing else "not_seen"] += 1
         today = date.fromisoformat(inputs.run_date)
         before = max([r for r in self.runs if r < inputs.run_date], default="0000-00-00")
         projects: dict[str, dict] = {}
         for i in sorted(items, key=lambda i: (i["opened_on"], i["id"])):
-            entry = projects.setdefault(i["project"], {"project_id": i["project"], "open": [], "closed_since_last_run": []})
+            entry = projects.setdefault(ref(i["project"]), {"project_id": ref(i["project"]), "open": [], "closed_since_last_run": []})
             if i["state"] != "closed":
                 age = (today - date.fromisoformat(i["opened_on"])).days
                 entry["open"].append({"id": i["id"], "text": i["text"], "source": i["source"], "opened_on": i["opened_on"],
@@ -384,6 +385,28 @@ class FakeApi:
         if "concern observe" in self.fail:
             return self.fail["concern observe"]
         return self.concerns.observe(inputs, self._ref)
+
+    def concern_scan(self, inputs):
+        """Records the call; ``fail["concern scan"]`` is an outcome (or a function of the inputs) returned instead."""
+        self.calls.append("concern scan")
+        self.concerns.scans.append(inputs)
+        if self.down:
+            return Unavailable("connection refused")
+        fail = self.fail.get("concern scan")
+        if fail is not None:
+            return fail(inputs) if callable(fail) else fail
+        return Done(result={"project": inputs.project})
+
+    def concern_list(self, inputs):
+        self.calls.append("concern list")
+        if self.down:
+            return Unavailable("connection refused")
+        if "concern list" in self.fail:
+            return self.fail["concern list"]
+        return Done(result={"concerns": [
+            {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
+             "text": i["text"], "source": i["source"], "state": i["state"], "age_seconds": 0, "chronic": False}
+            for i in sorted(self.concerns.items, key=lambda i: (i["opened_on"], i["id"])) if i["state"] != "closed"]})
 
     def jo_list(self, inputs):
         orders = []

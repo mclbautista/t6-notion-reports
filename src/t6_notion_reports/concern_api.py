@@ -11,9 +11,13 @@ import hashlib
 from typing import Any
 
 from t6.client import APIError, Unavailable
-from t6.verbs import ConcernFinding, ConcernObserveInput, ConcernUnavailable, Done, Refused
+from t6.verbs import (
+    ConcernFinding, ConcernListInput, ConcernObserveInput, ConcernScanInput, ConcernUnavailable, Done, Refused,
+)
 
 OBSERVE_TIMEOUT = 30
+SCAN_TIMEOUT = 60  # the API calls a model for each scan
+LIST_TIMEOUT = 30
 
 
 class ConcernApiError(OSError):
@@ -57,3 +61,15 @@ def observe(
     digest = hashlib.sha256(inputs.model_dump_json(exclude={"idempotency_key", "dry_run"}).encode()).hexdigest()[:8]
     inputs = inputs.model_copy(update={"idempotency_key": f"psr-concerns-{run_date}-{digest}"})
     return call("concern observe", limited(client, OBSERVE_TIMEOUT).concern_observe, inputs)
+
+
+def scan(client, project: str, owner: str) -> None:
+    """``concern scan`` for one project: the API reads its dated PM Notes lines and opens, continues or announces
+    Concerns. ``project`` is a T6 ID or a page id, ``owner`` the T6 ID of the project's coordinator."""
+    call("concern scan", limited(client, SCAN_TIMEOUT).concern_scan, ConcernScanInput(project=project, owner=owner))
+
+
+def open_concerns(client) -> list[dict[str, Any]]:
+    """Every Concern that is not closed (``concern list`` with ``open``), oldest first: id, project_id, owner_id,
+    waiting_on, text, state ("open" or "quiet") and more."""
+    return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(open=True))["concerns"]

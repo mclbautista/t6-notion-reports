@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from .concerns import RESOLVED_LABEL
+from .concerns import QUIET_LABEL, RESOLVED_LABEL, QuietConcern
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
 from .telegram_html import (
@@ -23,6 +23,8 @@ DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 LLM_UNAVAILABLE = "(LLM unavailable)"
 AFTER_PSR = "after PSR"
+RAISE_AT_PSR = "Raise at PSR"
+RAISE_UNAVAILABLE_NOTE = "⚠️ Raise at PSR unavailable"
 NO_CYRIL_NOTE = "⚠️ Some warnings are withheld: set cyril_contact_id so private notes reach the right person"
 
 
@@ -62,6 +64,7 @@ def build_briefing(
     limit: int = LIMIT,
     notes: list[str] | None = None,
     cyril_notes: list[str] | None = None,
+    raise_at_psr: list[QuietConcern] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
@@ -80,11 +83,16 @@ def build_briefing(
     ``notes`` are extra warning lines for every digest recipient (leaves unavailable); ``cyril_notes``
     go in Cyril's digest alone (unmatched leave names), so with several recipients the digests differ.
 
+    ``raise_at_psr`` are the quiet Concerns of the gated projects (no new evidence for 2 weeks): the digest lists them
+    all in a "Raise at PSR" section after the projects, and a coordinator's DM lists the ones that coordinator owns.
+    The section is left out when there are none.
+
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
     changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
+    quiet_concerns = raise_at_psr or []
     stamp = f"{today:%a %b} {today.day}"
     notice = [line(FIRST_BRIEF)] if first else []
     messages: list[OutboundMessage] = []
@@ -110,8 +118,9 @@ def build_briefing(
         head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
         units = _units([(None, projects)], DM_SECTIONS, today)
+        raise_block = _raise_block([q for q in quiet_concerns if q.owner_page == contact_id])
         if chat is not None:
-            messages += _send(chat, None, _pack(head, units, [], banner, limit), key, name)
+            messages += _send(chat, None, _pack(head, units, raise_block, banner, limit), key, name)
         else:
             fallbacks.append(name)
             who = Span(name)
@@ -119,7 +128,7 @@ def build_briefing(
                 who = mention_handle(contact.handle)
             head = [line(who, ":"), *head]
             messages += _send(
-                settings.group_chat_id, settings.group_topic_id, _pack(head, units, [], banner, limit), key, name,
+                settings.group_chat_id, settings.group_topic_id, _pack(head, units, raise_block, banner, limit), key, name,
             )
 
     if digest_missing(settings):
@@ -131,7 +140,7 @@ def build_briefing(
     if groups.no_coordinator:
         people.append(("No coordinator", groups.no_coordinator))
     units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
-    tail: list[Block] = []
+    tail: list[Block] = _raise_block(quiet_concerns)
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:
@@ -151,6 +160,22 @@ def build_briefing(
             digest_tail = tail + private if is_cyril else tail
             messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages
+
+
+def _raise_block(items: list[QuietConcern]) -> list[Block]:
+    """The "Raise at PSR" heading and one line per quiet Concern, or nothing."""
+    if not items:
+        return []
+    return [line(bold(RAISE_AT_PSR)), *(line(_raise_text(q)) for q in items), line()]
+
+
+def _raise_text(q: QuietConcern) -> str:
+    parts = [f"{q.project}: {q.text}", QUIET_LABEL]
+    if q.owner:
+        parts.append(f"owner {q.owner}")
+    if q.waiting_on:
+        parts.append(f"waiting on {q.waiting_on}")
+    return "• " + " · ".join(parts)
 
 
 @dataclass(frozen=True)
