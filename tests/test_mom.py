@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from fake_api import refused
-from fake_notion import (CONTACTS, MEETING, PROJECTS, FakeNotion, contact, meeting_page, project,
+from fake_notion import (MEETING, FakeNotion, contact, meeting_page, project,
                          rich, select)
 from t6_notion_reports import cli
 from t6_notion_reports.cli import make_job, main
@@ -207,16 +207,7 @@ def cli_setup(tmp_path, conn_path, meeting=True, monkeypatch=None):
         cfg["meeting_notes_data_source"] = "11111111-1111-1111-1111-111111111111"
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(cfg))
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     return str(path)
-
-
-class Routed(FakeNotion):
-    """FakeNotion that answers to the ids in the CLI config."""
-    def query_data_source(self, ds, filter=None):
-        return super().query_data_source({"11111111-1111-1111-1111-111111111111": PROJECTS,
-                                          "22222222-2222-2222-2222-222222222222": CONTACTS,
-                                          "11111111-1111-1111-1111-111111111111": MEETING}[ds])
 
 
 def file_db(tmp_path):
@@ -231,7 +222,7 @@ def file_db(tmp_path):
 
 def test_draft_mom_cli_date_and_refusal(tmp_path, monkeypatch, capsys):
     cfg = cli_setup(tmp_path, file_db(tmp_path), monkeypatch=monkeypatch)
-    n = Routed(pages(True), contacts())
+    n = FakeNotion(pages(True), contacts())
     assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n) == 0
     assert n.api.verbs("create")[0].meeting_date == "2026-11-16"
     n.meetings[:] = [meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16", sent_at="2026-11-16T05:00:00Z")]
@@ -259,7 +250,7 @@ def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
     cfg = load_config(cli_setup(tmp_path, tmp_path / "psr.db", monkeypatch=monkeypatch))
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
-    n = Routed(pages(False), contacts())
+    n = FakeNotion(pages(False), contacts())
     now = [datetime(2026, 11, 13, 17, 59, tzinfo=MANILA)]
 
     def sleep(seconds):

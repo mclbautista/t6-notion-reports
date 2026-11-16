@@ -13,7 +13,7 @@ briefing sends through the gateway. The Monday run also drafts the minutes in No
 
 Anyone can read this repo and its whole history. Never commit:
 
-- secrets: `NOTION_TOKEN`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
+- secrets: `T6_API_SECRET`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
 - real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
 - data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
 - real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
@@ -53,16 +53,16 @@ The scheduler fires on its own, so **do not start the container before Cyril's g
 first snapshot taken becomes the baseline. A bad config exits with code 2, and
 `restart: unless-stopped` then restarts it in a loop; read `docker compose logs notion-reports`.
 
-Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_TOKEN` in `.env`
+Config: non-secret values in `config.yaml` (see `config.example.yaml`), the secrets in `.env`
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
 
-### Reads through the t6 API
+### Reads and writes through the t6 API
 
-`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant). Every read of
-Contacts, Projects, Job Orders, Meeting Notes and the Projects notices goes through the t6 API; there is no
-Notion fallback. `NOTION_TOKEN` is still used for the Minutes writes only. `projects_data_source`,
-`contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
+`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant and the `minutes`
+permission). Every read of Contacts, Projects, Job Orders, Meeting Notes and the Projects notices, and every Minutes
+write (draft and Sent at), goes through the t6 API; this app holds no Notion token. A Notion token left in an old
+`.env` is not read. `projects_data_source`, `contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
 
 To compare two builds on the same data, run `shift-report --dry-print` and `brief --dry-print` with each image
 on a copy of the database and `diff` the texts.
@@ -287,7 +287,7 @@ Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's r
       mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
       day:   [100000001, 100000002]               # a bare positive number is a user id (a DM)
       night: [100000001, {chat: -1000000000001, topic: 2}]
-    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)
+    ops_chat_id: 100000001           # optional; the T6 API outage alert goes here (else to the first chat entry of that report's list)
     test_banner: true                # 🧪 TEST on every part
 
 `shift_destinations` lists where each report goes: `mid` (the midshift report), `day` (end of day shift) and
@@ -314,7 +314,7 @@ After the last send the job checks delivery: every 15 seconds, for up to 5 minut
 it asks the gateway about each queued message. A destination counts as undelivered if it was rejected at send,
 or any part `failed`, is still `queued` at the end, or whose status could not be read (`unknown`). If any
 destination is undelivered, one alert (key `shift-<date>-<slot>-undelivered`) is sent by the same rule as the
-Notion-outage alert, naming the slot and each such destination by id with its state; it holds no report text.
+T6 API outage alert, naming the slot and each such destination by id with its state; it holds no report text.
 No alert when everything was delivered. `undelivered=<n>` is in the run log line, without ids.
 
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing

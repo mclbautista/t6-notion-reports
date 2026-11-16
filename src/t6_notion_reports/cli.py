@@ -8,12 +8,11 @@ import time
 from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
-from .notion import NotionClient
 from .t6_api import ApiNotion, client_from_env
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
-from .shift_job import NotionUnavailable, ShiftTarget, run_shift_report
+from .shift_job import SlotSkipped, ShiftTarget, run_shift_report
 from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
@@ -96,7 +95,7 @@ def _run(args, parser, notion, now) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-        notion = _reads(notion, cfg)
+        notion = _reads(notion)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
         gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
@@ -119,16 +118,16 @@ def _run(args, parser, notion, now) -> int:
         if cfg is None:
             return 2
         db = db or cfg.database_path
-        notion = _reads(notion, cfg)
+        notion = _reads(notion)
     db = db or "data/psr.db"
-    notion = notion or _reads(None, None)
+    notion = notion or _reads(None)
     _ensure_dir(db)
     _snapshot(connect(db), notion, args.kind, now or datetime.now(timezone.utc))
     return 0
 
 
-def _reads(notion, cfg):
-    """What the jobs read from: the t6 API, with the Notion client behind it for the Minutes writes.
+def _reads(notion):
+    """What the jobs read from and the Minutes are written through: the t6 API.
 
     A ``notion`` passed in (the tests' fake) is used as it is. ``T6_API_URL`` and ``T6_API_SECRET`` are required.
     """
@@ -137,15 +136,14 @@ def _reads(notion, cfg):
     client = client_from_env()
     if client is None:
         raise ConfigError("missing environment variable: T6_API_URL")
-    token = cfg.notion_token if cfg is not None else os.environ.get("NOTION_TOKEN", "")
-    return ApiNotion(client, NotionClient(token) if token else None)
+    return ApiNotion(client)
 
 
 def _jo_snapshot(args, notion, now) -> int:
     cfg = _load(args.config)
     if cfg is None:
         return 2
-    notion = _reads(notion, cfg)
+    notion = _reads(notion)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
@@ -174,7 +172,7 @@ def _shift_report(args, notion, now) -> int:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
         target = _shift_target(cfg)
-    notion = _reads(notion, cfg)
+    notion = _reads(notion)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
@@ -182,7 +180,7 @@ def _shift_report(args, notion, now) -> int:
         run_shift_report(conn, notion, args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
                          log=lambda text: print(text, file=sys.stderr, flush=True), target=target,
                          llm=_shift_llm(cfg))
-    except (GatewayError, NotionUnavailable) as exc:
+    except (GatewayError, SlotSkipped) as exc:
         print(f"shift-report failed: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -240,7 +238,7 @@ def _brief(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = _reads(notion, cfg)
+    notion = _reads(notion)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     conn = connect(db)
     try:
@@ -321,7 +319,7 @@ def _draft_mom(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = _reads(notion, cfg)
+    notion = _reads(notion)
     meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
     conn = connect(db)
     try:
@@ -353,7 +351,7 @@ def _send_ready_mom(args, notion, now) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-    notion = _reads(notion, cfg)
+    notion = _reads(notion)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     try:
         run_send_ready_mom(notion, gateway, cfg.brief.group_chat_id,

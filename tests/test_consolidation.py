@@ -177,7 +177,6 @@ def test_show_llm_input_prints_every_payload_and_calls_no_llm():
 
 def test_cli_show_llm_input_needs_dry_print(tmp_path, monkeypatch, capsys):
     from test_brief_job import AnyContacts, cfg_contacts, seeded_db, write_config
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     now = datetime(2026, 11, 15, 8, tzinfo=timezone.utc)
     assert main(["brief", "--show-llm-input", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=now) == 2

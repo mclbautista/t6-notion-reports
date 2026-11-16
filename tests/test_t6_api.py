@@ -16,14 +16,14 @@ from t6_notion_reports.jo_snapshots import connect as jo_connect
 from t6_notion_reports.mom_job import run_draft_mom
 from t6_notion_reports.mom_lines import load_minutes
 from t6_notion_reports.mom_send import build_messages, run_send_ready_mom
-from t6_notion_reports.shift_job import NotionUnavailable
+from t6_notion_reports.shift_job import SlotSkipped
 from t6_notion_reports.snapshot_job import run_snapshot
 from t6_notion_reports.snapshots import SCHEMA
 from t6_notion_reports.t6_api import ApiNotion, ApiUnavailable, client_from_env
 
 
 def via_api(notion, down=False):
-    return ApiNotion(FakeApi(notion, down=down), notion)
+    return ApiNotion(FakeApi(notion, down=down))
 
 
 def people():
@@ -196,7 +196,7 @@ def test_shift_report_treats_an_unavailable_api_as_the_outage_it_retries():
     n.down = True
     conn = jo_connect()
     err, logs = go(conn, n, clock, FakeTransport())
-    assert isinstance(err, NotionUnavailable) and snapshot_count(conn) == 0
+    assert isinstance(err, SlotSkipped) and snapshot_count(conn) == 0
 
 
 def test_prod_coor_supe_people_are_stored_as_page_ids_when_the_api_binds_them():

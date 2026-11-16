@@ -223,21 +223,13 @@ def cli_cfg(tmp_path, monkeypatch, notes=True, secret=True):
         cfg["meeting_notes_data_source"] = "44444444-4444-4444-4444-444444444444"
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(cfg))
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.setenv("PSR_SECRET", "s3cret") if secret else monkeypatch.delenv("PSR_SECRET", raising=False)
     return str(path)
-
-
-class Routed(FakeNotion):
-    def query_data_source(self, ds, filter=None):
-        assert ds == "44444444-4444-4444-4444-444444444444"
-        return super().query_data_source(MEETING)
 
 
 def test_cli_dry_print_renders_and_does_not_mark_sent(tmp_path, monkeypatch, capsys):
     from t6_notion_reports.cli import main
     n = setup()
-    n.__class__ = Routed
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, secret=False), "--dry-print"],
                 notion=n, now=NOW) == 0
     assert "psr-mom-2026-11-16-1" in capsys.readouterr().out and n.api.writes == []
@@ -267,6 +259,5 @@ def test_scheduler_job_runs_the_check_and_serve_adds_the_slot(tmp_path, monkeypa
     assert SEND_MOM_SLOT in _slots(cfg)
     assert SEND_MOM_SLOT not in _slots(load_config(cli_cfg(tmp_path, monkeypatch, notes=False)))
     n, gw = setup(), FakeGateway()
-    n.__class__ = Routed
     make_job(sqlite3.connect(":memory:"), n, cfg, gw, lambda: NOW)("send_mom")
     assert len(gw.sent) == 4 and gw.sent[0][:2] == (CHAT, TOPIC) and len(n.api.verbs("mark-sent")) == 1

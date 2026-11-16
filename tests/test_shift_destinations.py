@@ -9,7 +9,7 @@ CONTACTS_ID = "2" * 8 + "-2222-2222-2222-" + "2" * 12
 JO_ID = "3" * 8 + "-3333-3333-3333-" + "3" * 12
 BASE = {"projects_data_source": PROJECTS_ID, "contacts_data_source": CONTACTS_ID, "jo_data_source": JO_ID,
         "shift_reports_enabled": True, "gateway_url": "http://gw:8780"}
-ENV = {"NOTION_TOKEN": "tok", "SHIFT_SECRET": "s"}
+ENV = {"SHIFT_SECRET": "s"}
 USER_A, USER_B = 100000001, 100000002
 GROUP, TOPIC = -1000000000001, 5
 
@@ -93,7 +93,7 @@ def test_disabled_reads_nothing_from_the_shift_keys(tmp_path):
     path.write_text(yaml.safe_dump({k: v for k, v in BASE.items() if k not in ("gateway_url", "shift_reports_enabled")}
                                    | {"shift_reports_enabled": False, "shift_destinations": "junk",
                                       "shift_chat_id": "junk", "shift_topic_id": "junk"}))
-    assert load_config(str(path), {"NOTION_TOKEN": "tok"}).shift is None
+    assert load_config(str(path), {}).shift is None
 
 
 @pytest.mark.parametrize("bad_id", [0, -1, GROUP])

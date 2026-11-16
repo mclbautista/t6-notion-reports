@@ -7,7 +7,7 @@ from t6_notion_reports.config import ConfigError, load_config
 
 ID_A = "11111111-1111-1111-1111-111111111111"
 ID_B = "22222222222222222222222222222222"
-ENV = {"NOTION_TOKEN": "ntn_supersecret"}
+ENV = {}
 
 
 def write(tmp_path, text):
@@ -24,7 +24,7 @@ def good(**over):
 
 def test_loads_valid_config_with_default_db(tmp_path):
     cfg = load_config(write(tmp_path, good()), ENV)
-    assert (cfg.database_path, cfg.notion_token, cfg.ignored_keys) == ("data/psr.db", "ntn_supersecret", ())
+    assert (cfg.database_path, cfg.ignored_keys) == ("data/psr.db", ())
 
 
 def test_old_data_source_keys_are_accepted_ignored_and_reported(tmp_path):
@@ -42,11 +42,6 @@ def test_bad_config_names_key_never_value(tmp_path, over, key):
     assert key in str(err.value) and "hunter2" not in str(err.value)
 
 
-def test_missing_secret_names_variable(tmp_path):
-    with pytest.raises(ConfigError, match="NOTION_TOKEN"):
-        load_config(write(tmp_path, good()), {})
-
-
 def test_bad_yaml_and_missing_file(tmp_path):
     with pytest.raises(ConfigError, match="not valid YAML") as err:
         load_config(write(tmp_path, "a: [hunter2"), ENV)
@@ -56,7 +51,6 @@ def test_bad_yaml_and_missing_file(tmp_path):
 
 
 def test_serve_fails_boot_with_key_name_on_stderr(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     path = write(tmp_path, good(database_path=" "))
     assert cli.main(["serve", "--config", path]) == 2
     err = capsys.readouterr().err
@@ -142,7 +136,6 @@ def test_old_matching_keys_are_accepted_and_ignored(tmp_path):
 
 
 def test_boot_logs_one_line_for_each_ignored_key(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     from t6_notion_reports.cli import _load
     assert _load(write(tmp_path, good() + "\nhonorifics: [Ate]\nfuzzy_min_score: 95\n")) is not None
     assert capsys.readouterr().err.splitlines() == ["config key ignored: fuzzy_min_score", "config key ignored: honorifics"]

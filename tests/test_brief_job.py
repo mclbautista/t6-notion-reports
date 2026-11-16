@@ -152,7 +152,7 @@ def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, co
     raw["coordinator_recipients"] = [configured]
     with open(path, "w") as file:
         yaml.safe_dump(raw, file)
-    settings = load_config(path, {"NOTION_TOKEN": "fake-token"}).brief
+    settings = load_config(path, {}).brief
     assert settings is not None
     gw = FakeGateway()
     result = run_brief(c, FakeNotion([], people), settings, SUNDAY, gateway=gw, log=lambda _: None)
@@ -263,7 +263,6 @@ def cfg_contacts():
 
 
 def test_cli_dry_print_needs_no_secret_and_prints_to_stdout(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.delenv("PSR_SECRET", raising=False)
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     assert main(["brief", "--dry-print", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=SUNDAY) == 0
@@ -272,7 +271,6 @@ def test_cli_dry_print_needs_no_secret_and_prints_to_stdout(tmp_path, monkeypatc
 
 
 def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.delenv("PSR_SECRET", raising=False)
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     assert main(["brief", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=SUNDAY) == 2
@@ -280,7 +278,6 @@ def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys
 
 
 def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.setenv("PSR_SECRET", "s3cret")
     monkeypatch.setattr("t6_notion_reports.cli._api_llm", lambda cfg, task, model: EmptyLlm())
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",

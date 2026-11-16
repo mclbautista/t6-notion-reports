@@ -19,7 +19,6 @@ from .leaves import DEFAULT_CLASH_DAYS
 DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
 # JO shift report task summaries; the t6 API maps the name to a provider with zero data retention.
 DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
-SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
@@ -71,7 +70,7 @@ class ShiftSettings:
 
     gateway_url: str
     destinations: Mapping[str, tuple[Destination, ...]]  # keyed by slot ("1130", "1900", "0500"); () skips that slot
-    ops_chat_id: int | None  # where the Notion-outage alert goes; unset: the first group entry of the slot's list
+    ops_chat_id: int | None  # where the T6 API outage alert goes; unset: the first group entry of the slot's list
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
     llm_model: str = DEFAULT_SHIFT_MODEL  # shift_llm_model; the briefing's llm_model is separate
@@ -80,7 +79,6 @@ class ShiftSettings:
 @dataclass(frozen=True)
 class Config:
     database_path: str
-    notion_token: str
     brief: BriefSettings | None = None
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
@@ -106,7 +104,6 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
 
     return Config(
         database_path=_string(raw, "database_path", default="data/psr.db"),
-        notion_token=_secret(env, SECRET_ENV),
         brief=_brief(raw, env),
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
@@ -294,11 +291,4 @@ def _notion_id(raw: dict, key: str) -> str:
     value = _string(raw, key)
     if not _NOTION_ID.match(value):
         raise ConfigError(f"invalid config key: {key} (expected a Notion data source id)")
-    return value
-
-
-def _secret(env: Mapping[str, str], name: str) -> str:
-    value = env.get(name, "").strip()
-    if not value:
-        raise ConfigError(f"missing environment variable: {name}")
     return value

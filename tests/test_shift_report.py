@@ -315,7 +315,6 @@ JO_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def cli_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     cfg = tmp_path / "config.yaml"
     cfg.write_text(f'database_path: "{tmp_path / "psr.db"}"\n')
     return cfg

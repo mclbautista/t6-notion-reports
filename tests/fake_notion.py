@@ -108,7 +108,6 @@ class FakeNotion:
         self.contacts = list(contacts)
         self.meetings = list(meetings)
         self.description = description
-        self.queried: list[str] = []
         self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
 
     # The reads: what the jobs call on ``ApiNotion``, served by ``FakeApi`` from the fixtures. Set ``down`` to
@@ -146,23 +145,3 @@ class FakeNotion:
 
     def job_order_records(self):
         return self._reads().job_order_records()
-
-    def list_block_children(self, block_id):
-        """Children of a page (from ``page_blocks``) or of a block built with block(children=...)."""
-        if block_id in self.page_blocks:
-            return list(self.page_blocks[block_id])
-        for blocks in self.page_blocks.values():
-            found = _find(blocks, block_id)
-            if found is not None:
-                return list(found["_children"])
-        raise KeyError(block_id)
-
-
-def _find(blocks, block_id):
-    for b in blocks:
-        if b["id"] == block_id:
-            return b
-        inner = _find(b["_children"], block_id)
-        if inner is not None:
-            return inner
-    return None

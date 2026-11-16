@@ -5,8 +5,7 @@ Projects database notices and Meeting Notes. It builds each record in the shape 
 the stored data, the diffs and the reports are the same as when Notion was read directly. Relations are
 stored as Contacts page ids (a T6 Person ID from the API is mapped back through ``person list``).
 
-The Minutes writes are still done by the Notion client wrapped here (``create_page``, ``update_page``,
-``append_children``): any other attribute goes to it. That goes when the writes move onto the API.
+The Minutes writes are not here: ``minutes_api`` makes them with ``ApiNotion.client``.
 
 An API that cannot be reached, or refuses, is an ``ApiUnavailable``, an ``OSError`` like the transport
 errors Notion gave, so each job treats it as the outage it handles.
@@ -104,14 +103,8 @@ def client_from_env(env: Mapping[str, str] | None = None, timeout: float = READ_
 
 
 class ApiNotion:
-    def __init__(self, client, notion=None):
-        self.client, self._notion = client, notion
-
-    # The Minutes writes (and nothing else) go to the Notion client until they move onto the API.
-    def __getattr__(self, name: str):
-        if name.startswith("_") or self._notion is None:
-            raise AttributeError(name)
-        return getattr(self._notion, name)
+    def __init__(self, client):
+        self.client = client
 
     def _read(self, call, inputs) -> dict[str, Any]:
         try:

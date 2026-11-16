@@ -134,7 +134,6 @@ def load_latest_pages(conn, fake):
 
 
 def test_cli_logs_one_line_with_counts_and_no_values(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     cfg = tmp_path / "config.yaml"
     cfg.write_text(f'projects_data_source: "{PROJECTS_ID}"\ncontacts_data_source: "{CONTACTS_ID}"\n'
                    f'jo_data_source: "{JO_ID}"\ndatabase_path: "{tmp_path / "psr.db"}"\n')
@@ -145,7 +144,6 @@ def test_cli_logs_one_line_with_counts_and_no_values(tmp_path, capsys, monkeypat
 
 
 def test_cli_needs_the_t6_api_url(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     monkeypatch.delenv("T6_API_URL", raising=False)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(f'database_path: "{tmp_path / "psr.db"}"\n')

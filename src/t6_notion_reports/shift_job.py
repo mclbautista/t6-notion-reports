@@ -26,8 +26,8 @@ POLL_EVERY = timedelta(seconds=15)
 POLL_FOR = timedelta(minutes=5)
 
 
-class NotionUnavailable(Exception):
-    """Notion could not be read for the whole retry window; the slot was skipped after one alert."""
+class SlotSkipped(Exception):
+    """The T6 API could not be read for the whole retry window; the slot was skipped after one alert."""
 
 
 def find_older(conn: sqlite3.Connection, slot: str, current: JoSnapshot) -> tuple[JoSnapshot | None, str | None]:
@@ -128,8 +128,8 @@ def run_shift_report(
     failure (after the client's own retries) raises ``GatewayError``; parts already accepted are not
     queued again by a rerun, because the keys are the same.
 
-    When sending, a Notion that cannot be read is retried for ``RETRY_FOR``; if it stays down one
-    alert is queued and ``NotionUnavailable`` is raised. Nothing is stored and nothing is caught up
+    When sending, a T6 API that cannot be read is retried for ``RETRY_FOR``; if it stays down one
+    alert is queued and ``SlotSkipped`` is raised. Nothing is stored and nothing is caught up
     later. A dry print fails at once, as it always has.
 
     Task summaries: ``summarizer``, or the model through ``llm`` (the API masks the Task text) when given, runs after the snapshot and
@@ -232,7 +232,7 @@ def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence
 
 
 def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep) -> None:
-    """Read Notion until it answers or ``RETRY_FOR`` is up. Only transport errors count as an outage."""
+    """Read the T6 API until it answers or ``RETRY_FOR`` is up. Only transport errors count as an outage."""
     give_up = clock() + RETRY_FOR
     attempts = 0
     while True:
@@ -245,9 +245,9 @@ def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep) -> 
             if clock() + RETRY_EVERY > give_up:
                 break
             sleep(RETRY_EVERY.total_seconds())
-    log(f"shift slot={slot} notion unavailable attempts={attempts} error={error}; skipping the slot")
+    log(f"shift slot={slot} T6 API unavailable attempts={attempts} error={error}; skipping the slot")
     _send_alert(target, slot, now, error, log)
-    raise NotionUnavailable(f"slot {slot} skipped after {attempts} attempts ({error})")
+    raise SlotSkipped(f"slot {slot} skipped after {attempts} attempts ({error})")
 
 
 def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=print) -> None:
@@ -256,9 +256,9 @@ def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=p
     Without ``ops_chat_id`` it goes to the first group entry of the slot's list; with none, it is not sent.
     """
     minutes = int(RETRY_FOR.total_seconds() // 60)
-    text = f"🚨 Shift report skipped for slot {slot}: Notion unreachable for {minutes} min (last error: {error})."
+    text = f"🚨 Shift report skipped for slot {slot}: T6 API unreachable for {minutes} min (last error: {error})."
     key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-alert"
     try:
         target.send_alert(slot, text, key, log)
     except GatewayError:
-        log(f"shift slot={slot} notion alert not sent: gateway rejected it")
+        log(f"shift slot={slot} T6 API alert not sent: gateway rejected it")

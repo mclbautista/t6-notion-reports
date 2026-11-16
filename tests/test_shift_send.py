@@ -459,7 +459,7 @@ BASE = {"projects_data_source": PROJECTS_ID, "contacts_data_source": CONTACTS_ID
 SHIFT = {"shift_reports_enabled": True, "gateway_url": "http://gw:8780",
          "shift_destinations": {"mid": [{"chat": CHAT, "topic": TOPIC}], "day": [{"chat": CHAT, "topic": TOPIC}],
                                 "night": [{"chat": CHAT, "topic": TOPIC}]}}
-ENV = {"NOTION_TOKEN": "tok", "SHIFT_SECRET": " shift-s3cret "}
+ENV = {"SHIFT_SECRET": " shift-s3cret "}
 
 
 def write(tmp_path, **cfg):
@@ -513,7 +513,7 @@ def test_missing_or_invalid_shift_keys_fail_boot_naming_the_key(tmp_path, over, 
 def test_disabled_shift_reports_change_nothing(tmp_path):
     cfg = load_config(write(tmp_path, shift_reports_enabled=False), ENV)
     assert cfg.shift is None and cfg.brief is None
-    assert load_config(write(tmp_path), {"NOTION_TOKEN": "tok"}).shift is None  # no SHIFT_SECRET needed
+    assert load_config(write(tmp_path), {}).shift is None  # no SHIFT_SECRET needed
 
 
 def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tmp_path):
@@ -524,7 +524,6 @@ def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tm
 
 
 def test_serve_needs_shift_secret_when_enabled(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)
     assert cli.main(["serve", "--config", write(tmp_path, **SHIFT)]) == 2
     assert "SHIFT_SECRET" in capsys.readouterr().err
@@ -576,7 +575,6 @@ def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_t
 
 
 def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
     monkeypatch.setenv("PSR_SECRET", "psr-s3cret")
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
@@ -590,7 +588,6 @@ def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, cap
 
 
 def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)
     assert cli.main(["shift-report", "--slot", "1900", "--config", write(tmp_path)]) == 2
     assert "shift_reports_enabled" in capsys.readouterr().err

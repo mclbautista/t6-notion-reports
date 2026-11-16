@@ -1,5 +1,5 @@
 # Non-secret configuration. Copy to config.yaml (mounted read-only into the container).
-# The secret NOTION_TOKEN goes in .env, never here. Every key is validated at boot; a bad
+# Secrets go in .env, never here. Every key is validated at boot; a bad
 # value fails the boot with a message naming the key.
 # Quote the ids: an all-digit id is read by YAML as a number.
 
