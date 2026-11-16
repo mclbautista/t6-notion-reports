@@ -287,7 +287,7 @@ def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monoto
     people = {}
     try:
         people = notion.t6_person_ids()
-    except OSError as exc:
+    except Exception as exc:  # any failure: the brief goes on
         log(f"brief scan unavailable error={type(exc).__name__}")
     ok = skipped = failed = 0
     started = monotonic()
@@ -305,7 +305,7 @@ def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monoto
             try:
                 scan(notion.client, rules[page_id].t6_id or page_id, people[coordinators[0]])
                 ok += 1
-            except OSError as exc:  # the rule name of a refusal; for any other error its type only
+            except Exception as exc:  # the rule name of a refusal; for any other error its type only
                 log(f"brief scan failed error={exc if isinstance(exc, ConcernApiError) else type(exc).__name__}")
                 failed += 1
     log(f"brief scan ok={ok} skipped={skipped} failed={failed}")
@@ -317,15 +317,15 @@ def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[Quiet
     try:
         listed = open_concerns(notion.client)
         people = notion.t6_person_ids()
-    except OSError as exc:
+        page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
+        page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
+        return quiet_concerns(
+            listed, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
+            {page: c.name for page, c in contacts.items()},
+        ), True
+    except Exception as exc:  # any failure, a malformed reply too: the section is left out and the brief goes on
         log(f"brief raise at psr unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
         return [], False
-    page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
-    page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
-    return quiet_concerns(
-        listed, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
-        {page: c.name for page, c in contacts.items()},
-    ), True
 
 
 def observe_concerns(
@@ -350,12 +350,14 @@ def observe_concerns(
         reply = observe(
             notion.client, today.isoformat(), findings, {(send(p), s) for p, s in unavailable}, dry_run,
         )
-    except OSError as exc:  # the rule name of a refusal; for any other error its type only, messages may hold data
+        counts = reply["counts"]
+        line = "brief concerns " + " ".join(f"{name}={counts[name]}" for name in ("new", "known", "not_seen", "skipped"))
+        aged = aged_from_reply(reply, {send(p): p for p in current})
+    except Exception as exc:  # any failure, a malformed reply too: the brief goes on without the history  # the rule name of a refusal; for any other error its type only, messages may hold data
         log(f"brief concerns unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
         return {p: AgedConcerns(tuple(dict.fromkeys(t for t, _ in items))) for p, items in current.items() if items}, False
-    counts = reply["counts"]
-    log("brief concerns " + " ".join(f"{name}={counts[name]}" for name in ("new", "known", "not_seen", "skipped")))
-    return aged_from_reply(reply, {send(p): p for p in current}), True
+    log(line)
+    return aged, True
 
 
 @dataclass(frozen=True)

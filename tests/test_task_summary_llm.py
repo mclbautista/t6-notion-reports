@@ -149,3 +149,59 @@ def test_retention_deletes_summaries_unused_for_90_days_and_keeps_used_ones():
                      (page, old.isoformat(), used.isoformat()))
     take_snapshot(conn, [], NOW, "1900")
     assert [r[0] for r in conn.execute("SELECT page_id FROM jo_task_summaries")] == ["recent"]
+
+
+def test_once_a_call_failed_on_a_timeout_the_rest_of_the_slot_makes_no_call():
+    from t6_notion_reports.llm_api import LlmUnavailable
+
+    class Down:
+        def __init__(self):
+            self.asked = []
+
+        def summarize(self, text):
+            self.asked.append(text)
+            raise LlmUnavailable("timeout")
+
+    s = Down()
+    lookup, stats = summarize_tasks(connect(), s, {f"p{n}": f"Task {n}" for n in range(15)}, NOW)
+    assert len(s.asked) == 1 and stats.fallback == 15 and stats.new == 0
+
+
+def test_after_the_total_budget_no_more_calls_are_made_and_the_rest_fall_back():
+    class Slow:
+        def __init__(self):
+            self.asked = 0
+
+        def summarize(self, text):
+            self.asked += 1
+            clock[0] += 120
+            return "Grade the cut"
+
+    clock = [0.0]
+    s = Slow()
+    _, stats = summarize_tasks(connect(), s, {f"p{n}": f"Task {n}" for n in range(10)}, NOW, budget=300, monotonic=lambda: clock[0])
+    assert s.asked == 3 and stats.new == 3 and stats.fallback == 7
+
+
+def test_a_schema_mismatch_is_one_fallback_and_does_not_stop_the_rest():
+    from t6_notion_reports.llm_api import LlmError
+
+    class Odd:
+        def __init__(self):
+            self.asked = 0
+
+        def summarize(self, text):
+            self.asked += 1
+            if self.asked == 1:
+                raise LlmError("did not match")
+            return "Grade the cut"
+
+    s = Odd()
+    _, stats = summarize_tasks(connect(), s, {"p1": "Task 1", "p2": "Task 2"}, NOW)
+    assert s.asked == 2 and stats.new == 1 and stats.fallback == 1
+
+
+def test_a_timeout_that_outlasts_its_attempts_is_unavailable_to_the_summarizer():
+    from t6_notion_reports.llm_api import LlmUnavailable
+    with pytest.raises(LlmUnavailable):
+        summarizer(FakeLlmApi(refused("provider", "timeout"))).summarize("Color grade the final cut")

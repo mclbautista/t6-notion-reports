@@ -210,3 +210,32 @@ def test_a_long_section_splits_between_lines_and_every_part_is_valid_html():
         assert_valid_html(text) and len(text) <= 4096
     body = "\n".join(re.sub(r"<[^>]+>", "", t) for t in parts)
     assert all(f"Item {n:02d} " in body for n in range(80))
+
+
+# ---- a malformed answer never stops the brief ----
+
+class Weird(Exception):
+    pass
+
+
+@pytest.mark.parametrize("verb", ["concern scan", "concern list", "concern observe"])
+@pytest.mark.parametrize("error", [ValueError("secret text"), KeyError("counts"), Weird("secret text")])
+def test_an_unexpected_error_in_a_concern_call_never_stops_the_brief(verb, error):
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS, **staffed(Colorist=relation())))
+
+    def boom(inputs):
+        raise error
+    setattr(notion.api, verb.replace(" ", "_"), boom)
+    gw, logs = go(conn, notion)
+    assert dm(gw) and digest(gw)
+    assert not any("secret text" in ln for ln in logs)
+    assert any(f"error={type(error).__name__}" in ln for ln in logs if "unavailable" in ln or "scan failed" in ln)
+
+
+@pytest.mark.parametrize("reply", [{}, {"projects": [], "counts": {}}, {"counts": {"new": 0, "known": 0, "not_seen": 0, "skipped": 0}}])
+def test_an_observe_reply_without_its_parts_is_history_unavailable(reply):
+    from t6.verbs import Done
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS, **staffed(Colorist=relation())))
+    notion.api.concern_observe = lambda inputs: Done(result=reply)
+    gw, logs = go(conn, notion)
+    assert "Concern history unavailable" in digest(gw) and "KeyError" in " ".join(logs)

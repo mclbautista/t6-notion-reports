@@ -10,6 +10,9 @@ from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
 
+# Fields a snapshot of an older version lacks: missing on the old side is not a change (it shows from the next snapshot on).
+LEGACY_MISSING = ("Prod Coor/Supe",)
+
 
 @dataclass(frozen=True)
 class FieldChange:
@@ -93,7 +96,8 @@ def diff_snapshots(
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
                 # A field on one side only is a change, even when the other side holds an explicit null.
-                if f not in ("PM Notes", LAST_EDITED) and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
+                if f not in ("PM Notes", LAST_EDITED) and not (f in LEGACY_MISSING and f not in o)
+                and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
             ]
             notes = _diff_notes(o.get("PM Notes"), n.get("PM Notes"), old_date, new_date)
             if changes or notes:

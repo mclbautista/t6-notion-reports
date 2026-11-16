@@ -27,6 +27,10 @@ class LlmError(Exception):
     """The call failed or its answer did not validate. The message never holds prompt text."""
 
 
+class LlmUnavailable(LlmError):
+    """The call failed on a timeout, a provider failure or an unreachable API, after its attempts."""
+
+
 @dataclass(frozen=True)
 class Reply(Generic[T]):
     """The validated answer. ``dropped``: list items left out because a field still held a placeholder the API could not restore."""
@@ -91,14 +95,14 @@ class ApiLlm:
 
     def _run(self, inputs: LLMRunInput) -> LLMRunOutput:
         if self._down:
-            raise LlmError(f"{self._task}: API unreachable")
+            raise LlmUnavailable(f"{self._task}: API unreachable")
         for attempt in range(len(RETRY_DELAYS) + 1):
             try:
                 return self._once(inputs)
             except _Retry as again:
                 if attempt == len(RETRY_DELAYS):
                     self._down = again.unreachable
-                    raise LlmError(str(again)) from None
+                    raise LlmUnavailable(str(again)) from None
                 self._sleep(min(again.wait or RETRY_DELAYS[attempt], RETRY_AFTER_MAX))
         raise AssertionError("unreachable")
 

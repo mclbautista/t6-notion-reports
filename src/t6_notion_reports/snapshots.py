@@ -184,7 +184,8 @@ def load_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> dict[str, dict[
         "WHERE sp.snapshot_id = ? AND sp.removed = 0",
         (snapshot_id,),
     ):
-        state.setdefault(page_id, {})[name] = json.loads(value_json)
+        if name in TRACKED_FIELDS:  # a field an older version stored ("Post Supe") is not read
+            state.setdefault(page_id, {})[name] = json.loads(value_json)
     return state
 
 
