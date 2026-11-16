@@ -29,7 +29,7 @@ database_path: /app/data/psr.db
 # Digest delivery is independent; when omitted it defaults to cyril_contact_id.
 # digest_recipients:
 #   - "00000000-0000-0000-0000-000000000000"   # FILL IN: a digest recipient's Contacts page id
-# llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for the per-project consolidation (default shown)
+# llm_model: "anthropic/claude-haiku-4.5"   # model for the Minutes, leaves and per-project consolidation, named for the t6 API (default shown)
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
 # leave_clash_days: 14                   # a team member's leave within this many days of a project date is a Concern
@@ -53,7 +53,7 @@ database_path: /app/data/psr.db
 # llm_enabled: true                       # false: no model is called (summaries show three words; a real brief says "LLM unavailable")
 # shift_llm_model: "qwen/qwen3.8-27b"      # model (named for the t6 API) for the three-word task summaries (default shown).
 #   It is separate from llm_model above, which only the Saturday briefing uses now. Every call requires
-#   zero data retention, so pick a model with a ZDR endpoint (https://openrouter.ai/api/v1/endpoints/zdr).
+#   zero data retention, so pick a model the t6 API lists with it.
 #   A model without one fails every call, and the report shows each Task's first three words instead.
 #
 #   NEXT DEPLOY (the image that adds shift_llm_model):

@@ -360,7 +360,7 @@ def test_projects_not_reached_within_the_budget_are_marked_unavailable_and_count
 def test_invalid_json_counts_as_a_failure():
     class BadJson:
         def complete(self, system, user, schema, **kw):
-            raise LlmError("OpenRouter answer did not match the schema")
+            raise LlmError("answer did not match the schema")
 
     gw, _ = run(conn_one(), BadJson())
     assert "(LLM unavailable)" in dm(gw)
