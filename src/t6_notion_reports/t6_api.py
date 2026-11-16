@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectFlagsInput, ProjectGetInput,
+    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
     ProjectListInput, Refused, StudioNoticesInput,
 )
 
@@ -217,15 +217,20 @@ class ApiNotion:
         return _project_rules(outcome.result["project"])
 
     def project_flags(
-        self, page_id: str, today: date, lead_warning_days: int, stated: Mapping[str, date | None],
-    ) -> dict[str, Any]:
-        """``project flags`` for one Project judged on ``today``. ``stated`` maps a date property name to the day
-        the PM Notes give for it (None: a fuzzy value)."""
+        self, stated: Mapping[str, Mapping[str, date | None]], today: date, lead_warning_days: int,
+    ) -> dict[str, dict[str, Any] | None]:
+        """``project flags`` for several Projects in one call, judged on ``today``. ``stated`` maps a page id to the
+        dates the PM Notes give for its blank date properties (property name to day, None: a fuzzy value). Returns the
+        result of each page id, None for one the API does not know."""
         inputs = ProjectFlagsInput(
-            project=page_id, as_of=today, lead_warning_days=lead_warning_days,
-            stated={ATTRIBUTE_OF[name]: day for name, day in stated.items()},
+            projects=[
+                ProjectFlagsItem(project=page_id, stated={ATTRIBUTE_OF[name]: day for name, day in dates.items()})
+                for page_id, dates in stated.items()
+            ],
+            as_of=today, lead_warning_days=lead_warning_days,
         )
-        return self._read(self.client.project_flags, inputs)
+        entries = self._read(self.client.project_flags, inputs)["projects"]
+        return {e["project"]: (e if e["found"] else None) for e in entries}
 
     def job_order_records(self) -> list[JoRecord]:
         people = self._people()
@@ -255,6 +260,7 @@ def _project_rules(p: dict) -> ProjectRules:
         p.get("t6_id"), p["status_key"], p.get("status_group"), bool(p["snapshotted"]),
         tuple(PROPERTY_OF[a] for a in p.get("missing_roles") or ()),
         tuple(PROPERTY_OF[a] for a in p.get("relevant_dates") or ()),
+        bool(p["health_missing"]), int(p["health_rank"]),
     )
 
 

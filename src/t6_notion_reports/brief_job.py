@@ -195,6 +195,8 @@ def run_brief(
     )
     for ch in changes:
         ch.group = gate(rules.get(ch.page_id))
+        if ch.page_id in rules:
+            ch.health_rank = rules[ch.page_id].health_rank
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state, rules), first=first,
@@ -532,20 +534,16 @@ def gate_rules(notion, old, new) -> dict[str, ProjectRules]:
 
 
 def read_flags(notion, state, rules, today, lead_warning_days, stated, log) -> tuple[dict[str, ProjectFlags], set[str]]:
-    """The flags of every gated project: one ``project flags`` call each. A call the API did not answer gives that
-    project no flags this run, and is logged by error type only."""
-    flagged: dict[str, ProjectFlags] = {}
-    failed: set[str] = set()
-    for page_id, project in state.items():
-        try:
-            result = notion.project_flags(page_id, today, lead_warning_days, stated.get(page_id) or {})
-        except OSError as exc:
-            log(f"brief flags unavailable error={type(exc).__name__}")
-            flagged[page_id] = ProjectFlags()
-            failed.add(page_id)
-            continue
-        flagged[page_id] = project_flags(project, rules[page_id], result)
-    return flagged, failed
+    """The flags of every gated project: one ``project flags`` call for all of them. A call the API did not answer
+    gives every project no flags this run, and is logged by error type only; a project the API does not know is
+    the same for that project alone."""
+    try:
+        results = notion.project_flags({p: stated.get(p) or {} for p in state}, today, lead_warning_days)
+    except OSError as exc:
+        log(f"brief flags unavailable error={type(exc).__name__}")
+        return {p: ProjectFlags() for p in state}, set(state)
+    failed = {p for p in state if results.get(p) is None}
+    return {p: ProjectFlags() if p in failed else project_flags(rules[p], results[p]) for p in state}, failed
 
 
 def apply_gate(old, new, rules: dict[str, ProjectRules], log: Callable[[str], None] = print):

@@ -8,8 +8,7 @@ like the property's own.
 The overdue flags come first, so the worst news is the first line under the project. Date sanity problems are not flags
 but Concerns, judged on the precise dates a property or the PM Notes give.
 
-A blank Project Health gets the "missing health update" note, as its last flag. The API's ``health_missing`` reads the
-Notion property "Health", not "Project Health" that reports reads, so this one is still decided here (an API gap).
+A blank Project Health gets the "missing health update" note, as its last flag: the API's health flag, worded here.
 """
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ from typing import Any, Mapping
 
 from .rules import ProjectRules
 from .schedule import MANILA
-from .snapshots import squash
 
 PLAYDATE = "Playdate"
 SUBMISSION = "Submission Deadline"
@@ -40,13 +38,15 @@ class ProjectFlags:
         return bool(self.lines or self.concerns)
 
 
-def project_flags(state: dict[str, object], rules: ProjectRules, result: Mapping[str, Any]) -> ProjectFlags:
+def project_flags(rules: ProjectRules, result: Mapping[str, Any]) -> ProjectFlags:
     """The flag lines and date-sanity Concerns of a project: the ``project flags`` ``result``, worded."""
     overdue: list[str] = []
     other: list[str] = []
+    health = False
     for flag in result["flags"]:
         name = _FIELD.get(flag["field"])
-        if name is None:  # the API's health flag: see the module note
+        if name is None:  # the API's health flag, worded last
+            health = health or flag["field"] == "health"
             continue
         days = flag.get("days")
         if flag["kind"] == "overdue":
@@ -58,8 +58,8 @@ def project_flags(state: dict[str, object], rules: ProjectRules, result: Mapping
             other.append(f"⚠️ No {name}")
     if rules.missing_roles:
         other.append("⚠️ Missing roles: " + ", ".join(rules.missing_roles))
-    if not squash(str(state.get("Project Health") or "")):
-        other.append(MISSING_HEALTH)  # every gated Status: the project also sorts last in its section
+    if health:
+        other.append(MISSING_HEALTH)
     concerns = [(_sanity_text(p), p["from_notes"]) for p in result["sanity"]]
     return ProjectFlags(
         tuple(overdue + other), tuple(t for t, _ in concerns), tuple(t for t, from_notes in concerns if from_notes),

@@ -10,10 +10,6 @@ from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
 
-# Project Health order inside a section; a blank one sorts last.
-HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
-HEALTH_BLANK = 9
-
 
 @dataclass(frozen=True)
 class FieldChange:
@@ -54,6 +50,7 @@ class ProjectChange:
     code: str | None = None
     title: str | None = None
     stage: str | None = None
+    health_rank: int = 0  # the API's sort key of Project Health inside a section (set by the brief job)
     group: str | None = None  # status gate: on_hold | in_progress | leads (set by the brief job from the API's result)
     edited: date | None = None  # Notion last-edited day (Manila)
     dates: tuple[str, ...] = ()  # the date properties that are set, as of this state: "Playdate Dec 1, 2026"
@@ -192,15 +189,7 @@ def sort_projects(items: list[ProjectChange]) -> list[ProjectChange]:
 
 
 def _sort_key(ch: ProjectChange):
-    return (health_rank(ch.health), ch.name.lower(), ch.page_id)
-
-
-def health_rank(health: str | None) -> int:
-    """CRITICAL, AT RISK, ON TRACK, INCOMING, then any other value, then blank."""
-    key = squash(health or "").casefold()
-    if not key:
-        return HEALTH_BLANK
-    return HEALTH_ORDER.get(key, HEALTH_BLANK - 1)
+    return (ch.name.lower(), ch.page_id)
 
 
 def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChange | None:

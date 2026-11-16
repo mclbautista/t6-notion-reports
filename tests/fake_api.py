@@ -28,7 +28,7 @@ def status_group(status):
     return "in_progress" if key in _IN_PROGRESS else "on_hold" if key in _ON_HOLD else "incoming" if key in _INCOMING else None
 
 
-def project_rules(status, roles_set=()):
+def project_rules(status, roles_set=(), health=None):
     """The rule results ``project list`` adds to a Project. ``roles_set`` holds the role attributes that have someone."""
     key = status_key(status)
     return {
@@ -36,8 +36,18 @@ def project_rules(status, roles_set=()):
         "missing_roles": [r for r in _ROLES if r not in roles_set] if key in _IN_PROGRESS else [],
         "relevant_dates": (["playdate", "submission_deadline"] if key in _IN_PROGRESS else
                            ["archival_deadline"] if key == "archiving" else ["playdate"] if key in _INCOMING else []),
-        "health_missing": False, "health_rank": 0,
+        **health_rules(health),
     }
+
+
+_HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
+
+
+def health_rules(health):
+    """``health_missing`` and ``health_rank`` of the select "Project Health": Critical 0, At Risk 1, On Track 2, Incoming 3,
+    any other value 4, blank 5."""
+    key = status_key(health)
+    return {"health_missing": not key, "health_rank": _HEALTH_ORDER.get(key, 4) if key else 5}
 
 
 def _day(value):
@@ -306,7 +316,7 @@ class FakeApi:
                 return d[key] if d else None
             roles = {n for n in _ROLES if ids(p, _ROLE_PROPERTY[n])}
             projects.append({
-                **project_rules(((p["Status"]["select"] or {}).get("name")), roles),
+                **project_rules(((p["Status"]["select"] or {}).get("name")), roles, (p["Project Health"]["select"] or {}).get("name")),
                 "page_id": page["id"], "t6_id": self._ref(page["id"]) if self._ref(page["id"]) != page["id"] else None,
                 "name": _text(p["Name"]),
                 "project_code": (p["Project Code"]["select"] or {}).get("name"),
@@ -336,17 +346,20 @@ class FakeApi:
         return Done(result={"project": found[0]}) if found else Refused(rule="project", reason="Project not found")
 
     def project_flags(self, inputs):
-        """``project flags``: the date flags, the date sanity problems and (like the API) a health flag read from the
-        property "Health" of the page, which these fixtures leave blank."""
+        """``project flags`` for the ``projects`` of the input (one call, the Projects read once): one entry each, in order,
+        ``found`` false for an unknown Project. The health flag is raised for a blank Project Health."""
         self.flag_calls = getattr(self, "flag_calls", []) + [inputs]
-        found = [p for p in self._projects() if p["page_id"] == inputs.project]
         self.calls.append("project flags")
         if self.down:
             return Unavailable("connection refused")
-        if not found:
-            return Refused(rule="project", reason="Project not found")
-        project = found[0]
-        stated = {n: d for n, d in inputs.stated.items() if project[n] is None}
+        known = {p["page_id"]: p for p in self._projects()}
+        entries = [{"project": item.project, "found": False} if item.project not in known else
+                   {"project": item.project, "found": True, **self._flags_of(known[item.project], item.stated, inputs)}
+                   for item in inputs.projects]
+        return Done(result={"projects": entries})
+
+    def _flags_of(self, project, stated_in, inputs):
+        stated = {n: d for n, d in stated_in.items() if project[n] is None}
         dates = {n: _day(project[n]) for n in ("playdate", "submission_deadline", "archival_deadline")}
         dates.update({n: d for n, d in stated.items() if d is not None})
         today, key = inputs.as_of or date(2026, 11, 14), project["status_key"]
@@ -369,7 +382,8 @@ class FakeApi:
             check("playdate", False, True)
             if dates["playdate"] is not None and 0 <= (dates["playdate"] - today).days < inputs.lead_warning_days:
                 other.append({"kind": "upcoming", "field": "playdate", "detail": "upcoming", "days": (dates["playdate"] - today).days})
-        other.append({"kind": "data_gap", "field": "health", "detail": "missing health update"})
+        if project["health_missing"]:
+            other.append({"kind": "data_gap", "field": "health", "detail": "missing health update"})
         sanity = []
         for kind, first, second in (("submission_before_playdate", "submission_deadline", "playdate"),
                                     ("archival_before_submission", "archival_deadline", "submission_deadline")):
@@ -377,7 +391,7 @@ class FakeApi:
                 sanity.append({"kind": kind, "first": first, "second": second, "first_date": dates[first].isoformat(),
                                "second_date": dates[second].isoformat(),
                                "from_notes": stated.get(first) is not None or stated.get(second) is not None})
-        return Done(result={"flags": overdue + other, "missing_roles": project["missing_roles"], "sanity": sanity})
+        return {"flags": overdue + other, "missing_roles": project["missing_roles"], "sanity": sanity}
 
     def concern_observe(self, inputs):
         self.calls.append("concern observe")
@@ -467,5 +481,5 @@ def down():
 def rules_of(states):
     """The rule results (as ``ProjectRules``) for snapshot states, by page id: what ``project list`` would say."""
     from t6_notion_reports.t6_api import ATTRIBUTE_OF, _project_rules
-    return {p: _project_rules(project_rules(s.get("Status"), {ATTRIBUTE_OF[r] for r in ROLES if s.get(r)}))
+    return {p: _project_rules(project_rules(s.get("Status"), {ATTRIBUTE_OF[r] for r in ROLES if s.get(r)}, s.get("Project Health")))
             for p, s in states.items()}

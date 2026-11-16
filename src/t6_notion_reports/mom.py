@@ -32,7 +32,7 @@ RAW_TOGGLE = "Raw source"
 
 ARCHIVING_STAGES = {"archiving", "for drives turnover", "waiting for payment"}
 CHANGE_FIELDS = {"Project Health", "Stage", "Status"}
-_HEALTH_GROUP = {"critical": "critical", "at risk": "at_risk", "on track": "on_track"}
+_HEALTH_GROUP = {0: "critical", 1: "at_risk"}  # by the API's health rank; any other rank is on_track
 
 
 def norm(value: object) -> str:
@@ -42,12 +42,12 @@ def norm(value: object) -> str:
 
 def group_of(state: dict[str, object], rules: ProjectRules | None) -> str:
     """First match wins (spec 8.2). Empty or unknown Health lands in on_track. ``rules`` are the API's results for the
-    project: its Status key and group."""
+    project: its Status key and group, and its Health rank."""
     if is_archiving(rules) or norm(state.get("Stage")) in ARCHIVING_STAGES:
         return "archiving"
     if rules is not None and rules.status_group == "incoming":
         return "incoming"
-    return _HEALTH_GROUP.get(norm(state.get("Project Health")), "on_track")
+    return _HEALTH_GROUP.get(rules.health_rank, "on_track") if rules is not None else "on_track"
 
 
 @dataclass
@@ -107,7 +107,7 @@ def _entry(page_id: str, label: str, state, rules: ProjectRules | None, change: 
     group = group_of(state, rules)
     label = entry_label(label, state.get("Project Code"))
     entry = Entry(page_id, label, group)
-    if group == "on_track" and not str(state.get("Project Health") or "").strip():
+    if group == "on_track" and rules is not None and rules.health_missing:
         entry.flag = HEALTH_NOT_SET
     when = last_updated(state.get("PM Notes"), snap_date)
     entry.last_updated_line = f"last updated {last_updated_text(when)}" if when else last_updated_text(None)

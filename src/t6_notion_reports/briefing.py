@@ -10,7 +10,7 @@ from datetime import date
 
 from .concerns import QUIET_LABEL, RESOLVED_LABEL, QuietConcern
 from .contacts import Contact
-from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
+from .diff import ProjectChange, group_by_coordinator, last_updated_text
 from .telegram_html import (
     LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_line, render_messages, split_line,
 )
@@ -215,7 +215,7 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
         first_in_coord = True
         for group in sections:
             members = sorted(
-                (ch for ch in projects if ch.group == group), key=lambda ch: (health_rank(ch.health), ch.name.lower(), ch.page_id),
+                (ch for ch in projects if ch.group == group), key=lambda ch: (ch.health_rank, ch.name.lower(), ch.page_id),
             )
             for n, ch in enumerate(members):
                 units.append(_Unit(

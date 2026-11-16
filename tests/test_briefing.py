@@ -38,6 +38,7 @@ def grouped(changes, *states):
     rules = rules_of({p: s for state in states for p, s in state.items()})
     for ch in changes:
         ch.group = gate(rules.get(ch.page_id))
+        ch.health_rank = rules[ch.page_id].health_rank if ch.page_id in rules else 0
     return changes
 
 

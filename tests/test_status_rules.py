@@ -82,15 +82,15 @@ def test_a_lead_playdate_under_the_warning_window_is_flagged_from_the_api_flag()
     assert "Playdate today" not in digest(brief(make_db(*changed([("p1", "LEA", LEADS, {"Playdate": date("2026-11-24")})])), llm=None))
 
 
-def test_one_project_flags_call_for_each_gated_project_with_the_stated_dates_and_the_window():
+def test_one_project_flags_call_for_all_gated_projects_with_the_stated_dates_and_the_window():
     rows = [("p1", "ONE", "🚨 In-Progress", {}), ("p2", "TWO", "Airing", {}), ("p3", "OUT", "✅ Done", {})]
     conn = make_db(*changed(rows))
     notion = FakeNotion.live(conn, contacts())
     from t6_notion_reports.brief_job import run_brief
     run_brief(conn, notion, BRIEF, SATURDAY, dry_print=True, out=lambda _: None, log=lambda _: None)
-    calls = notion.api.flag_calls
-    assert sorted(c.project for c in calls) == ["p1", "p2"]
-    assert all(c.lead_warning_days == BRIEF.lead_warning_days and c.as_of == day(2026, 11, 14) for c in calls)
+    (call,) = notion.api.flag_calls
+    assert sorted(i.project for i in call.projects) == ["p1", "p2"] and call.project is None
+    assert call.lead_warning_days == BRIEF.lead_warning_days and call.as_of == day(2026, 11, 14)
 
 
 def test_the_date_the_notes_state_for_a_blank_property_is_sent_as_stated():
@@ -99,7 +99,8 @@ def test_the_date_the_notes_state_for_a_blank_property_is_sent_as_stated():
     conn = brief_for(Playdate=date("2026-12-20"))
     notion = FakeNotion.live(conn, contacts())
     run(conn, Llm(reply_with(dates_from_notes=submission())), notion=notion)
-    assert [c.stated for c in notion.api.flag_calls] == [{"submission_deadline": day(2026, 12, 1)}]
+    (call,) = notion.api.flag_calls
+    assert [i.stated for i in call.projects] == [{"submission_deadline": day(2026, 12, 1)}]
 
 
 def test_the_missing_roles_line_is_the_roles_the_api_names_in_report_order():
@@ -108,10 +109,11 @@ def test_the_missing_roles_line_is_the_roles_the_api_names_in_report_order():
     assert "Missing roles" not in one("🏋️ Standby", **staffed(Colorist=relation()))
 
 
-def test_the_health_flag_of_the_api_is_not_used_the_blank_project_health_still_decides():
-    # The API's flag and ``health_missing`` read the property "Health", not "Project Health" (an API gap).
+def test_the_health_flag_of_the_api_gives_the_missing_health_update_line_last():
     assert one("🚨 In-Progress", **staffed(), health=None).count("missing health update") == 1
     assert "missing health update" not in one("🚨 In-Progress", **staffed(), health="ON TRACK")
+    ls = body(one("🚨 In-Progress", **staffed(Colorist=relation()), health=None))
+    assert ls.index("⚠️ missing health update") == ls.index("⚠️ Missing roles: Colorist") + 1
 
 
 def test_a_flags_call_the_api_does_not_answer_gives_no_flags_and_does_not_stop_the_brief():
@@ -123,6 +125,16 @@ def test_a_flags_call_the_api_does_not_answer_gives_no_flags_and_does_not_stop_t
     flagged, failed = read_flags(notion, {"p1": {"Project Health": "ON TRACK"}}, notion.project_rules(), day(2026, 11, 14), 30, {}, logs.append)
     assert failed == {"p1"} and not flagged["p1"]
     assert logs == ["brief flags unavailable error=ApiUnavailable"]
+
+
+def test_a_project_the_flags_call_does_not_know_is_unavailable_the_others_keep_their_flags():
+    conn = make_db(*changed([("p1", "ONE", "🚨 In-Progress", {}), ("p2", "TWO", "🚨 In-Progress", {})]))
+    notion = FakeNotion.live(conn, [])
+    state = {"p1": {"Project Health": None}, "p2": {"Project Health": None}, "ghost": {"Project Health": None}}
+    rules = notion.project_rules()
+    rules["ghost"] = rules["p1"]
+    flagged, failed = read_flags(notion, state, rules, day(2026, 11, 14), 30, {}, lambda _: None)
+    assert failed == {"ghost"} and flagged["p1"] and not flagged["ghost"]
 
 
 # ---- snapshots and the Minutes ----
@@ -170,3 +182,16 @@ def test_reports_import_only_the_client_and_the_verb_types_from_t6():
                            capture_output=True, text=True).stdout.split("\n")
     allowed = ("from t6.client import", "from t6.verbs import", "import t6_notion_reports", "from t6_notion_reports")
     assert [line.strip() for line in found if line.strip() and not line.strip().startswith(allowed)] == []
+
+
+def test_the_health_order_of_a_section_is_the_apis_rank_not_a_local_list():
+    rows = [("p1", "AAA", "🚨 In-Progress", {}), ("p2", "BBB", "🚨 In-Progress", {}), ("p3", "CCC", "🚨 In-Progress", {}),
+            ("p4", "DDD", "🚨 In-Progress", {})]
+    before, after = changed(rows)
+    health = {"p1": "ON TRACK", "p2": "CRITICAL", "p3": None, "p4": "AT RISK"}
+    for pages in (before, after):
+        for page in pages:
+            page["properties"]["Project Health"] = select(health[page["id"]])
+    text = digest(brief(make_db(before, after)))
+    order = [c for c in ("BBB", "DDD", "AAA", "CCC") if f"Show {c}" in text]
+    assert sorted(order, key=lambda c: text.index(f"Show {c}")) == ["BBB", "DDD", "AAA", "CCC"]

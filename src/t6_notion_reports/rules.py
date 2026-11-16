@@ -19,6 +19,8 @@ class ProjectRules:
     snapshotted: bool  # False for Archived and Lost
     missing_roles: tuple[str, ...]  # property names, in report order
     relevant_dates: tuple[str, ...]  # property names a blank value of could be filled in from the PM Notes
+    health_missing: bool  # Project Health is blank
+    health_rank: int  # sort key of Project Health: Critical 0, At Risk 1, On Track 2, Incoming 3, other 4, blank 5
 
 
 @dataclass(frozen=True)
