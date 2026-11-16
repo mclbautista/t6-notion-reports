@@ -42,6 +42,21 @@ class LlmClient(Protocol):
         ...
 
 
+ID_MARK = "[id]"  # how the API restores a hidden id (a link, a handle, a long number): the original is not given back
+
+
+def same_text(quote: str, line: str) -> bool:
+    """True when ``quote`` is ``line``. An ``[id]`` mark in the quote stands for one run of non-space characters of the line."""
+    if ID_MARK not in quote:
+        return quote == line
+    return re.fullmatch(r"\S+".join(re.escape(part) for part in quote.split(ID_MARK)), line) is not None
+
+
+def grounding_text(text: str) -> str:
+    """``text`` without ``[id]`` marks, for a check that every word of it is in the sources."""
+    return text.replace(ID_MARK, " ")
+
+
 class UnavailableLlm:
     """Stands in when LLM calls are off: every call fails, so briefings say "unavailable"."""
 

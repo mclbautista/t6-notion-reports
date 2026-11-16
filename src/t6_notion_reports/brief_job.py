@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -21,7 +22,6 @@ from .llm_api import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
 from .people_match import MatchSettings
-from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
@@ -31,6 +31,9 @@ from .status_gate import gate, is_archiving, looks_like_in_progress
 
 class BriefFailed(Exception):
     """At least one message could not be queued. Everything else was still attempted."""
+
+
+CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
 
 
 @dataclass(frozen=True)
@@ -59,12 +62,15 @@ def run_brief(
     projects_ds: str | None = None,
     matching: MatchSettings = MatchSettings(),
     leaves_llm: LlmClient | None = None,
+    budget: float = CONSOLIDATION_BUDGET,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
     With ``llm``, each gated project gets one consolidation call: its changes, Concerns and last update.
-    Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
-    in full and makes no call at all, so what would leave the machine can be read first.
+    Without one the raw changes are shown and nothing is marked. The calls share ``budget`` seconds; a project
+    not reached in time is marked "(LLM unavailable)". ``show_llm_input`` prints each payload as the app
+    builds it and makes no call at all (the API masks the names, so this is not what the model sees).
 
     With ``leaves_llm`` (default: ``llm``) and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
@@ -99,7 +105,7 @@ def run_brief(
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
     outcomes: dict[str, Outcome] = {}
-    contacts = load_contacts(notion, contacts_ds)  # read once: the redaction, the leaves and the messages
+    contacts = load_contacts(notion, contacts_ds)  # read once: the leaves and the messages
     if llm is not None or show_llm_input:
         windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
         minutes = None
@@ -108,19 +114,23 @@ def run_brief(
                 minutes = load_minutes(notion, meeting_notes_ds, today)
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
-        # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(contacts.values(), (raw_old, raw_new))
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
-                redactor, p,
             ) for p, s in new_state.items()
         }
+        started, skipped = monotonic(), 0
         for page_id in sorted(payloads, key=lambda p: (names[p].lower(), p)):
             if show_llm_input:
-                out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
+                out(f"--- llm input: {names[page_id]} (names are masked by the API, not here) ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
-                outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+                if monotonic() - started >= budget:  # the brief goes out at 12:00: it does not wait without end
+                    outcomes[page_id] = Outcome(failed=True)
+                    skipped += 1
+                else:
+                    outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+        if skipped:
+            log(f"brief llm budget_exhausted={skipped}")
     leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
     if (leaves_llm is not None or show_llm_input) and projects_ds:
         leaves = leave_concerns(

@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
-from .llm_api import LlmClient, LlmError
+from .llm_api import LlmClient, LlmError, same_text
 from .people_match import MatchSettings, match_person
 from .snapshots import RELATION_FIELDS, squash
 
@@ -83,12 +83,12 @@ def parse_leaves(llm: LlmClient, lines: list[str], today: date) -> LeaveResult:
     except LlmError:
         return LeaveResult(failed=True)
     # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
-    exact = {_BULLET.sub("", ln.strip()) for ln in data["lines"]}
+    exact = [_BULLET.sub("", ln.strip()) for ln in data["lines"]]
     kept: list[Leave] = []
     for item in reply.value.entries:
         who = item.who
         if (item.kind not in KINDS or not squash(who)
-                or _BULLET.sub("", item.quote.strip()) not in exact):
+                or not any(same_text(_BULLET.sub("", item.quote.strip()), line) for line in exact)):
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)

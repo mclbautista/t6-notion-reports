@@ -14,7 +14,7 @@ from datetime import date
 from pydantic import BaseModel
 
 from .dates import mentions
-from .llm_api import LlmClient, LlmError
+from .llm_api import LlmClient, LlmError, grounding_text
 
 SYSTEM = """You turn one project's raw PM Notes into short bullets for the weekly PSR minutes (MOM style).
 You get "new_blocks" (what was added this week: the bullets to condense) and "pm_notes" (the full log, older blocks first).
@@ -216,7 +216,7 @@ def condense_bullets(llm: LlmClient, label: str, notes: str, source: list[str], 
     except LlmError:
         return Condensed(list(source), True)
     bullets = [b.strip() for b in reply.value.bullets if b.strip()]
-    if check_grounding(bullets, notes, source, meeting) is not None:
+    if check_grounding([grounding_text(b) for b in bullets], notes, source, meeting) is not None:
         return Condensed(list(source), True)
     return Condensed(bullets, False)
 

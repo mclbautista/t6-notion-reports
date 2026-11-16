@@ -19,7 +19,6 @@ from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient
 from .llm_api import ApiLlm, UnavailableLlm, client_from_env as llm_client_from_env
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
@@ -274,7 +273,7 @@ def _brief(args, notion, now) -> int:
     conn = connect(db)
     try:
         run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
-                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
+                  gateway=gateway, dry_print=args.dry_print, llm=_task_llm(cfg, "brief_consolidation", args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
                   projects_ds=cfg.projects_data_source, matching=cfg.matching,
                   leaves_llm=_task_llm(cfg, "brief_leaves", args.dry_print),
@@ -300,15 +299,6 @@ def _brief_secrets(cfg):
     if cfg.brief is None:
         return []
     return [("PSR_SECRET", cfg.brief.psr_secret)]
-
-
-def _llm(cfg, dry_print=False):
-    """No key: a dry print leaves the LLM out (raw changes); a real send marks every project "(LLM unavailable)"."""
-    if cfg.brief is None:
-        return None
-    if cfg.brief.openrouter_api_key:
-        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
-    return None if dry_print else UnavailableLlm()
 
 
 def _task_llm(cfg, task, dry_print=False):
@@ -339,7 +329,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                                log=lambda text: print(text, flush=True))
             return
         if kind == "brief":
-            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
+            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_task_llm(cfg, "brief_consolidation"),
                       meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
                       matching=cfg.matching, leaves_llm=_task_llm(cfg, "brief_leaves"),
                       log=lambda text: print(text, flush=True))

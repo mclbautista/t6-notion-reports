@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, date, project, relation, rich, select, title
+from t6_notion_reports.llm_api import Reply
 from t6_notion_reports.brief_job import BriefFailed, run_brief
 from t6_notion_reports.cli import main
 from t6_notion_reports.config import BriefSettings
@@ -67,8 +68,8 @@ def conn_unstaffed():
 
 
 class EmptyLlm:
-    def complete(self, system, user, schema):
-        return schema()
+    def complete(self, system, user, schema, **kw):
+        return Reply(schema())
 
 
 class FakeGateway:
@@ -281,8 +282,7 @@ def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys
 def test_cli_gateway_failure_exits_non_zero(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
     monkeypatch.setenv("PSR_SECRET", "s3cret")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    monkeypatch.setattr("t6_notion_reports.cli.OpenRouterClient", lambda key, model: EmptyLlm())
+    monkeypatch.setattr("t6_notion_reports.cli._api_llm", lambda cfg, task, model: EmptyLlm())
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret: GatewayClient(url, secret, lambda *a: (500, None), sleep=lambda _: None))
     cfg = write_config(tmp_path, seeded_db(tmp_path))
@@ -304,13 +304,13 @@ class FakeLlm:
     def __init__(self, fail_for=()):
         self.users, self.fail_for = [], set(fail_for)
 
-    def complete(self, system, user, schema):
-        from t6_notion_reports.llm import LlmError
+    def complete(self, system, user, schema, **kw):
+        from t6_notion_reports.llm_api import LlmError, Reply
         data = json.loads(user)
         self.users.append(data)
         if data["project"]["name"] in self.fail_for:
             raise LlmError("down")
-        return schema()
+        return Reply(schema())
 
 
 def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
