@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, date, relation, rich
 from t6_notion_reports.brief_job import run_brief
-from t6_notion_reports.llm import LlmError
+from fake_llm_api import ok, refused
+from t6_notion_reports.llm_api import ApiLlm
 from t6_notion_reports.snapshot_job import run_snapshot
 from t6_notion_reports.snapshots import SCHEMA
 from test_gated_briefs import BRIEF, FRIDAY, IN_PROGRESS, MONDAY, SATURDAY, STANDBY, Gateway, digest, dm, proj, tg
@@ -31,35 +32,37 @@ def contacts():
 
 
 class LeaveLlm:
-    """Answers the leave call from a script, and records every payload it is sent."""
+    """A fake ``llm run`` API: answers the leave call from a script, and records every payload it is sent."""
 
     def __init__(self, entries=None, fail=False):
-        self.entries, self.fail, self.payloads = entries, fail, []
+        self.entries, self.fail, self.payloads, self.inputs = entries, fail, [], []
 
-    def complete(self, system, user, schema):
-        payload = json.loads(user)
-        if schema.__name__ != "LeaveParse":
-            return schema()
+    def llm_run(self, inputs):
+        payload = json.loads(inputs.input_text)
+        if inputs.output_schema.get("title") != "LeaveParse":
+            return ok({})
         self.payloads.append(payload)
+        self.inputs.append(inputs)
         if self.fail:
-            raise LlmError("down")
+            return refused("masking")
         entries = self.entries(payload) if callable(self.entries) else (self.entries or [])
-        # Scripted answers quote the redacted lines the model now receives.
-        def hidden(text):
-            return text.replace("Nia", "[person 1]").replace("Cal", "[person 2]")
-        return schema(entries=[{**item, "quote": hidden(item["quote"])} for item in entries])
+        return ok({"entries": entries})
+
+
+def leave_adapter(api):
+    return ApiLlm(api, "brief_leaves", "m", sleep=lambda _: None)
 
 
 def entry(who, start, end, quote, kind="leave"):
     return {"who": who, "kind": kind, "start": start, "end": end, "quote": quote}
 
 
-REDACTED_LEAVES = [
-    "[person 1] - leave Nov 20-22",
-    "[person 2] - leave Dec 20",
+REAL_LEAVES = [
+    "Nia - leave Nov 20-22",
+    "Cal - leave Dec 20",
     "Nov 30 - Bonifacio Day (holiday)",
     "Zed - leave Nov 25",
-    "[person 1] - holiday Nov 21",
+    "Nia - holiday Nov 21",
 ]
 
 
@@ -86,7 +89,7 @@ def team_project(status=IN_PROGRESS, **props):
 
 def brief(conn, notion, llm, brief_settings=BRIEF, **kw):
     gw, logs = Gateway(), []
-    run_brief(conn, notion, CONTACTS, brief_settings, SATURDAY, gateway=gw, llm=llm, log=logs.append,
+    run_brief(conn, notion, CONTACTS, brief_settings, SATURDAY, gateway=gw, llm=None, leaves_llm=leave_adapter(llm), log=logs.append,
               projects_ds=PROJECTS, **kw)
     return gw, logs
 
@@ -99,15 +102,57 @@ def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm
         assert "Playdate (Nov 28, 2026)" in text and "since Nov 14" in text  # the nearest of the dates
 
 
-def test_redacted_leave_who_is_restored_before_contacts_matching_in_the_brief():
+def test_the_app_sends_the_real_lines_and_matches_the_restored_name_against_contacts():
     conn, notion = build([team_project()])
     def answer(payload):
         line = payload["lines"][0]
-        assert line == "[person 1] - leave Nov 20-22"
-        assert "Nia" not in json.dumps(payload) and "Cal" not in json.dumps(payload)
-        return [entry("[PERSON 1 ]", "2026-11-20", "2026-11-22", line)]
-    gw, _ = brief(conn, notion, LeaveLlm(answer))
+        assert line == "Nia - leave Nov 20-22"  # the API masks it; the app holds no mapping
+        return [entry("Nia", "2026-11-20", "2026-11-22", line)]
+    api = LeaveLlm(answer)
+    gw, _ = brief(conn, notion, api)
     assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
+    sent = api.inputs[0]
+    assert sent.task_name == "brief_leaves" and sent.require_zdr and sent.restore == "per_field" and sent.allow_projects == []
+
+
+# ---- the parse itself, over a fake API ----
+
+from datetime import date as _date  # noqa: E402
+
+from fake_llm_api import FakeLlmApi, invalid, unreachable  # noqa: E402
+from t6_notion_reports.leaves import Leave, parse_leaves  # noqa: E402
+
+LINES = ["Nia - leave Nov 20-22", "Cal - leave Dec 20"]
+GOOD = {"who": "Nia", "kind": "leave", "start": "2026-11-20", "end": "2026-11-22", "quote": "Nia - leave Nov 20-22"}
+
+
+def parsed(*answers):
+    return parse_leaves(leave_adapter(FakeLlmApi(*answers)), LINES, _date(2026, 11, 14))
+
+
+def test_a_good_entry_is_kept():
+    assert parsed(ok({"entries": [GOOD]})).entries == (Leave("Nia", "leave", _date(2026, 11, 20), _date(2026, 11, 22)),)
+
+
+def test_a_quote_that_is_not_an_exact_line_drops_that_entry_only():
+    result = parsed(ok({"entries": [{**GOOD, "quote": "Nia - leave Nov 20-23"}, {**GOOD, "who": "Cal", "quote": "Cal - leave Dec 20"}]}))
+    assert [e.who for e in result.entries] == ["Cal"] and not result.failed
+
+
+def test_a_refusal_an_invalid_answer_a_timeout_or_an_unreachable_api_is_failed():
+    for answer in (refused("masking"), invalid(), refused("provider", "timeout"), unreachable()):
+        assert parsed(answer).failed
+
+
+def test_an_entry_with_an_unresolved_placeholder_is_dropped_alone():
+    entries = [{**GOOD, "who": "[person 9]"}, {**GOOD, "who": "Cal", "quote": "Cal - leave Dec 20"}]
+    result = parsed(ok({"entries": entries}, unresolved=["entries[0].who"]))
+    assert [e.who for e in result.entries] == ["Cal"] and not result.failed
+
+
+def test_when_every_entry_is_dropped_for_a_placeholder_the_parse_failed():
+    result = parsed(ok({"entries": [{**GOOD, "who": "[person 9]"}]}, unresolved=["entries[0].who"]))
+    assert result.entries == () and result.failed
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
@@ -213,7 +258,7 @@ def test_leaves_are_parsed_once_per_run_and_the_payload_holds_only_the_leave_lin
     assert len(llm.payloads) == 1
     payload = llm.payloads[0]
     assert set(payload) == {"today", "lines"} and payload["today"] == "2026-11-14"
-    assert payload["lines"] == REDACTED_LEAVES
+    assert payload["lines"] == REAL_LEAVES
     blob = json.dumps(payload)
     assert "Show ONE" not in blob and "c-nia" not in blob and "ONE" not in blob
 
@@ -247,7 +292,7 @@ def test_only_the_leaves_section_is_sent_and_a_later_heading_ends_it():
         conn, notion = build([team_project()], description=description)
         llm = LeaveLlm(STANDARD)
         brief(conn, notion, llm)
-        assert llm.payloads[0]["lines"] == REDACTED_LEAVES, description
+        assert llm.payloads[0]["lines"] == REAL_LEAVES, description
 
 
 def test_a_clash_concern_ages_through_the_store_and_resolves_when_the_leave_goes():
@@ -269,10 +314,10 @@ def test_a_standby_project_is_still_checked_for_its_dates():
 def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
     conn, notion = build([team_project()])
     llm, out = LeaveLlm(STANDARD), []
-    run_brief(conn, notion, CONTACTS, BRIEF, SATURDAY, llm=llm, log=lambda _: None, out=out.append,
+    run_brief(conn, notion, CONTACTS, BRIEF, SATURDAY, llm=None, leaves_llm=leave_adapter(llm), log=lambda _: None, out=out.append,
               projects_ds=PROJECTS, show_llm_input=True)
     assert llm.payloads == []
-    assert any("llm input: leaves" in text and "[person 1] - leave Nov 20-22" in text for text in out)
+    assert any("llm input: leaves" in text and "Nia - leave Nov 20-22" in text for text in out)
 
 
 def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_it():
@@ -304,7 +349,7 @@ def test_a_blank_line_or_a_name_with_a_colon_inside_the_list_does_not_end_it():
     conn, notion = build([team_project()], description=description)
     llm = LeaveLlm(STANDARD)
     brief(conn, notion, llm)
-    assert llm.payloads[0]["lines"] == ["[person 1] - leave Nov 20-22", "[person 2] on vacation next week", "Ida on leave:", "Nov 25"]
+    assert llm.payloads[0]["lines"] == ["Nia - leave Nov 20-22", "Cal on vacation next week", "Ida on leave:", "Nov 25"]
 
 
 # ---- section boundaries when the section is empty or the heading is long (#62 item 7) ---------
@@ -337,13 +382,13 @@ def test_an_introductory_bold_note_does_not_end_an_empty_section():
         {"plain_text": "\n" + "\n".join(LEAVES), "annotations": {"bold": False}},
     ]
     (payload,) = leave_payload_for(rich_text)
-    assert payload["lines"] == REDACTED_LEAVES
+    assert payload["lines"] == REAL_LEAVES
 
 
 def test_a_long_plain_heading_after_the_entries_ends_the_section():
     description = "\n".join([HEADING, *LEAVES, "", "Planning notes for the whole post team this quarter", "• ONE needs Nia Varnel on Dec 1"])
     (payload,) = leave_payload_for(description)
-    assert payload["lines"] == REDACTED_LEAVES
+    assert payload["lines"] == REAL_LEAVES
 
 
 # ---- private unmatched names need an explicitly identified Cyril (#62 item 8) ------------------

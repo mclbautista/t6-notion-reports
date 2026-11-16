@@ -36,25 +36,6 @@ def test_consolidation_drops_unresolved_items_and_fails_when_none_survive():
     assert outcome.failed
 
 
-def test_leaves_redacts_payload_and_restores_before_contact_matching():
-    import json
-    from datetime import date
-    from t6_notion_reports.contacts import Contact
-    from t6_notion_reports.leaves import parse_leaves
-    from t6_notion_reports.redact import Redactor
-
-    redactor = Redactor.build([Contact("c", "Dario")], [{"other": {"Name": "Other Show"}}])
-    class Llm:
-        def complete(self, system, user, schema):
-            assert "Dario" not in user and "Other Show" not in user and "123456789" not in user
-            line = json.loads(user)["lines"][0]
-            return schema(entries=[{"who": "[PERSON 1 ]", "quote": line, "kind": "leave",
-                                    "start": "2026-11-09", "end": "2026-11-09"}])
-    result = parse_leaves(Llm(), ["Dario leave Nov 9 (Other Show 123456789)"], date(2026, 11, 8), redactor=redactor)
-    assert not result.failed
-    assert result.entries[0].who == "Dario"
-
-
 @pytest.mark.parametrize("variant", ["[Person 1]", "[PERSON 1]", "[person  1]", "person 1", "[person 1 ]"])
 def test_consolidation_restores_variants_in_changes_concerns_and_quotes(variant):
     from datetime import date
@@ -85,19 +66,3 @@ def test_consolidation_keeps_safe_siblings_when_an_item_cannot_restore():
     safe = Change(text="QC pending", quote="QC pending", source="pm_notes", line_id=2)
     result = validate(Consolidation(changes=[Change(text="Pending", **cite), safe]), payload, date(2026, 11, 8))
     assert not result.failed and [c.text for c in result.changes] == ["QC pending"]
-
-
-def test_leaves_unresolved_item_fails_closed_and_safe_sibling_survives():
-    from datetime import date
-    from t6_notion_reports.leaves import parse_leaves
-
-    class Llm:
-        def __init__(self, safe):
-            self.safe = safe
-        def complete(self, system, user, schema):
-            bad = {"who": "[person 9]", "quote": "leave Nov 9", "kind": "leave",
-                   "start": "2026-11-09", "end": "2026-11-09"}
-            return schema(entries=[bad, *([{**bad, "who": "ALL", "kind": "holiday"}] if self.safe else [])])
-    assert parse_leaves(Llm(False), ["leave Nov 9"], date(2026, 11, 8)).failed
-    result = parse_leaves(Llm(True), ["leave Nov 9"], date(2026, 11, 8))
-    assert not result.failed and result.entries[0].who == "ALL"

@@ -17,7 +17,7 @@ from .flags import project_flags, stored_decides
 from .gateway import GatewayError
 from .holidays import leave_lines
 from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
-from .llm import LlmClient
+from .llm_api import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
 from .people_match import MatchSettings
@@ -58,6 +58,7 @@ def run_brief(
     show_llm_input: bool = False,
     projects_ds: str | None = None,
     matching: MatchSettings = MatchSettings(),
+    leaves_llm: LlmClient | None = None,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
@@ -65,11 +66,12 @@ def run_brief(
     Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
     in full and makes no call at all, so what would leave the machine can be read first.
 
-    With ``llm`` and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
+    With ``leaves_llm`` (default: ``llm``) and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
     Names nobody matched, and a failed parse, are noted in Cyril's digest only.
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
+    leaves_llm = llm if leaves_llm is None else leaves_llm
     pair = default_diff_pair(conn)
     first = False
     if pair is None:
@@ -120,10 +122,10 @@ def run_brief(
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
     leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
-    if (llm is not None or show_llm_input) and projects_ds:
+    if (leaves_llm is not None or show_llm_input) and projects_ds:
         leaves = leave_concerns(
-            notion, projects_ds, llm, today, new_state, contacts,
-            brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
+            notion, projects_ds, leaves_llm, today, new_state, contacts,
+            brief.leave_clash_days, matching, show_llm_input, out, log,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
@@ -217,7 +219,6 @@ class Leaves:
 
 def leave_concerns(
     notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log,
-    redactor: Redactor = Redactor(),
 ) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
 
@@ -237,9 +238,9 @@ def leave_concerns(
     if not lines:
         return Leaves()
     if show_input:
-        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today, redactor), ensure_ascii=False, indent=2)}\n")
+        out(f"--- llm input: leaves (names are masked by the API, not here) ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
         return Leaves(available=False)
-    result = parse_leaves(llm, lines, today, redactor=redactor)
+    result = parse_leaves(llm, lines, today)
     if result.failed:
         log("brief leaves unavailable")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
