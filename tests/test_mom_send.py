@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from fake_api import down, refused
 from fake_notion import MEETING, FakeNotion, block, meeting_page, rt
 from html_check import assert_valid_html
 from t6_notion_reports.gateway import GatewayError
@@ -70,7 +71,8 @@ def test_ticked_page_is_sent_once_in_group_order_and_sent_at_set():
     heads = ["Critical", "On track", "Archiving", "Others"]
     assert all(h in t for h, t in zip(heads, texts))
     assert "PSR MOM" in texts[0] and "Attendees: Quilla, Oto" in texts[0]  # header first
-    assert n.sent_marked == [("m1", {"Sent at": {"date": {"start": "2026-11-16T14:05:00+08:00"}}})]
+    assert [(i.note, i.at.isoformat()) for i in n.api.verbs("mark-sent")] == [("m1", "2026-11-16T14:05:00+08:00")]
+    assert [v for v, _ in n.api.writes] == ["mark-sent"]  # send every part first, then mark; nothing else is written
 
 
 def test_second_check_sends_nothing():
@@ -144,12 +146,37 @@ def test_gateway_failure_leaves_sent_at_empty_and_retry_resends_same_keys():
     gw = FakeGateway(fail_keys=["psr-mom-2026-11-16-3"])
     with pytest.raises(MomSendFailed):
         send(n, gw)
-    assert n.sent_marked == []
+    assert n.api.writes == []
     assert [k for _, _, k, _ in gw.sent] == ["psr-mom-2026-11-16-1", "psr-mom-2026-11-16-2"]
     retry, res = send(n)  # next check: the gateway dedupes parts it already accepted by key
     assert res.sent_pages == 1
     assert [k for _, _, k, _ in retry.sent] == [f"psr-mom-2026-11-16-{i}" for i in (1, 2, 3, 4)]
-    assert len(n.sent_marked) == 1
+    assert len(n.api.verbs("mark-sent")) == 1
+
+
+def test_failed_mark_leaves_sent_at_empty_and_the_next_check_resends_with_the_same_keys():
+    n = setup()
+    n.api.fail["mark-sent"] = refused("notion")
+    logs = []
+    gw = FakeGateway()
+    with pytest.raises(MomSendFailed):
+        run_send_ready_mom(n, gw, CHAT, TOPIC, NOW, log=logs.append)
+    keys = [f"psr-mom-2026-11-16-{i}" for i in (1, 2, 3, 4)]
+    assert [k for _, _, k, _ in gw.sent] == keys
+    assert not n.meetings[0]["properties"]["Sent at"]["date"]
+    assert any("mark failed" in line and "rule=notion" in line for line in logs)
+    assert "Delay in Mixing" not in "".join(logs)
+    del n.api.fail["mark-sent"]
+    retry, res = send(n)
+    assert res.sent_pages == 1 and [k for _, _, k, _ in retry.sent] == keys
+    assert n.meetings[0]["properties"]["Sent at"]["date"]["start"] == "2026-11-16T14:05:00+08:00"
+
+
+def test_an_unreachable_api_counts_the_page_as_failed():
+    n = setup()
+    n.api.fail["mark-sent"] = down()
+    with pytest.raises(MomSendFailed):
+        send(n)
 
 
 def test_one_failing_page_does_not_stop_the_next():
@@ -161,7 +188,7 @@ def test_one_failing_page_does_not_stop_the_next():
     gw = FakeGateway(fail_keys=["psr-mom-2026-11-09-1"])
     with pytest.raises(MomSendFailed):
         send(n, gw)
-    assert [pid for pid, _ in n.sent_marked] == ["b"]
+    assert [i.note for i in n.api.verbs("mark-sent")] == ["b"]
 
 
 def test_test_banner_starts_every_message():
@@ -174,7 +201,7 @@ def test_dry_print_sends_nothing_and_leaves_sent_at_empty():
     n = setup()
     out = []
     res = run_send_ready_mom(n, None, CHAT, TOPIC, NOW, dry_print=True, out=out.append, log=lambda _: None)
-    assert n.sent_marked == [] and res.sent_pages == 0 and any("psr-mom-2026-11-16-1" in o for o in out)
+    assert n.api.writes == [] and res.sent_pages == 0 and any("psr-mom-2026-11-16-1" in o for o in out)
 
 
 def test_logs_counts_only():
@@ -213,7 +240,7 @@ def test_cli_dry_print_renders_and_does_not_mark_sent(tmp_path, monkeypatch, cap
     n.__class__ = Routed
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, secret=False), "--dry-print"],
                 notion=n, now=NOW) == 0
-    assert "psr-mom-2026-11-16-1" in capsys.readouterr().out and n.sent_marked == []
+    assert "psr-mom-2026-11-16-1" in capsys.readouterr().out and n.api.writes == []
 
 
 def test_cli_needs_meeting_notes_config_and_secret(tmp_path, monkeypatch, capsys):
@@ -222,6 +249,13 @@ def test_cli_needs_meeting_notes_config_and_secret(tmp_path, monkeypatch, capsys
     assert "meeting_notes_data_source" in capsys.readouterr().err
     assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch, secret=False)], notion=FakeNotion()) == 2
     assert "PSR_SECRET" in capsys.readouterr().err
+
+
+def test_cli_without_the_api_refuses_a_real_send(tmp_path, monkeypatch, capsys):
+    from t6_notion_reports.cli import main
+    monkeypatch.delenv("T6_API_URL", raising=False)
+    assert main(["send-ready-mom", "--config", cli_cfg(tmp_path, monkeypatch)]) == 2
+    assert "T6_API_URL" in capsys.readouterr().err
 
 
 def test_scheduler_job_runs_the_check_and_serve_adds_the_slot(tmp_path, monkeypatch):
@@ -235,4 +269,4 @@ def test_scheduler_job_runs_the_check_and_serve_adds_the_slot(tmp_path, monkeypa
     n, gw = setup(), FakeGateway()
     n.__class__ = Routed
     make_job(sqlite3.connect(":memory:"), n, cfg, gw, lambda: NOW)("send_mom")
-    assert len(gw.sent) == 4 and gw.sent[0][:2] == (CHAT, TOPIC) and len(n.sent_marked) == 1
+    assert len(gw.sent) == 4 and gw.sent[0][:2] == (CHAT, TOPIC) and len(n.api.verbs("mark-sent")) == 1

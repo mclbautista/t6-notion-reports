@@ -1,4 +1,4 @@
-"""Draft the PSR minutes in Notion: after the Monday 11:00 snapshot, or by hand with ``draft-mom``."""
+"""Draft the PSR minutes (written through the t6 API): after the Monday 11:00 snapshot, or by hand with ``draft-mom``."""
 from __future__ import annotations
 
 import sqlite3
@@ -8,12 +8,12 @@ from typing import Callable
 
 from .holidays import upcoming_entries
 from .llm_api import LlmClient
+from .minutes_api import MinutesApiError, create_draft, trash_draft
 from .mom import build_draft, condense_draft, render_blocks
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
 TITLE_PREFIX = "PSR MOM"
-CHUNK = 100  # Notion accepts at most 100 child blocks per request
 
 
 class MomAlreadySent(Exception):
@@ -66,40 +66,27 @@ def run_draft_mom(
 
     others = upcoming_entries(notion.notices().description, meeting_date)
 
-    people = _people(_previous_draft(notion, meeting_date))
+    previous = notion.meeting_notes(title_prefix=TITLE_PREFIX, before=meeting_date.isoformat(), latest=True, include_body=False)
+    people = list(previous[0].attendees) if previous else []  # (Notion user id, name)
     contacts = {c.name.lower(): c for c in all_contacts.values()}
     mentions = []
-    for p in people:
-        c = contacts.get(str(p.get("name") or "").lower())
-        mentions.append(f"@{c.handle}" if c and c.handle else str(p.get("name") or ""))
+    for _, name in people:
+        c = contacts.get(name.lower())
+        mentions.append(f"@{c.handle}" if c and c.handle else name)
 
-    blocks = render_blocks(draft, [str(p.get("name") or "") for p in people], others, [m for m in mentions if m])
+    blocks = render_blocks(draft, [name for _, name in people], others, [m for m in mentions if m])
 
-    properties = {
-        "Name": {"title": [{"type": "text", "text": {"content": title}}]},
-        "Meeting Date": {"date": {"start": meeting_date.isoformat()}},
-        "Project": {"relation": [{"id": i} for i in draft.project_ids[:100]]},
-        "Team Attendees": {"people": [{"object": "user", "id": p["id"]} for p in people]},
-    }
-    page = notion.create_page(meeting_notes_ds, properties, blocks[:CHUNK])
-    for i in range(CHUNK, len(blocks), CHUNK):
-        notion.append_children(page["id"], blocks[i:i + CHUNK])
-    # A re-run replaces the unsent draft, but only once the new page exists.
+    page_id = create_draft(notion.client, title, meeting_date, draft.project_ids[:100], [i for i, _ in people], blocks)
+    # A re-run replaces the unsent draft, but only once the new page exists. A failed trash leaves two
+    # unsent drafts; the next run finds both by title and trashes them.
     for old_page in existing:
-        notion.update_page(old_page.page_id, {"in_trash": True})
+        try:
+            trash_draft(notion.client, old_page.page_id)
+        except MinutesApiError as exc:
+            log(f"mom trash failed: {exc}")
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
-    return MomResult(page["id"], len(draft.entries), len(draft.unchanged))
-
-
-def _previous_draft(notion, before: date):
-    pages = [n for n in notion.meeting_notes(title_prefix=TITLE_PREFIX, include_body=False)
-             if n.title.startswith(TITLE_PREFIX) and n.meeting_day and n.meeting_day < before]
-    return max(pages, key=lambda n: n.meeting_day) if pages else None
-
-
-def _people(note) -> list[dict]:
-    return [] if note is None else [{"id": i, "name": n} for i, n in note.attendees]
+    return MomResult(page_id, len(draft.entries), len(draft.unchanged))
 
 
 def _local_date(taken_at: str) -> date:

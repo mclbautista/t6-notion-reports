@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from t6.client import Unavailable
-from t6.verbs import Done
+from t6.verbs import Done, Refused
 
 
 def _text(prop):
@@ -23,11 +23,18 @@ def _body(blocks):
 
 
 class FakeApi:
-    """Every call returns Unavailable, like an unreachable API, while ``down`` or ``notion.down`` is true."""
+    """Every call returns Unavailable, like an unreachable API, while ``down`` or ``notion.down`` is true.
 
-    def __init__(self, notion, down=False):
+    The meeting-notes writes land in the wrapped FakeNotion's meetings, so a later read sees them. ``fail`` maps a
+    verb ("create", "append", "trash", "mark-sent") to an outcome returned instead of doing it, and ``writes`` lists
+    the (verb, input model) pairs in call order.
+    """
+
+    def __init__(self, notion, down=False, fail=None):
         self.notion, self._down = notion, down
         self.calls: list[str] = []
+        self.fail = dict(fail or {})
+        self.writes: list[tuple[str, object]] = []
 
     @property
     def down(self):
@@ -104,6 +111,9 @@ class FakeApi:
             if inputs.ready_to_send is not None and (ready and sent is None) != inputs.ready_to_send:
                 continue
             people = p["Team Attendees"]["people"]
+            day = (p["Meeting Date"].get("date") or {}).get("start")
+            if inputs.before is not None and not (day and day[:10] < inputs.before):
+                continue
             notes.append({
                 "page_id": page["id"], "name": name, "last_edited": page.get("last_edited_time"),
                 "meeting_date": (p["Meeting Date"].get("date") or {}).get("start"), "sent_at": sent,
@@ -111,7 +121,49 @@ class FakeApi:
                 "attendee_names": [u["name"] for u in people],
                 "body": _body(self.notion.page_blocks.get(page["id"], [])) if inputs.include_body else [],
             })
+        if inputs.latest:
+            notes = sorted((n for n in notes if n["meeting_date"]), key=lambda n: n["meeting_date"])[-1:]
         return self._done("meeting-notes list", {"meeting_notes": notes})
+
+    def _write(self, verb, inputs, do):
+        self.writes.append((verb, inputs))
+        if verb in self.fail:
+            return self.fail[verb]
+        return Done(result={"meeting_note": do()})
+
+    def _page(self, page_id):
+        return next(p for p in self.notion.meetings if p["id"] == page_id)
+
+    def meeting_notes_create(self, inputs):
+        from fake_notion import meeting_page, people
+
+        def do():
+            page_id = f"new-{sum(1 for v, _ in self.writes if v == 'create')}"
+            page = meeting_page(page_id, inputs.title, inputs.meeting_date)
+            page["properties"]["Team Attendees"] = people(*((i, "") for i in inputs.attendee_ids))
+            self.notion.meetings.append(page)
+            return {"page_id": page_id, "name": inputs.title}
+        return self._write("create", inputs, do)
+
+    def meeting_notes_append(self, inputs):
+        return self._write("append", inputs, lambda: {"page_id": inputs.note})
+
+    def meeting_notes_trash(self, inputs):
+        def do():
+            self._page(inputs.note)["in_trash"] = True
+            return {"page_id": inputs.note}
+        return self._write("trash", inputs, do)
+
+    def meeting_notes_mark_sent(self, inputs):
+        def do():
+            prop = self._page(inputs.note)["properties"]["Sent at"]
+            if not (prop.get("date") or {}).get("start"):  # a note already sent keeps its first date
+                prop["date"] = {"start": inputs.at.isoformat(), "end": None}
+            return {"page_id": inputs.note}
+        return self._write("mark-sent", inputs, do)
+
+    def verbs(self, *names):
+        return [i for v, i in self.writes if v in names]
 
     def project_list(self, inputs):
         def ids(p, name):
@@ -168,3 +220,11 @@ class FakeApi:
                 "project_id": projects[0] if projects else None, "project_ids": projects, "last_edited": page.get("last_edited_time"),
             })
         return self._done("jo list", {"job_orders": orders})
+
+
+def refused(rule="notion"):
+    return Refused(rule=rule, reason="no")
+
+
+def down():
+    return Unavailable("connection refused")

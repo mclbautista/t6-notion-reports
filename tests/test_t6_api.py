@@ -165,7 +165,7 @@ def test_send_ready_mom_marks_nothing_when_unavailable():
     n.down = True
     with pytest.raises(ApiUnavailable):
         run_send_ready_mom(n, FakeGateway(), CHAT, TOPIC, NOW, log=lambda _: None)
-    assert not n.sent_marked
+    assert not n.api.writes
 
 
 def test_draft_mom_unavailable_creates_nothing():
@@ -174,7 +174,7 @@ def test_draft_mom_unavailable_creates_nothing():
     n.down = True
     with pytest.raises(ApiUnavailable):
         run_draft_mom(conn, n, MEETING, test_mom.D, log=lambda _: None)
-    assert not n.created
+    assert not n.api.writes
 
 
 def test_brief_unavailable_api_is_an_oserror():

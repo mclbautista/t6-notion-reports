@@ -136,18 +136,15 @@ def drafted(answers):
         return answers[code] if isinstance(answers[code], Exception) else ok({"bullets": answers[code]})
     run_draft_mom(conn, notion, MEETING, date(2026, 10, 26), log=lambda _: None,
                   llm=adapter(FakeLlmApi(answer)))
-    return notion.created[0]["children"] + [c for _, cs in notion.appended for c in cs]
+    return [b for i in notion.api.verbs("create", "append") for b in i.blocks]
 
 
 def project_block(blocks, code):
-    return next(b for b in blocks if b["type"] == "bulleted_list_item"
-                and "".join(t["text"]["content"] for t in b[b["type"]]["rich_text"]).startswith(code))
+    return next(b for b in blocks if b.kind == "bulleted_list_item" and b.text.startswith(code))
 
 
 def flat(block):
-    body = block[block["type"]]
-    return [("".join(t["text"]["content"] for t in body["rich_text"]), block["type"]),
-            *[x for c in body.get("children", []) for x in flat(c)]]
+    return [(block.text, block.kind), *[x for c in block.children for x in flat(c)]]
 
 
 import json  # noqa: E402
@@ -202,7 +199,7 @@ def test_minutes_job_sends_the_real_text_and_checks_the_restored_bullets():
     api = FakeLlmApi(lambda inputs: ok({"bullets": json.loads(inputs.input_text)["new_blocks"]}))
     run_draft_mom(conn, notion, MEETING, MEET, log=lambda _: None, llm=adapter(api))
     assert "Dario confirmed Other Show" in api.sent[0].input_text  # the API masks it
-    lines = [text for text, _ in flat(project_block(notion.created[0]["children"], "OWN"))]
+    lines = [text for text, _ in flat(project_block(notion.api.verbs("create")[0].blocks, "OWN"))]
     assert "Dario confirmed Other Show" in lines and "(raw)" not in lines[0]
 
 
@@ -217,6 +214,6 @@ def test_dry_print_condenses_prints_the_bullets_and_writes_nothing():
     out, log = [], []
     result = run_draft_mom(conn, notion, MEETING, date(2026, 10, 26), log=log.append,
                            llm=adapter(api), dry_print=True, out=out.append)
-    assert result.page_id is not None and not notion.created and not notion.appended
+    assert result.page_id is not None and notion.api.writes == []
     assert "## QAZ (raw)" in out and "- Ep 3 locked na" in out and "## WED" in out and "- Online on Nov 9; Colorist: Pax" in out
     assert log and "condensed=" in log[0] and "raw=" in log[0]

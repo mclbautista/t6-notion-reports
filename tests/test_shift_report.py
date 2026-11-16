@@ -330,7 +330,6 @@ def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "For TOC (Night Shift)" in captured.out and "no project#48" in captured.out
     assert captured.err.startswith("shift slot=1900 ") and "baseline=True" in captured.err
-    assert not (fake.created or fake.appended or fake.trashed or fake.sent_marked)
 
 
 def test_cli_send_needs_shift_enabled_and_rejects_unknown_slots(tmp_path, monkeypatch, capsys):

@@ -105,7 +105,7 @@ def client_from_env(env: Mapping[str, str] | None = None, timeout: float = READ_
 
 class ApiNotion:
     def __init__(self, client, notion=None):
-        self._client, self._notion = client, notion
+        self.client, self._notion = client, notion
 
     # The Minutes writes (and nothing else) go to the Notion client until they move onto the API.
     def __getattr__(self, name: str):
@@ -126,7 +126,7 @@ class ApiNotion:
 
     # ---- Contacts ----
     def _people(self) -> list[dict]:
-        return self._read(self._client.person_list, PersonListInput())["people"]
+        return self._read(self.client.person_list, PersonListInput())["people"]
 
     def read_contacts(self) -> dict[str, Contact]:
         """Contacts by Notion page id."""
@@ -145,7 +145,7 @@ class ApiNotion:
         found: list[Person | None] = []
         for i in range(0, len(names), FIND_LIMIT):
             inputs = PersonFindInput(mentions=names[i:i + FIND_LIMIT], prefer_telegram=True)
-            for r in self._read(self._client.person_find, inputs)["results"]:
+            for r in self._read(self.client.person_find, inputs)["results"]:
                 m = r.get("match")
                 found.append(Person(m["page_id"], m.get("t6_id"), m["name"]) if m and not r.get("needs_review") else None)
         return found
@@ -155,7 +155,7 @@ class ApiNotion:
 
     # ---- the Projects database notices ----
     def notices(self) -> Notices:
-        notices = self._read(self._client.studio_notices, StudioNoticesInput())
+        notices = self._read(self.client.studio_notices, StudioNoticesInput())
         text = notices.get("description") or ""
         runs = tuple(Run(r["text"], bool(r.get("bold"))) for r in notices.get("runs") or ())
         return Notices(text, runs or ((Run(text, False),) if text else ()))
@@ -163,7 +163,7 @@ class ApiNotion:
     # ---- Meeting Notes ----
     def meeting_notes(self, **filters) -> list[Note]:
         """Filters are ``meeting-notes list`` inputs: ``title``, ``title_prefix``, ``ready_to_send``, ``include_body``."""
-        notes = self._read(self._client.meeting_notes_list, MeetingNotesListInput(**filters))["meeting_notes"]
+        notes = self._read(self.client.meeting_notes_list, MeetingNotesListInput(**filters))["meeting_notes"]
         return [_note(n) for n in notes]
 
     # ---- Projects and Job Orders snapshot records ----
@@ -177,7 +177,7 @@ class ApiNotion:
             return [{"id": i, "name": names.get(i)} for i in pages]
 
         records = []
-        for p in self._read(self._client.project_list, ProjectListInput())["projects"]:
+        for p in self._read(self.client.project_list, ProjectListInput())["projects"]:
             fields: dict[str, object] = {
                 "Name": p["name"], "Project Code": p.get("notion_project_code"), "Stage": p.get("stage"),
                 "Status": p.get("status"), "Project Health": p.get("project_health"),
@@ -196,11 +196,11 @@ class ApiNotion:
         people = self._people()
         to_page = {p["t6_id"]: p["page_id"] for p in people if p.get("t6_id")}
         names = {p["page_id"]: p.get("name") for p in people}
-        projects = self._read(self._client.project_list, ProjectListInput())["projects"]
+        projects = self._read(self.client.project_list, ProjectListInput())["projects"]
         page_of = {p["t6_id"]: p["page_id"] for p in projects if p.get("t6_id")}
         labels = {p["page_id"]: p.get("notion_project_code") or p["name"] or None for p in projects}
         records = []
-        for o in self._read(self._client.jo_list, JoListInput())["job_orders"]:
+        for o in self._read(self.client.jo_list, JoListInput())["job_orders"]:
             project_pages = [page_of.get(i, i) for i in o.get("project_ids") or ()]
             fields: dict[str, object] = {
                 "Name": o.get("name") or "", "JO Number": o.get("number") or "", "Task": o.get("task") or "",
