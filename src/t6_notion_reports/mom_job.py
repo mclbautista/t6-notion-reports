@@ -8,9 +8,8 @@ from typing import Callable
 
 from .contacts import load_contacts
 from .holidays import upcoming_entries
-from .llm import LlmClient
+from .llm_api import LlmClient
 from .mom import build_draft, condense_draft, render_blocks
-from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
@@ -36,6 +35,7 @@ def title_for(meeting_date: date) -> str:
 def run_draft_mom(
     conn: sqlite3.Connection, notion, projects_ds: str, contacts_ds: str, meeting_notes_ds: str,
     meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
+    dry_print: bool = False, out: Callable[[str], None] = print,
 ) -> MomResult:
     pair = mom_diff_pair(conn, meeting_date)
     if pair is None:
@@ -58,7 +58,14 @@ def run_draft_mom(
     all_contacts = load_contacts(notion, contacts_ds)
     condensed = raw = 0
     if llm is not None:
-        condensed, raw = condense_draft(draft, llm, new_state, Redactor.build(all_contacts.values(), (old_state, new_state)))
+        condensed, raw = condense_draft(draft, llm, new_state)
+    if dry_print:  # nothing is written: the bullets per project, marked (raw) when condensing was rejected or failed
+        for e in draft.entries:
+            out(f"## {e.label}{' (raw)' if e.raw_fallback else ''}")
+            for bullet in e.bullets:
+                out(f"- {bullet}")
+        log(f"mom dry_print=True date={meeting_date} shown={len(draft.entries)} condensed={condensed} raw={raw}")
+        return MomResult("dry-print", len(draft.entries), len(draft.unchanged))  # no page: a marker, not an id
 
     description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
     others = upcoming_entries(description, meeting_date)

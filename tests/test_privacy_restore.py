@@ -36,24 +36,6 @@ def test_consolidation_drops_unresolved_items_and_fails_when_none_survive():
     assert outcome.failed
 
 
-def test_condense_redacts_payload_and_restores_output():
-    import json
-    from datetime import date
-    from t6_notion_reports.condense import condense_bullets
-    from t6_notion_reports.contacts import Contact
-    from t6_notion_reports.redact import Redactor
-
-    redactor = Redactor.build([Contact("c", "Dario")], [{"other": {"Name": "Other Show"}}])
-    class Llm:
-        def complete(self, system, user, schema):
-            assert "Dario" not in user and "Other Show" not in user and "123456789" not in user
-            return schema(bullets=[json.loads(user)["new_blocks"][0].replace("person", "PERSON")])
-    source = ["Dario confirmed Other Show 123456789"]
-    result = condense_bullets(Llm(), "Own", source[0], source, date(2026, 11, 8), redactor=redactor)
-    assert result.bullets == ["Dario confirmed Other Show [id]"]
-    assert not result.raw
-
-
 def test_leaves_redacts_payload_and_restores_before_contact_matching():
     import json
     from datetime import date

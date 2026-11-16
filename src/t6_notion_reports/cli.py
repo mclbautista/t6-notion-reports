@@ -61,6 +61,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     mom.add_argument("--config", default="config.yaml")
     mom.add_argument("--db", help="default: database_path from --config")
     mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
+    mom.add_argument("--dry-print", action="store_true", help="condense and print the bullets per project, write nothing to Notion")
     send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
     send.add_argument("--config", default="config.yaml")
     send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
@@ -309,6 +310,13 @@ def _llm(cfg, dry_print=False):
     return None if dry_print else UnavailableLlm()
 
 
+def _minutes_llm(cfg, dry_print=False):
+    """The Minutes condense through ``llm run`` with ``llm_model``. Off: a dry print leaves the LLM out (raw bullets); a real draft marks every project "(raw)"."""
+    if cfg.brief is None:
+        return None
+    return _api_llm(cfg, "minutes_condense", cfg.brief.llm_model) or (None if dry_print else UnavailableLlm())
+
+
 def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
     """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
     def job(kind: str) -> None:
@@ -338,7 +346,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
         if kind == "monday" and cfg.meeting_notes_data_source:
             run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
                           cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
-                          log=lambda text: print(text, flush=True), llm=_llm(cfg))
+                          log=lambda text: print(text, flush=True), llm=_minutes_llm(cfg))
     return job
 
 
@@ -359,7 +367,7 @@ def _draft_mom(args, notion, now) -> int:
     try:
         result = run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
                                cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
-                               llm=_llm(cfg))
+                               llm=_minutes_llm(cfg, args.dry_print), dry_print=args.dry_print)
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
         return 1
