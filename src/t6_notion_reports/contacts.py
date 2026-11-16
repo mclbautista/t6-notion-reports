@@ -19,6 +19,8 @@ class Notion(Protocol):
 
 
 def load_contacts(notion: Notion, contacts_ds: str) -> dict[str, Contact]:
+    if hasattr(notion, "read_contacts"):  # a t6_api.ApiNotion: the t6 API serves Contacts
+        return notion.read_contacts()
     out: dict[str, Contact] = {}
     for page in notion.query_data_source(contacts_ds):
         props = page["properties"]

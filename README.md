@@ -57,6 +57,21 @@ Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
 
+### Reads through the t6 API
+
+With `T6_API_URL` and `T6_API_SECRET` in `.env`, Contacts, the Projects notices and Meeting Notes are read
+through the t6 API (the key needs the `unmasked` grant). Unset `T6_API_URL` to go back to Notion. Projects
+and Job Orders pages, and the Minutes writes, still use Notion.
+
+Before a deploy, compare both paths on the live data. It sends nothing and writes both outputs to a folder on
+the host (they hold names; do not commit or share them):
+
+    docker compose run --rm notion-reports compare-api --config /app/config.yaml --out /app/data/compare
+
+It prints, for `projects`, `job_orders` and `brief`, whether the outputs are equal, the count of differing
+lines and the seconds each path took. Exit code 0 means all three are equal. Do not run it between a Friday
+snapshot and the Saturday brief. It works on copies of the database, never the live one.
+
 ### Tailnet and gateway networking
 
 The Tailscale sidecar is **opt-in**. The default deploy below (`docker compose up`, with or
