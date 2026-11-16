@@ -49,9 +49,9 @@ def seeded(staffed):
     from t6_notion_reports.snapshots import SCHEMA
     c.executescript(SCHEMA)
     notion = FakeNotion(pages("Offline", staffed=staffed), contacts())
-    run_snapshot(c, notion, PROJECTS, CONTACTS, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
+    run_snapshot(c, notion, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
     notion = FakeNotion(pages("Online", staffed=staffed), contacts())
-    run_snapshot(c, notion, PROJECTS, CONTACTS, "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
+    run_snapshot(c, notion, "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
     return c
 
 
@@ -85,7 +85,7 @@ class FakeGateway:
 
 def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(conn):
     gw = FakeGateway()
-    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    res = run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert res.sent == 2 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
         (111, None, "notion-reports-2026-11-15-c-oto"),
@@ -105,7 +105,7 @@ def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed,
     from dataclasses import replace
     settings = replace(BRIEF, coordinator_recipients=None if allowlist is None else tuple(allowlist))
     gw, llm = FakeGateway(), FakeLlm(fail_for={"Show", "Dubbing"})
-    result = run_brief(conn_unstaffed, FakeNotion([], contacts()), CONTACTS, settings, SUNDAY,
+    result = run_brief(conn_unstaffed, FakeNotion([], contacts()), settings, SUNDAY,
                        gateway=gw, llm=llm, log=lambda _: None)
     coordinator_messages = [m for m in result.messages if not m.key.startswith("psr-digest")]
     assert {m.to for m in coordinator_messages} == targets
@@ -124,7 +124,7 @@ def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed,
 def test_coordinator_allowlist_quiet_line_only_names_eligible_coordinators(conn, allowlist, quiet):
     from dataclasses import replace
     gw = FakeGateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, coordinator_recipients=allowlist),
+    run_brief(conn, FakeNotion([], contacts()), replace(BRIEF, coordinator_recipients=allowlist),
               SUNDAY, gateway=gw, log=lambda _: None)
     assert ("No changes: Juno Vex" in digest_text(gw)) is quiet
 
@@ -144,7 +144,7 @@ def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, co
                             ("friday", "Online", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))):
         rows = pages(stage, staffed=False)
         rows[0]["properties"]["T6 Post Coordinator"] = relation(notion_id)
-        run_snapshot(c, FakeNotion(rows, people), PROJECTS, CONTACTS, kind, at)
+        run_snapshot(c, FakeNotion(rows, people), kind, at)
     path = write_config(tmp_path, "unused.db")
     with open(path) as file:
         raw = yaml.safe_load(file)
@@ -154,7 +154,7 @@ def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, co
     settings = load_config(path, {"NOTION_TOKEN": "fake-token"}).brief
     assert settings is not None
     gw = FakeGateway()
-    result = run_brief(c, FakeNotion([], people), CONTACTS, settings, SUNDAY, gateway=gw, log=lambda _: None)
+    result = run_brief(c, FakeNotion([], people), settings, SUNDAY, gateway=gw, log=lambda _: None)
     assert {m.to for m in result.messages} == {111, 999}
     assert any(m.key == f"notion-reports-2026-11-15-{notion_id}" for m in result.messages)
     assert "QAZ" in digest_text(gw) and "DW" in digest_text(gw)
@@ -171,22 +171,22 @@ def test_digest_no_changes_line_skips_coordinators_with_only_standby_projects():
     c.executescript(SCHEMA)
     for kind, stage, at in (("monday", "Offline", datetime(2026, 11, 9, 3, tzinfo=timezone.utc)),
                             ("friday", "Online", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))):
-        run_snapshot(c, FakeNotion(pages(stage, "🏋️ Standby"), contacts()), PROJECTS, CONTACTS, kind, at)
+        run_snapshot(c, FakeNotion(pages(stage, "🏋️ Standby"), contacts()), kind, at)
     gw = FakeGateway()
-    run_brief(c, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    run_brief(c, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert "No changes" not in digest_text(gw)
     assert all(to != -1003 for to, *_ in gw.sent)
 
 
 def test_digest_no_changes_line_lists_active_quiet_coordinators(conn):
     gw = FakeGateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert "No changes: Juno Vex" in digest_text(gw)
 
 
 def test_dry_print_prints_and_sends_nothing(conn):
     gw, printed = FakeGateway(), []
-    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
+    res = run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw,
                     dry_print=True, out=printed.append, log=lambda _: None)
     assert gw.sent == [] and res.sent == 0 and len(res.messages) == 2
     assert any("psr-digest-2026-11-15" in p for p in printed)
@@ -195,7 +195,7 @@ def test_dry_print_prints_and_sends_nothing(conn):
 def test_a_failed_send_does_not_stop_the_others_and_then_raises(conn):
     gw, logs = FakeGateway(fail_for={111}), []
     with pytest.raises(BriefFailed):
-        run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=logs.append)
+        run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=logs.append)
     assert len(gw.sent) == 1
     assert not any("s3cret" in line for line in logs)
 
@@ -205,7 +205,7 @@ def test_no_friday_snapshot_yet_sends_nothing():
     from t6_notion_reports.snapshots import SCHEMA
     c.executescript(SCHEMA)
     gw, printed = FakeGateway(), []
-    res = run_brief(c, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, out=printed.append, log=lambda _: None)
+    res = run_brief(c, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, out=printed.append, log=lambda _: None)
     assert res.baseline and gw.sent == [] and "first snapshot" in printed[0]
 
 
@@ -217,7 +217,7 @@ def test_real_gateway_client_posts_through_the_fake_transport(conn):
         return 202, {"message_ref": len(calls)}
 
     gw = GatewayClient("http://gw:8780", "s3cret", transport, sleep=lambda _: None)
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert len(calls) == 2
     assert all(url == "http://gw:8780/notify" and auth == "Bearer s3cret" and body["format"] == "html"
                for url, auth, body in calls)
@@ -249,8 +249,8 @@ def seeded_db(tmp_path):
     from t6_notion_reports.snapshots import connect
     db = tmp_path / "psr.db"
     c = connect(str(db))
-    run_snapshot(c, FakeNotion(pages("Offline"), contacts()), PROJECTS, CONTACTS, "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
-    run_snapshot(c, FakeNotion(pages("Online"), contacts()), PROJECTS, CONTACTS, "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
+    run_snapshot(c, FakeNotion(pages("Offline"), contacts()), "monday", datetime(2026, 11, 9, 3, tzinfo=timezone.utc))
+    run_snapshot(c, FakeNotion(pages("Online"), contacts()), "friday", datetime(2026, 11, 13, 10, tzinfo=timezone.utc))
     c.close()
     return db
 
@@ -296,7 +296,7 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     no_id = [c for c in contacts()]
     no_id[1]["properties"]["TelegramUserID"] = {"type": "number", "number": None}
     with pytest.raises(BriefFailed, match="digest"):
-        run_brief(conn, FakeNotion([], no_id), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+        run_brief(conn, FakeNotion([], no_id), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert len(gw.sent) == 1
 
 
@@ -317,7 +317,7 @@ def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
     conn = conn_unstaffed
     gw = FakeGateway()
     logs = []
-    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw,
+    res = run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw,
                     llm=FakeLlm(fail_for={"Show"}), log=logs.append)
     texts = {key: text for _, _, key, text in gw.sent}
     assert "(LLM unavailable)" in texts["notion-reports-2026-11-15-c-oto"]
@@ -328,5 +328,5 @@ def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
 
 def test_no_llm_marks_nothing_unavailable(conn):
     gw = FakeGateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert not any("What you owe" in text or "unavailable" in text for *_, text in gw.sent)

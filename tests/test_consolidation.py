@@ -29,7 +29,7 @@ def make_db(last_friday, monday, friday):
     conn.executescript(SCHEMA)
     for kind, at, pages in (("friday", LAST_FRIDAY, last_friday), ("monday", MONDAY, monday), ("friday", FRIDAY, friday)):
         if pages is not None:
-            run_snapshot(conn, FakeNotion(pages, contacts()), PROJECTS, CONTACTS, kind, at)
+            run_snapshot(conn, FakeNotion(pages, contacts()), kind, at)
     return conn
 
 
@@ -61,7 +61,7 @@ def line_id(payload, text, where="pm_notes"):
 
 def run(conn, llm=None, notion=None, brief=BRIEF, **kw):
     gw, logs = Gateway(), []
-    run_brief(conn, notion or FakeNotion([], contacts()), CONTACTS, brief, SATURDAY, gateway=gw, llm=llm,
+    run_brief(conn, notion or FakeNotion([], contacts()), brief, SATURDAY, gateway=gw, llm=llm,
               log=logs.append, **kw)
     return gw, logs
 
@@ -137,7 +137,7 @@ def test_both_diff_windows_and_the_minutes_lines_are_in_the_payload():
          "changes": [{"line_id": 8, "field": "Stage", "old": "Offline", "new": "Online", "text": "Stage: Offline → Online"}]},
     ]  # snapshot changes are numbered after the Minutes lines, so they can be cited too
     assert payload["minutes"] == {
-        "page_date": "2026-11-09", "last_edited": "2026-11-09T14:10:00.000+08:00", "sent_at": "2026-11-09T14:30:00+08:00",
+        "page_date": "2026-11-09", "last_edited": "2026-11-09T06:10:00.000Z", "sent_at": "2026-11-09T14:30:00+08:00",
         "lines": [{"line_id": 5, "text": "• Submission moved to Nov 28"}, {"line_id": 6, "text": "• Grade on Nov 24"}],
     }  # ids continue after the PM Notes lines; another project's lines are not here
 
@@ -167,7 +167,7 @@ def test_the_latest_minutes_page_on_or_before_today_is_the_one_read():
 def test_show_llm_input_prints_every_payload_and_calls_no_llm():
     llm, printed = Llm(), []
     conn = conn_one()
-    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
+    res = run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
                     dry_print=True, show_llm_input=True, out=printed.append, log=lambda _: None)
     assert llm.payloads == [] and res.sent == 0
     shown = "\n".join(printed)
@@ -252,11 +252,11 @@ def test_llm_concerns_age_through_the_concern_store():
     run(conn, Llm(reply_with(concerns=concerns)))
     later = datetime(2026, 11, 28, 4, tzinfo=timezone.utc)
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, later, gateway=gw,
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, later, gateway=gw,
               llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
     assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(gw)
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(), log=lambda _: None)
     assert "Resolved last week: Client notes are still pending" in dm(gw)
 
@@ -362,7 +362,7 @@ def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
     conn = conn_one()
     run(conn, Llm(reply_with(concerns=concerns)))
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(fail_for={"Show ONE"}), log=lambda _: None)
     text = dm(gw)
     assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved last week" not in text
@@ -492,7 +492,7 @@ def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
     for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
-        run_snapshot(conn, FakeNotion([one], people), PROJECTS, CONTACTS, kind, at)
+        run_snapshot(conn, FakeNotion([one], people), kind, at)
     cite = lambda p: {"source": "pm_notes", "line_id": line_id(p, "grade"), "quote": "• [person 1] sends the grade, we will wait"}
     llm = Llm(lambda p: {"changes": [{"text": "team will wait for the grade", **cite(p)}]})
     gw, _ = run(conn, llm, notion=FakeNotion([], people))
@@ -565,7 +565,7 @@ def variants_db(notes, extra_people=()):
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
     for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
-        run_snapshot(conn, FakeNotion([one, done], people), PROJECTS, CONTACTS, kind, at)
+        run_snapshot(conn, FakeNotion([one, done], people), kind, at)
     return conn, people
 
 

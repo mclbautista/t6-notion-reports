@@ -20,7 +20,7 @@ def notion(*jos):
 
 
 def snap(conn, fake, kind="manual", at=T1):
-    return run_jo_snapshot(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, kind, at)
+    return run_jo_snapshot(conn, fake, kind, at)
 
 
 def test_round_trips_every_field_with_ids_and_names():
@@ -139,19 +139,18 @@ def test_cli_logs_one_line_with_counts_and_no_values(tmp_path, capsys, monkeypat
     cfg.write_text(f'projects_data_source: "{PROJECTS_ID}"\ncontacts_data_source: "{CONTACTS_ID}"\n'
                    f'jo_data_source: "{JO_ID}"\ndatabase_path: "{tmp_path / "psr.db"}"\n')
     fake = notion(job_order("j1", Task=rich("SECRET-TASK-TEXT")))
-    fake.query_data_source = lambda ds, filter=None: {
-        PROJECTS_ID: fake.projects, CONTACTS_ID: fake.contacts, JO_ID: fake.job_orders}[ds]
     assert cli.main(["jo-snapshot", "--config", str(cfg)], notion=fake, now=T1) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert out == ["jo-snapshot id=1 kind=manual baseline=True changed=1 unchanged=0 removed=0 pruned=0"]
 
 
-def test_cli_requires_jo_data_source(tmp_path, capsys, monkeypatch):
+def test_cli_needs_the_t6_api_url(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
+    monkeypatch.delenv("T6_API_URL", raising=False)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'projects_data_source: "{PROJECTS_ID}"\ncontacts_data_source: "{CONTACTS_ID}"\n')
+    cfg.write_text(f'database_path: "{tmp_path / "psr.db"}"\n')
     assert cli.main(["jo-snapshot", "--config", str(cfg)]) == 2
-    assert "jo_data_source" in capsys.readouterr().err
+    assert "T6_API_URL" in capsys.readouterr().err
 
 
 PROJECTS_ID = "33333333-3333-3333-3333-333333333333"

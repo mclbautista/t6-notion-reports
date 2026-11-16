@@ -73,8 +73,8 @@ STANDARD = [
 def build(projects, description="\n".join([HEADING, *LEAVES])):
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
-    run_snapshot(conn, FakeNotion(projects, contacts()), PROJECTS, CONTACTS, "monday", MONDAY)
-    run_snapshot(conn, FakeNotion(projects, contacts()), PROJECTS, CONTACTS, "friday", FRIDAY)
+    run_snapshot(conn, FakeNotion(projects, contacts()), "monday", MONDAY)
+    run_snapshot(conn, FakeNotion(projects, contacts()), "friday", FRIDAY)
     return conn, FakeNotion([], contacts(), description=description)
 
 
@@ -86,8 +86,7 @@ def team_project(status=IN_PROGRESS, **props):
 
 def brief(conn, notion, llm, brief_settings=BRIEF, **kw):
     gw, logs = Gateway(), []
-    run_brief(conn, notion, CONTACTS, brief_settings, SATURDAY, gateway=gw, llm=llm, log=logs.append,
-              projects_ds=PROJECTS, **kw)
+    run_brief(conn, notion, brief_settings, SATURDAY, gateway=gw, llm=llm, log=logs.append, **kw)
     return gw, logs
 
 
@@ -269,8 +268,7 @@ def test_a_standby_project_is_still_checked_for_its_dates():
 def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
     conn, notion = build([team_project()])
     llm, out = LeaveLlm(STANDARD), []
-    run_brief(conn, notion, CONTACTS, BRIEF, SATURDAY, llm=llm, log=lambda _: None, out=out.append,
-              projects_ds=PROJECTS, show_llm_input=True)
+    run_brief(conn, notion, BRIEF, SATURDAY, llm=llm, log=lambda _: None, out=out.append, show_llm_input=True)
     assert llm.payloads == []
     assert any("llm input: leaves" in text and "[person 1] - leave Nov 20-22" in text for text in out)
 

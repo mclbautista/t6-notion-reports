@@ -56,7 +56,7 @@ def setup(blocks=None, **page_kw):
 
 def send(n, gw=None, **kw):
     gw = gw or FakeGateway()
-    res = run_send_ready_mom(n, MEETING, gw, CHAT, TOPIC, NOW, log=lambda _: None, **kw)
+    res = run_send_ready_mom(n, gw, CHAT, TOPIC, NOW, log=lambda _: None, **kw)
     return gw, res
 
 
@@ -173,13 +173,13 @@ def test_test_banner_starts_every_message():
 def test_dry_print_sends_nothing_and_leaves_sent_at_empty():
     n = setup()
     out = []
-    res = run_send_ready_mom(n, MEETING, None, CHAT, TOPIC, NOW, dry_print=True, out=out.append, log=lambda _: None)
+    res = run_send_ready_mom(n, None, CHAT, TOPIC, NOW, dry_print=True, out=out.append, log=lambda _: None)
     assert n.sent_marked == [] and res.sent_pages == 0 and any("psr-mom-2026-11-16-1" in o for o in out)
 
 
 def test_logs_counts_only():
     logs = []
-    run_send_ready_mom(setup(), MEETING, FakeGateway(), CHAT, TOPIC, NOW, log=logs.append)
+    run_send_ready_mom(setup(), FakeGateway(), CHAT, TOPIC, NOW, log=logs.append)
     assert logs and "Delay in Mixing" not in "".join(logs) and "sent=1" in "".join(logs)
 
 

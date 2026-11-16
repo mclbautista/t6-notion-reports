@@ -3,12 +3,10 @@
 # value fails the boot with a message naming the key.
 # Quote the ids: an all-digit id is read by YAML as a number.
 
-projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projects data source id
-contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
+# Projects, Contacts and Job Orders are read through the t6 API (T6_API_URL and T6_API_SECRET in .env), so
+# projects_data_source, contacts_data_source and jo_data_source are no longer used. An old config.yaml that
+# still has them boots; each is ignored and logged as "config key ignored: <key>".
 database_path: /app/data/psr.db
-
-# Job Orders (optional). Needed by `jo-snapshot`. Job Orders: collection://33333333-3333-3333-3333-333333333333
-# jo_data_source: "33333333-3333-3333-3333-333333333333"
 
 # Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
 # Meeting Notes, and `draft-mom` works. Meeting Notes: collection://22222222-2222-2222-2222-222222222222
@@ -36,7 +34,7 @@ database_path: /app/data/psr.db
 # concern_chronic_weeks: 4               # a Concern open longer than this many weeks gets a chronic marker
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 
-# JO shift reports (optional). Needs jo_data_source above. When true, the scheduler snapshots Job Orders
+# JO shift reports (optional). When true, the scheduler snapshots Job Orders
 # and sends the 05:00, 11:30 and 19:00 reports every day, Asia/Manila. The secret SHIFT_SECRET goes in .env
 # (never PSR_SECRET). gateway_url and test_banner are shared with the briefing keys above; gateway_url is
 # required here, and so is at least one destination in shift_destinations. Leave shift_reports_enabled false

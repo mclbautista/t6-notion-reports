@@ -23,11 +23,19 @@ def _body(blocks):
 
 
 class FakeApi:
-    """``down=True`` makes every call return Unavailable, like an unreachable API."""
+    """Every call returns Unavailable, like an unreachable API, while ``down`` or ``notion.down`` is true."""
 
-    def __init__(self, notion, down=False, bold_runs=None):
-        self.notion, self.down, self.bold_runs = notion, down, bold_runs
+    def __init__(self, notion, down=False):
+        self.notion, self._down = notion, down
         self.calls: list[str] = []
+
+    @property
+    def down(self):
+        return self._down or getattr(self.notion, "down", False)
+
+    def _ref(self, page_id):
+        """The id the API gives for a page: its T6 ID when ``notion.t6_ids`` binds one, else the page id."""
+        return getattr(self.notion, "t6_ids", {}).get(page_id, page_id)
 
     def _done(self, name, result):
         self.calls.append(name)
@@ -40,7 +48,7 @@ class FakeApi:
             uid = p.get("TelegramUserID")
             number = (uid or {}).get("number") if (uid or {}).get("type") == "number" else _text(uid).strip()
             people.append({
-                "page_id": c["id"], "t6_id": None, "name": _text(p.get("Name")),
+                "page_id": c["id"], "t6_id": self._ref(c["id"]) if self._ref(c["id"]) != c["id"] else None, "name": _text(p.get("Name")),
                 "telegram_handle": _text(p.get("TelegramHandle")) or None,
                 "telegram_user_id": int(number) if number not in (None, "") and str(number).isdigit() else None,
                 "aliases": [a.strip() for a in _text(p.get("Aliases")).split(",") if a.strip()],
@@ -74,27 +82,34 @@ class FakeApi:
                 "meeting_date": (p["Meeting Date"].get("date") or {}).get("start"), "sent_at": sent,
                 "ready_to_send": ready, "attendee_ids": [u["id"] for u in people],
                 "attendee_names": [u["name"] for u in people],
-                "body": _body(self.notion.page_blocks.get(page["id"], [])),
+                "body": _body(self.notion.page_blocks.get(page["id"], [])) if inputs.include_body else [],
             })
         return self._done("meeting-notes list", {"meeting_notes": notes})
 
     def project_list(self, inputs):
         def ids(p, name):
-            return [r["id"] for r in (p.get(name) or {}).get("relation", [])]
+            return [self._ref(r["id"]) for r in (p.get(name) or {}).get("relation", [])]
         projects = []
         for page in self.notion.projects:
+            if page.get("in_trash"):
+                continue
             p = page["properties"]
-            def date_value(name):
+            def date_value(name, key="start"):
                 d = (p.get(name) or {}).get("date")
-                return d["start"] if d else None
+                return d[key] if d else None
             projects.append({
-                "page_id": page["id"], "t6_id": None, "name": _text(p["Name"]),
+                "page_id": page["id"], "t6_id": self._ref(page["id"]) if self._ref(page["id"]) != page["id"] else None,
+                "name": _text(p["Name"]),
                 "project_code": (p["Project Code"]["select"] or {}).get("name"),
+                "notion_project_code": (p["Project Code"]["select"] or {}).get("name"),
                 "stage": (p["Stage"]["select"] or {}).get("name"), "status": (p["Status"]["select"] or {}).get("name"),
                 "project_health": (p["Project Health"]["select"] or {}).get("name"),
                 "pm_notes": _text(p["PM Notes"]) or None, "playdate": date_value("Playdate"),
                 "submission_deadline": date_value("Submission Deadline"),
                 "archival_deadline": date_value("Archival Deadline"),
+                "playdate_end": date_value("Playdate", "end"),
+                "submission_deadline_end": date_value("Submission Deadline", "end"),
+                "archival_deadline_end": date_value("Archival Deadline", "end"),
                 "post_coordinator_ids": ids(p, "T6 Post Coordinator"), "editor_ids": ids(p, "Editors"),
                 "online_editor_ids": ids(p, "Online Editor"), "colorist_ids": ids(p, "Colorist"),
                 "sound_tech_ids": ids(p, "Sound Tech"), "assistant_editor_ids": ids(p, "Assistant Editor"),
@@ -106,6 +121,8 @@ class FakeApi:
     def jo_list(self, inputs):
         orders = []
         for page in self.notion.job_orders:
+            if page.get("in_trash"):
+                continue
             p = page["properties"]
             def opt(name):
                 prop = p[name]
@@ -113,13 +130,13 @@ class FakeApi:
             def day(name):
                 d = (p[name].get("date") or {})
                 return d.get("start")
-            projects = [r["id"] for r in p["Projects"]["relation"]]
+            projects = [self._ref(r["id"]) for r in p["Projects"]["relation"]]
             orders.append({
                 "page_id": page["id"], "name": _text(p["Name"]), "number": _text(p["JO Number"]) or None,
                 "task": _text(p["Task"]) or None, "status": opt("Status"), "department": opt("Department"),
                 "blocker": _text(p["Blocker "]) or None, "health": p["Health"]["formula"]["string"],
                 "date": day("Date"), "deadline": day("Deadline"),
-                "assigned_ids": [r["id"] for r in p["Assigned"]["relation"]],
-                "project_id": projects[0] if projects else None, "last_edited": page.get("last_edited_time"),
+                "assigned_ids": [self._ref(r["id"]) for r in p["Assigned"]["relation"]],
+                "project_id": projects[0] if projects else None, "project_ids": projects, "last_edited": page.get("last_edited_time"),
             })
         return self._done("jo list", {"job_orders": orders})

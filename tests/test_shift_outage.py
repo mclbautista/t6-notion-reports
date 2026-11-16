@@ -32,11 +32,11 @@ class Outage:
         self.error = error or urllib.error.URLError("secret notion text")
         self.reads = 0
 
-    def query_data_source(self, data_source_id, *args):
+    def job_order_records(self):
         self.reads += 1
         if self.recover_at is None or self.clock.now < self.recover_at:
             raise self.error
-        return self.inner.query_data_source(data_source_id, *args)
+        return self.inner.job_order_records()
 
 
 def tgt(transport, ops=OPS):
@@ -48,7 +48,7 @@ def tgt(transport, ops=OPS):
 def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):
     logs = []
     try:
-        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, log=logs.append,
+        run_shift_report(conn, notion, slot, when, log=logs.append,
                          target=tgt(transport, ops), clock=lambda: clock.now, sleep=clock.sleep)
     except NotionUnavailable as exc:
         return exc, logs
@@ -138,7 +138,7 @@ def test_dry_print_does_not_retry_or_alert():
     clock, conn = Clock(PM), connect()
     notion = Outage(world(), clock)
     with pytest.raises(urllib.error.URLError):
-        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, out=lambda _: None,
+        run_shift_report(conn, notion, "1900", PM, out=lambda _: None,
                          log=lambda _: None, clock=lambda: clock.now, sleep=clock.sleep)
     assert notion.reads == 1 and clock.now == PM
 
@@ -157,7 +157,7 @@ def alert_run(dests, ops=None):
     target = ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
                          {"1900": dests}, ops)
     with pytest.raises(NotionUnavailable):
-        run_shift_report(conn, Outage(world(), clock), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=logs.append,
+        run_shift_report(conn, Outage(world(), clock), "1900", PM, log=logs.append,
                          target=target, clock=lambda: clock.now, sleep=clock.sleep)
     return transport, logs
 

@@ -15,19 +15,22 @@ def write(tmp_path, text):
 
 
 def good(**over):
-    cfg = {"projects_data_source": ID_A, "contacts_data_source": ID_B}
+    cfg = {"database_path": "data/psr.db"}
     cfg.update(over)
     return "\n".join(f'{k}: "{v}"' for k, v in cfg.items() if v is not None)
 
 
 def test_loads_valid_config_with_default_db(tmp_path):
     cfg = load_config(write(tmp_path, good()), ENV)
-    assert (cfg.projects_data_source, cfg.database_path, cfg.notion_token) == (ID_A, "data/psr.db", "ntn_supersecret")
+    assert (cfg.database_path, cfg.notion_token, cfg.ignored_keys) == ("data/psr.db", "ntn_supersecret", ())
+
+
+def test_old_data_source_keys_are_accepted_ignored_and_reported(tmp_path):
+    cfg = load_config(write(tmp_path, good(projects_data_source="not-an-id", contacts_data_source=ID_B, jo_data_source=ID_A)), ENV)
+    assert cfg.ignored_keys == ("projects_data_source", "contacts_data_source", "jo_data_source")
 
 
 @pytest.mark.parametrize("over,key", [
-    ({"projects_data_source": None}, "projects_data_source"),
-    ({"contacts_data_source": "not-an-id-hunter2"}, "contacts_data_source"),
     ({"database_path": " "}, "database_path"),
     ({"surprise": "hunter2"}, "surprise"),
 ])
@@ -52,10 +55,10 @@ def test_bad_yaml_and_missing_file(tmp_path):
 
 def test_serve_fails_boot_with_key_name_on_stderr(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
-    path = write(tmp_path, good(projects_data_source="hunter2"))
+    path = write(tmp_path, good(database_path=" "))
     assert cli.main(["serve", "--config", path]) == 2
     err = capsys.readouterr().err
-    assert "projects_data_source" in err and "hunter2" not in err
+    assert "database_path" in err
 
 
 BRIEF_YAML = """

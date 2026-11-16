@@ -84,12 +84,6 @@
     "expires": "2027-02-15"
   },
   {
-    "name": "#68 stage 1, tests/test_notion_cli.py: names a provider API host",
-    "file": "tests/test_notion_cli.py",
-    "rule": "direct-http",
-    "expires": "2027-02-15"
-  },
-  {
     "name": "#68 stage 1, tests/test_shift_destinations.py: holds a Notion or LLM credential name",
     "file": "tests/test_shift_destinations.py",
     "rule": "credential",

@@ -43,13 +43,13 @@ def world(*jos):
 
 def run(conn, fake, slot, when, banner=False):
     out, log = [], []
-    report = run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, banner, out.append, log.append)
+    report = run_shift_report(conn, fake, slot, when, banner, out.append, log.append)
     return report, "\n".join(out), log
 
 
 def prior(conn, fake=None, when=MID, kind="1130"):
     """An earlier snapshot, so the next one is not the baseline."""
-    run_jo_snapshot(conn, fake or world(), JOB_ORDERS, CONTACTS, PROJECTS, kind, when)
+    run_jo_snapshot(conn, fake or world(), kind, when)
 
 
 PERSON_NAMES = {"Oto", "Rex", "Unassigned"}
@@ -141,7 +141,7 @@ def test_line_format_health_emoji_link_and_escaping():
     )
     summarizer = FakeSummarizer({"Export <v2> & sons": "Export <v2> &"})
     out, log = [], []
-    run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(conn, fake, "1900", PM, False, out.append, log.append,
                      summarizer=summarizer)
     text = "\n".join(out)
     lines = [l for l in text.splitlines() if "notion.so" in l]
@@ -180,7 +180,7 @@ def test_task_comes_from_the_summarizer_with_fallbacks():
                                  "Subtitle QC pass for episode": "one two three four",
                                  "Master delivery check": None})
     out = []
-    run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, lambda _: None,
+    run_shift_report(conn, fake, "1900", PM, False, out.append, lambda _: None,
                      summarizer=summarizer)
     tasks = re.findall(r"</a> - (.+?) - Pending", "\n".join(out))
     assert tasks == ["Color grade", "Subtitle QC pass", "Master delivery check", "no task", "Short label"]
@@ -317,22 +317,13 @@ JO_ID = "33333333-3333-3333-3333-333333333333"
 def cli_config(tmp_path, monkeypatch):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'projects_data_source: "{"1" * 8}-1111-1111-1111-{"1" * 12}"\n'
-                   f'contacts_data_source: "{"2" * 8}-2222-2222-2222-{"2" * 12}"\n'
-                   f'jo_data_source: "{JO_ID}"\ndatabase_path: "{tmp_path / "psr.db"}"\n')
+    cfg.write_text(f'database_path: "{tmp_path / "psr.db"}"\n')
     return cfg
-
-
-class RoutedNotion(FakeNotion):
-    def query_data_source(self, data_source_id, filter=None):
-        route = {JO_ID: JOB_ORDERS, "1" * 8 + "-1111-1111-1111-" + "1" * 12: PROJECTS,
-                 "2" * 8 + "-2222-2222-2222-" + "2" * 12: CONTACTS}
-        return super().query_data_source(route[data_source_id], filter)
 
 
 def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
-    fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+    fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     # Nothing but Notion reads is possible here: no gateway client exists on this path.
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
     assert cli.main(["shift-report", "--slot", "1900", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
@@ -395,7 +386,7 @@ def test_0500_report_compares_with_the_previous_1900_snapshot_without_a_note():
 def test_cli_accepts_the_new_slots_and_rejects_the_retired_ones(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
     for slot in ("0500", "1130", "1900"):
-        fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+        fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
         assert cli.main(["shift-report", "--slot", slot, "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     capsys.readouterr()
     for slot in ("1200", "1800"):
@@ -406,7 +397,7 @@ def test_cli_accepts_the_new_slots_and_rejects_the_retired_ones(tmp_path, monkey
 def test_baseline_windows_open_at_1130_for_the_1900_report_and_1900_yesterday_for_0500():
     from t6_notion_reports.shift_job import nominal_window_start
     conn = connect()
-    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM)
+    run_jo_snapshot(conn, world(), "1900", PM)
     from t6_notion_reports.jo_snapshots import load_latest
     assert nominal_window_start("1900", load_latest(conn)) == MID
     assert nominal_window_start("0500", load_latest(conn)) == datetime(2026, 11, 2, 19, tzinfo=MNL)
@@ -495,7 +486,7 @@ def test_1130_baseline_window_start_is_0500_today():
     from t6_notion_reports.jo_snapshots import load_latest
     from t6_notion_reports.shift_job import nominal_window_start
     conn = connect()
-    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1130", MID)
+    run_jo_snapshot(conn, world(), "1130", MID)
     assert nominal_window_start("1130", load_latest(conn)) == AM
 
 

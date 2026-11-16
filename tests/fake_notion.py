@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import itertools
 
+from fake_api import FakeApi
+from t6_notion_reports.t6_api import ApiNotion
+
 _ids = itertools.count(1)
 
 PROJECTS = "projects-ds"
@@ -112,16 +115,28 @@ class FakeNotion:
         self.sent_marked: list[tuple[str, dict]] = []  # (page id, properties) from property updates
         self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
 
-    def query_data_source(self, data_source_id, filter=None):
-        self.queried.append(data_source_id)
-        pages = {PROJECTS: self.projects, CONTACTS: self.contacts, MEETING: self.meetings,
-                 JOB_ORDERS: self.job_orders}[data_source_id]
-        return [p for p in pages if not p.get("in_trash")]
+    # The reads: what the jobs call on ``ApiNotion``, served by ``FakeApi`` from the fixtures. Set ``down`` to
+    # true to make the API unreachable.
+    def _reads(self):
+        return ApiNotion(FakeApi(self))
 
-    def retrieve_data_source(self, data_source_id):
-        # A string is one plain rich text item; a list is passed through as rich text items.
-        rich_items = self.description if isinstance(self.description, list) else [{"plain_text": self.description}]
-        return {"id": data_source_id, "description": rich_items}
+    def read_contacts(self):
+        return self._reads().read_contacts()
+
+    def contact_names(self):
+        return self._reads().contact_names()
+
+    def notices(self):
+        return self._reads().notices()
+
+    def meeting_notes(self, **filters):
+        return self._reads().meeting_notes(**filters)
+
+    def project_records(self):
+        return self._reads().project_records()
+
+    def job_order_records(self):
+        return self._reads().job_order_records()
 
     def create_page(self, data_source_id, properties, children):
         assert data_source_id == MEETING and len(children) <= 100

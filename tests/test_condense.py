@@ -119,8 +119,8 @@ def snap(which):
 def drafted(answers):
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
-    run_snapshot(conn, FakeNotion(snap(OLD_ALL), []), PROJECTS, CONTACTS, "friday", FRI)
-    run_snapshot(conn, FakeNotion(snap(NEW_ALL), []), PROJECTS, CONTACTS, "monday", MON)
+    run_snapshot(conn, FakeNotion(snap(OLD_ALL), []), "friday", FRI)
+    run_snapshot(conn, FakeNotion(snap(NEW_ALL), []), "monday", MON)
     notion = FakeNotion(snap(NEW_ALL), [])
 
     class Llm:
@@ -129,7 +129,7 @@ def drafted(answers):
             if isinstance(answers[code], Exception):
                 raise answers[code]
             return schema(bullets=answers[code])
-    run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, date(2026, 10, 26), log=lambda _: None, llm=Llm())
+    run_draft_mom(conn, notion, MEETING, date(2026, 10, 26), log=lambda _: None, llm=Llm())
     return notion.created[0]["children"] + [c for _, cs in notion.appended for c in cs]
 
 
@@ -190,14 +190,14 @@ def test_minutes_job_redacts_contacts_other_projects_and_ids_then_restores_bulle
     before = [project("own", "OWN", "Own Show"), project("other", "OTH", "Other Show")]
     after = [project("own", "OWN", "Own Show", **{"PM Notes": rich(
         "As of Oct 26\n• Dario confirmed Other Show 123456789")}), before[1]]
-    run_snapshot(conn, FakeNotion(before, people), PROJECTS, CONTACTS, "friday", FRI)
-    run_snapshot(conn, FakeNotion(after, people), PROJECTS, CONTACTS, "monday", MON)
+    run_snapshot(conn, FakeNotion(before, people), "friday", FRI)
+    run_snapshot(conn, FakeNotion(after, people), "monday", MON)
     notion = FakeNotion(after, people)
     class Llm:
         def complete(self, system, user, schema):
             assert all(private not in user for private in ("Dario", "Other Show", "123456789", "person-page"))
             return schema(bullets=json.loads(user)["new_blocks"])
-    run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, MEET, log=lambda _: None, llm=Llm())
+    run_draft_mom(conn, notion, MEETING, MEET, log=lambda _: None, llm=Llm())
     blocks = notion.created[0]["children"]
     lines = [text for text, _ in flat(project_block(blocks, "OWN"))]
     assert "Dario confirmed Other Show [id]" in lines

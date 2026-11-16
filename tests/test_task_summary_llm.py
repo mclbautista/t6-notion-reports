@@ -86,7 +86,7 @@ def test_one_jos_fallback_does_not_borrow_another_jos_summary_for_identical_task
     prior(db)
     fake = world(jo("j1", "1", "TOC", task="Export the final cut"), jo("j2", "2", "TOC", task="Export the final cut"))
     log, out = [], []
-    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
                      summarizer=FirstOnly())
     assert log[0].endswith("summaries=1 cached=0 fallback=1")
     labels = re.findall(r"#(\d+)</a> - (.+?) - Pending", "\n".join(out))
@@ -105,7 +105,7 @@ def test_names_in_the_task_are_masked_on_the_way_out_and_restored():
     db = connect()
     prior(db)
     out = []
-    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, lambda _: None,
+    run_shift_report(db, fake, "1900", PM, False, out.append, lambda _: None,
                      llm=OpenRouterClient("key", transport=transport))
     assert seen == ["Ask [person 1] about grade"] and "Oto" not in seen[0]
     assert "</a> - Ask Oto - Pending" in "\n".join(out)
@@ -116,16 +116,16 @@ def test_report_logs_summary_counts_and_survives_an_llm_failure():
     prior(db)
     fake = world(jo("j1", "1", "TOC", task="Color grade the final cut"))
     log, out = [], []
-    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
                      llm=OpenRouterClient("key", transport=Transport(status=500)))
     assert log[0].endswith("summaries=0 cached=0 fallback=1") and "Color grade" not in log[0]
     assert "</a> - Color grade the - Pending" in "\n".join(out)
     log.clear()
-    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
                      llm=OpenRouterClient("key", transport=Transport()))
     assert log[0].endswith("summaries=1 cached=0 fallback=0")
     log.clear()
-    run_shift_report(db, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
                      llm=OpenRouterClient("key", transport=Transport(status=500)))
     assert log[0].endswith("summaries=0 cached=1 fallback=0")
 

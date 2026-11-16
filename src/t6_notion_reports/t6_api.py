@@ -1,21 +1,20 @@
-"""Reads through the t6 API (ADR 0002 in t6-core), shaped as the Notion reads the jobs already use.
+"""Every read of Notion data goes through the t6 API (ADR 0002 in t6-core), with ``t6.client.Client``.
 
-``ApiNotion`` wraps the Notion client. Contacts, the Projects database notices and Meeting Notes are
-read through ``t6.client.Client`` and handed to the jobs in the shape they read today, so the jobs and
-their output do not change. Writes (the Minutes) and every other read go to the wrapped Notion client.
-Leaving ``T6_API_URL`` unset keeps the old path: that is the rollback.
+``ApiNotion`` is what the jobs read from: Contacts, the Projects and Job Orders snapshot records, the
+Projects database notices and Meeting Notes. It builds each record in the shape the snapshots store, so
+the stored data, the diffs and the reports are the same as when Notion was read directly. Relations are
+stored as Contacts page ids (a T6 Person ID from the API is mapped back through ``person list``).
+
+The Minutes writes are still done by the Notion client wrapped here (``create_page``, ``update_page``,
+``append_children``): any other attribute goes to it. That goes when the writes move onto the API.
 
 An API that cannot be reached, or refuses, is an ``ApiUnavailable``, an ``OSError`` like the transport
-errors Notion gives, so each job treats it as the Notion outage it handles today.
-
-Projects and Job Orders: ``snapshots=True`` also builds their snapshot records from ``project list`` and
-``jo list``. The production wiring leaves it off, because those verbs do not carry everything the
-snapshots hold (see ``docs/agents`` notes in the ticket: the date ``end``, every related Project of a
-Job Order). ``compare-api`` switches it on to show the difference on live data.
+errors Notion gave, so each job treats it as the outage it handles.
 """
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Mapping
 
@@ -25,8 +24,10 @@ from t6.verbs import (
 )
 
 from .contacts import Contact
+from .holidays import Run
 from .jo_snapshots import JoRecord, manila_instant
 from .snapshots import LAST_EDITED, RELATION_FIELDS, ProjectRecord
+from .telegram_html import Span
 
 # The full-list reads are slow: ``jo list`` reads every page body and ``meeting-notes list`` every
 # note body. The client's own 10 s limit is too short for them.
@@ -45,8 +46,44 @@ class ApiUnavailable(OSError):
     """The t6 API did not answer or refused. The message names the kind of failure, never the data."""
 
 
+@dataclass(frozen=True)
+class Notices:
+    """The Projects database description: its plain text and its runs (text and a bold flag each)."""
+
+    description: str
+    runs: tuple[Run, ...]
+
+
+@dataclass(frozen=True)
+class Block:
+    """One block of a Meeting Notes body. ``kind`` is the block type ("bulleted_list_item", "toggle", ...)."""
+
+    kind: str
+    spans: tuple[Span, ...] = ()
+    children: tuple["Block", ...] = ()
+    checked: bool = False
+
+    @property
+    def text(self) -> str:
+        return "".join(s.text for s in self.spans)
+
+
+@dataclass(frozen=True)
+class Note:
+    """A Meeting Notes page. Times are as the Minutes code stores and shows them."""
+
+    page_id: str
+    title: str
+    meeting_day: date | None
+    sent_at: str | None
+    ready_to_send: bool
+    last_edited: str | None  # "2026-11-03T10:00:00.000Z"
+    attendees: tuple[tuple[str, str], ...]  # (Notion user id, name)
+    body: tuple[Block, ...]
+
+
 def client_from_env(env: Mapping[str, str] | None = None) -> Client | None:
-    """A client for ``T6_API_URL`` and ``T6_API_SECRET``; None when the URL is unset (the old Notion path)."""
+    """A client for ``T6_API_URL`` and ``T6_API_SECRET``; None when the URL is unset."""
     env = os.environ if env is None else env
     if not env.get("T6_API_URL", "").strip():
         return None
@@ -54,15 +91,13 @@ def client_from_env(env: Mapping[str, str] | None = None) -> Client | None:
 
 
 class ApiNotion:
-    def __init__(self, notion, client, projects_ds: str, meeting_notes_ds: str | None, snapshots: bool = False):
-        self._notion, self._client = notion, client
-        self._projects_ds, self._meeting_ds = projects_ds, meeting_notes_ds
-        self.snapshots = snapshots
-        self._children: dict[str, list[dict]] = {}
-        self._ids = 0
+    def __init__(self, client, notion=None):
+        self._client, self._notion = client, notion
 
-    # Everything the jobs read that the API does not serve, and every write, goes to Notion.
+    # The Minutes writes (and nothing else) go to the Notion client until they move onto the API.
     def __getattr__(self, name: str):
+        if name.startswith("_") or self._notion is None:
+            raise AttributeError(name)
         return getattr(self._notion, name)
 
     def _read(self, call, inputs) -> dict[str, Any]:
@@ -81,7 +116,7 @@ class ApiNotion:
         return self._read(self._client.person_list, PersonListInput())["people"]
 
     def read_contacts(self) -> dict[str, Contact]:
-        """Contacts by Notion page id, as ``load_contacts`` gives them."""
+        """Contacts by Notion page id."""
         out: dict[str, Contact] = {}
         for p in self._people():
             handle = (p.get("telegram_handle") or "").lstrip("@").strip() or None
@@ -91,61 +126,27 @@ class ApiNotion:
             )
         return out
 
-    def read_contact_names(self) -> dict[str, str | None]:
-        return {p["page_id"]: p.get("name") or None for p in self._people()}
+    def contact_names(self) -> dict[str, str | None]:
+        return {p["page_id"]: p.get("name") for p in self._people()}
 
     # ---- the Projects database notices ----
-    def retrieve_data_source(self, data_source_id: str) -> dict:
-        if data_source_id != self._projects_ds:
-            return self._notion.retrieve_data_source(data_source_id)
+    def notices(self) -> Notices:
         notices = self._read(self._client.studio_notices, StudioNoticesInput())
-        runs = notices.get("runs") or []
-        return {"id": data_source_id, "description": [
-            {"plain_text": r["text"], "annotations": {"bold": bool(r.get("bold"))}} for r in runs]}
+        text = notices.get("description") or ""
+        runs = tuple(Run(r["text"], bool(r.get("bold"))) for r in notices.get("runs") or ())
+        return Notices(text, runs or ((Run(text, False),) if text else ()))
 
     # ---- Meeting Notes ----
-    def query_data_source(self, data_source_id: str, filter: dict | None = None) -> list[dict]:
-        if data_source_id != self._meeting_ds:
-            return self._notion.query_data_source(data_source_id, filter)
-        inputs = MeetingNotesListInput(**_note_filter(filter))
-        notes = self._read(self._client.meeting_notes_list, inputs)["meeting_notes"]
-        return [self._note_page(n) for n in notes]
+    def meeting_notes(self, **filters) -> list[Note]:
+        """Filters are ``meeting-notes list`` inputs: ``title``, ``title_prefix``, ``ready_to_send``, ``include_body``."""
+        notes = self._read(self._client.meeting_notes_list, MeetingNotesListInput(**filters))["meeting_notes"]
+        return [_note(n) for n in notes]
 
-    def list_block_children(self, block_id: str) -> list[dict]:
-        return list(self._children[block_id])
-
-    def _note_page(self, note: dict) -> dict:
-        def date_prop(value): return {"type": "date", "date": {"start": value} if value else None}
-        page_id = note["page_id"]
-        self._children[page_id] = [self._block(b) for b in note.get("body") or []]
-        return {"id": page_id, "last_edited_time": _notion_time(note.get("last_edited")), "properties": {
-            "Name": {"type": "title", "title": [{"plain_text": note.get("name") or ""}]},
-            "Meeting Date": date_prop(note.get("meeting_date")),
-            "Sent at": date_prop(note.get("sent_at")),
-            "Ready to send": {"type": "checkbox", "checkbox": bool(note.get("ready_to_send"))},
-            "Team Attendees": {"type": "people", "people": [
-                {"id": i, "name": n} for i, n in zip(note.get("attendee_ids") or (), note.get("attendee_names") or ())]},
-        }}
-
-    def _block(self, b: dict) -> dict:
-        """A body block from ``meeting-notes list`` as the Notion block the Minutes code reads."""
-        self._ids += 1
-        block_id = f"api-block-{self._ids}"
-        kids = b.get("children") or []
-        self._children[block_id] = [self._block(k) for k in kids]
-        content: dict[str, Any] = {"rich_text": [
-            {"plain_text": s["text"], "href": s.get("url"),
-             "annotations": {"bold": bool(s.get("bold")), "code": bool(s.get("code"))}}
-            for s in b.get("spans") or []]}
-        if b["kind"] == "to_do":
-            content["checked"] = bool(b.get("checked"))
-        return {"id": block_id, "type": b["kind"], "has_children": bool(kids), b["kind"]: content}
-
-    # ---- Projects and Job Orders snapshots (compare-api only; see the module docstring) ----
+    # ---- Projects and Job Orders snapshot records ----
     def project_records(self) -> list[ProjectRecord]:
         people = self._people()
         to_page = {p["t6_id"]: p["page_id"] for p in people if p.get("t6_id")}
-        names = {p["page_id"]: p.get("name") or None for p in people}
+        names = {p["page_id"]: p.get("name") for p in people}
 
         def related(ids):
             pages = [to_page.get(i, i) for i in ids or ()]
@@ -154,12 +155,12 @@ class ApiNotion:
         records = []
         for p in self._read(self._client.project_list, ProjectListInput())["projects"]:
             fields: dict[str, object] = {
-                "Name": p["name"], "Project Code": p.get("project_code"), "Stage": p.get("stage"),
+                "Name": p["name"], "Project Code": p.get("notion_project_code"), "Stage": p.get("stage"),
                 "Status": p.get("status"), "Project Health": p.get("project_health"),
                 "PM Notes": p.get("pm_notes") or "",
-                "Playdate": _date_field(p.get("playdate")),
-                "Submission Deadline": _date_field(p.get("submission_deadline")),
-                "Archival Deadline": _date_field(p.get("archival_deadline")),
+                "Playdate": _date_field(p.get("playdate"), p.get("playdate_end")),
+                "Submission Deadline": _date_field(p.get("submission_deadline"), p.get("submission_deadline_end")),
+                "Archival Deadline": _date_field(p.get("archival_deadline"), p.get("archival_deadline_end")),
                 "Post Supe": [],  # Notion has no property by that name: the snapshot holds an empty list (#121)
                 LAST_EDITED: _notion_time(p.get("last_edited")),
             }
@@ -171,36 +172,40 @@ class ApiNotion:
     def job_order_records(self) -> list[JoRecord]:
         people = self._people()
         to_page = {p["t6_id"]: p["page_id"] for p in people if p.get("t6_id")}
-        names = {p["page_id"]: p.get("name") or None for p in people}
+        names = {p["page_id"]: p.get("name") for p in people}
         projects = self._read(self._client.project_list, ProjectListInput())["projects"]
         page_of = {p["t6_id"]: p["page_id"] for p in projects if p.get("t6_id")}
-        labels = {p["page_id"]: p.get("project_code") or p["name"] or None for p in projects}
+        labels = {p["page_id"]: p.get("notion_project_code") or p["name"] or None for p in projects}
         records = []
         for o in self._read(self._client.jo_list, JoListInput())["job_orders"]:
-            project = o.get("project_id")
-            project = page_of.get(project, project)
+            project_pages = [page_of.get(i, i) for i in o.get("project_ids") or ()]
             fields: dict[str, object] = {
                 "Name": o.get("name") or "", "JO Number": o.get("number") or "", "Task": o.get("task") or "",
                 "Status": o.get("status"), "Department": o.get("department"),
                 "Blocker ": o.get("blocker") or "", "Health": o.get("health"),
                 "Date": _instant(o.get("date"), False), "Deadline": _instant(o.get("deadline"), True),
                 "Assigned": [{"id": i, "name": names.get(i)} for i in (to_page.get(a, a) for a in o.get("assigned_ids") or ())],
-                "Projects": [{"id": project, "name": labels.get(project)}] if project else [],
+                "Projects": [{"id": i, "name": labels.get(i)} for i in project_pages],
                 "last_edited_time": _notion_time(o.get("last_edited")),
             }
             records.append(JoRecord(o["page_id"], fields))
         return records
 
 
-def _note_filter(filter: dict | None) -> dict:
-    """The three filters the Minutes jobs send, as ``meeting-notes list`` inputs."""
-    if filter and filter.get("property") == "Name" and "equals" in (filter.get("title") or {}):
-        return {"title": filter["title"]["equals"]}
-    if filter and filter.get("property") == "Name" and "starts_with" in (filter.get("title") or {}):
-        return {"title_prefix": filter["title"]["starts_with"]}
-    if filter and "and" in filter:
-        return {"ready_to_send": True}
-    raise ValueError("unsupported Meeting Notes filter")
+def _note(n: dict) -> Note:
+    day = n.get("meeting_date")
+    return Note(
+        n["page_id"], n.get("name") or "", date.fromisoformat(day[:10]) if day else None, n.get("sent_at") or None,
+        bool(n.get("ready_to_send")), _notion_time(n.get("last_edited")),
+        tuple(zip(n.get("attendee_ids") or (), n.get("attendee_names") or ())),
+        tuple(_block(b) for b in n.get("body") or ()),
+    )
+
+
+def _block(b: dict) -> Block:
+    spans = tuple(Span(s["text"], bool(s.get("bold")), bool(s.get("code")), s.get("url"))
+                  for s in b.get("spans") or () if s["text"])
+    return Block(b["kind"], spans, tuple(_block(c) for c in b.get("children") or ()), bool(b.get("checked")))
 
 
 def _notion_time(value: str | None) -> str | None:
@@ -211,12 +216,16 @@ def _notion_time(value: str | None) -> str | None:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _date_field(value: str | None) -> dict | None:
-    if not value:
+def _day(value: str) -> str:
+    """A date as Notion writes it: a day as is, a time with milliseconds."""
+    return value if len(value) == 10 else datetime.fromisoformat(value).isoformat(timespec="milliseconds")
+
+
+def _date_field(start: str | None, end: str | None) -> dict | None:
+    if not start:
         return None
-    start = value if len(value) == 10 else datetime.fromisoformat(value).isoformat(timespec="milliseconds")
-    return {"start": start, "end": None}
+    return {"start": _day(start), "end": _day(end) if end else None}
 
 
 def _instant(value: str | None, as_deadline: bool) -> str | None:
-    return manila_instant(_date_field(value)["start"], as_deadline) if value else None
+    return manila_instant(_day(value), as_deadline) if value else None

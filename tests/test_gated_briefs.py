@@ -64,14 +64,14 @@ class Llm:
 def make_db(before, after):
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
-    run_snapshot(conn, FakeNotion(before, contacts()), PROJECTS, CONTACTS, "monday", MONDAY)
-    run_snapshot(conn, FakeNotion(after, contacts()), PROJECTS, CONTACTS, "friday", FRIDAY)
+    run_snapshot(conn, FakeNotion(before, contacts()), "monday", MONDAY)
+    run_snapshot(conn, FakeNotion(after, contacts()), "friday", FRIDAY)
     return conn
 
 
 def brief(conn, llm=None, logs=None):
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SATURDAY, gateway=gw, llm=llm,
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, gateway=gw, llm=llm,
               log=(logs.append if logs is not None else lambda _: None))
     return gw
 
@@ -179,7 +179,7 @@ def test_a_long_message_splits_between_projects_and_repeats_the_heading_as_cont(
 def test_the_first_brief_has_the_banner_and_no_changes():
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
-    run_snapshot(conn, FakeNotion([proj("p1", "ONE", stage="Online")], contacts()), PROJECTS, CONTACTS, "friday", FRIDAY)
+    run_snapshot(conn, FakeNotion([proj("p1", "ONE", stage="Online")], contacts()), "friday", FRIDAY)
 
     class ChangeLlm:
         def complete(self, system, user, schema):

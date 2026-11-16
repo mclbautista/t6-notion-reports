@@ -122,7 +122,7 @@ def test_the_lead_warning_window_is_configurable():
     page = proj("p1", "ONE", LEADS, **staffed(Playdate=date("2026-12-04")))  # 20 days away
     conn = make_db([page], [page])
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, lead_warning_days=10),
+    run_brief(conn, FakeNotion([], contacts()), replace(BRIEF, lead_warning_days=10),
               SATURDAY, gateway=gw, log=lambda _: None)
     assert "Playdate in" not in dm(gw)
     assert "Playdate in 20 days" in digest(brief(conn))

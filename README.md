@@ -59,18 +59,13 @@ its value. The SQLite file lives in `./data`, which the non-root container user 
 
 ### Reads through the t6 API
 
-With `T6_API_URL` and `T6_API_SECRET` in `.env`, Contacts, the Projects notices and Meeting Notes are read
-through the t6 API (the key needs the `unmasked` grant). Unset `T6_API_URL` to go back to Notion. Projects
-and Job Orders pages, and the Minutes writes, still use Notion.
+`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant). Every read of
+Contacts, Projects, Job Orders, Meeting Notes and the Projects notices goes through the t6 API; there is no
+Notion fallback. `NOTION_TOKEN` is still used for the Minutes writes only. `projects_data_source`,
+`contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
 
-Before a deploy, compare both paths on the live data. It sends nothing and writes both outputs to a folder on
-the host (they hold names; do not commit or share them):
-
-    docker compose run --rm notion-reports compare-api --config /app/config.yaml --out /app/data/compare
-
-It prints, for `projects`, `job_orders` and `brief`, whether the outputs are equal, the count of differing
-lines and the seconds each path took. Exit code 0 means all three are equal. Do not run it between a Friday
-snapshot and the Saturday brief. It works on copies of the database, never the live one.
+To compare two builds on the same data, run `shift-report --dry-print` and `brief --dry-print` with each image
+on a copy of the database and `diff` the texts.
 
 ### Tailnet and gateway networking
 
@@ -290,7 +285,6 @@ Three Job Orders reports go to their configured destinations every day (weekends
 05:00 night end of shift, 11:30 day mid shift, 19:00 day end of shift. At each slot the scheduler takes a
 Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
-    jo_data_source: "…"
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
     shift_destinations:              # at least one destination in total

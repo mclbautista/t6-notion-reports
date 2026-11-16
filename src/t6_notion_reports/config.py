@@ -28,7 +28,9 @@ SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
+# Read through the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
+IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source")
+KEYS = {"database_path", "meeting_notes_data_source"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -80,15 +82,13 @@ class ShiftSettings:
 
 @dataclass(frozen=True)
 class Config:
-    projects_data_source: str
-    contacts_data_source: str
     database_path: str
     notion_token: str
     brief: BriefSettings | None = None
-    jo_data_source: str | None = None  # Job Orders data source; needed by jo-snapshot
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
     matching: MatchSettings = MatchSettings()  # people matching (leave names); defaults match the watchdog
+    ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -108,16 +108,14 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         raise ConfigError(f"unknown config key: {key}")
 
     return Config(
-        projects_data_source=_notion_id(raw, "projects_data_source"),
-        contacts_data_source=_notion_id(raw, "contacts_data_source"),
         database_path=_string(raw, "database_path", default="data/psr.db"),
         notion_token=_secret(env, SECRET_ENV),
         brief=_brief(raw, env),
-        jo_data_source=_notion_id(raw, "jo_data_source") if "jo_data_source" in raw else None,
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
         matching=_matching(raw),
+        ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
     )
 
 
@@ -234,8 +232,6 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         if old in raw:
             raise ConfigError(f"config key {old} was replaced by shift_destinations")
     ops = _integer(raw, "ops_chat_id") if "ops_chat_id" in raw else None
-    if "jo_data_source" not in raw:
-        raise ConfigError("missing config key: jo_data_source (needed when shift_reports_enabled is true)")
     destinations = _shift_destinations(raw)
     if not any(destinations.values()):
         raise ConfigError("invalid config key: shift_destinations (needs at least one destination when shift_reports_enabled is true)")

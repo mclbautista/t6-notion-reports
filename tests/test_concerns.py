@@ -24,7 +24,7 @@ def props(concern=True):
 
 def run(conn, weeks=0, brief=BRIEF, **kw):
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, brief, SATURDAY + timedelta(weeks=weeks), gateway=gw, **kw)
+    run_brief(conn, FakeNotion([], contacts()), brief, SATURDAY + timedelta(weeks=weeks), gateway=gw, **kw)
     return gw
 
 
@@ -34,7 +34,7 @@ def setup(concern=True):
 
 
 def friday(conn, concern):
-    run_snapshot(conn, FakeNotion([proj("p1", "ONE", IN_PROGRESS, **props(concern))], contacts()), PROJECTS, CONTACTS,
+    run_snapshot(conn, FakeNotion([proj("p1", "ONE", IN_PROGRESS, **props(concern))], contacts()),
                  "friday", FRIDAY + timedelta(minutes=1))
 
 
@@ -119,7 +119,7 @@ def test_a_same_day_rerun_still_shows_the_resolved_line():
 def test_a_dry_run_shows_ages_but_stores_nothing():
     conn = setup()
     out = []
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SATURDAY, dry_print=True, out=out.append)
+    run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, dry_print=True, out=out.append)
     assert "since Nov 14" in "\n".join(out)
     assert conn.execute("SELECT COUNT(*) FROM concerns").fetchone()[0] == 0
 
@@ -137,7 +137,7 @@ def test_a_project_with_only_a_concern_counts_as_activity_for_the_quiet_coordina
 def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_show():
     conn = make_db([proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP))] * 1, [proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP))])
     run(conn, 0)
-    run_snapshot(conn, FakeNotion([proj("p1", "ONE", IN_PROGRESS, **staffed(**LATER))], contacts()), PROJECTS, CONTACTS,
+    run_snapshot(conn, FakeNotion([proj("p1", "ONE", IN_PROGRESS, **staffed(**LATER))], contacts()),
                  "friday", FRIDAY + timedelta(minutes=1))
     assert resolved_lines(dm(run(conn, 1)))
     assert not resolved_lines(dm(run(conn, 2)))
@@ -257,7 +257,7 @@ def test_notes_date_concern_lifecycle_reaches_coordinator_and_digest(unavailable
                 **staffed(**LISTED, Playdate=date("2026-11-30"),
                           **{"Submission Deadline": date(None)}),
                 **{"PM Notes": rich(NOTE_DATE_NOTES)})
-    run_snapshot(conn, FakeNotion([page], contacts()), PROJECTS, CONTACTS,
+    run_snapshot(conn, FakeNotion([page], contacts()),
                  "friday", FRIDAY + timedelta(weeks=4))
     check_open(run(conn, 4, llm=llm), 4)
     # Extraction confirms Dec 1 submission now follows Nov 30 playdate.
@@ -293,7 +293,7 @@ def test_filling_the_blank_property_settles_a_notes_date_concern_without_inferen
     page = proj("p1", "ONE", IN_PROGRESS,
                 **staffed(**LISTED, Playdate=date("2026-12-20"), **{"Submission Deadline": date(submission)}),
                 **{"PM Notes": rich(NOTE_DATE_NOTES)})
-    run_snapshot(conn, FakeNotion([page], contacts()), PROJECTS, CONTACTS, "friday", FRIDAY + timedelta(minutes=1))
+    run_snapshot(conn, FakeNotion([page], contacts()), "friday", FRIDAY + timedelta(minutes=1))
     gateway = run(conn, 1, llm=FailingLlm() if unavailable == "failure" else None)
     for text in (dm(gateway), digest(gateway)):
         (resolved,) = resolved_lines(text)

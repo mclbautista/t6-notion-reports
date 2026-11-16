@@ -9,16 +9,15 @@ from typing import Callable, Mapping, Sequence
 
 from .config import Destination
 from .gateway import GatewayError
-from .jo_snapshot_job import Notion, run_jo_snapshot
+from .jo_snapshot_job import run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, load_latest
-from .contacts import load_contacts
 from .llm import LlmClient
 from .redact import Redactor
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
 
-# Notion unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
+# The t6 API unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
 # are at least six hours apart, so a retrying slot is always done before the next one is due.
 RETRY_FOR = timedelta(minutes=30)
 RETRY_EVERY = timedelta(minutes=1)
@@ -112,10 +111,7 @@ def shift_keys(now: datetime, slot: str, parts: int, dest: Destination) -> list[
 
 def run_shift_report(
     conn: sqlite3.Connection,
-    notion: Notion,
-    jo_ds: str,
-    contacts_ds: str,
-    projects_ds: str,
+    notion,
     slot: str,
     now: datetime,
     banner: bool = False,
@@ -141,14 +137,14 @@ def run_shift_report(
     before rendering, with a cache. With neither, a Task shows its first three words.
     """
     if target is None:
-        run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
+        run_jo_snapshot(conn, notion, slot, now)
     else:
-        _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now, target, log, clock, sleep)
+        _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep)
     current = load_latest(conn)
     older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
     stats = SummaryStats()
     if summarizer is None and llm is not None:
-        summarizer = _llm_summarizer(notion, contacts_ds, current, llm)
+        summarizer = _llm_summarizer(notion, current, llm)
     if summarizer is not None:
         tasks = {p: f.get("Task") for p, f in current.pages.items() if is_active(f)}
         summarizer, stats = summarize_tasks(conn, summarizer, tasks, now)
@@ -236,26 +232,26 @@ def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence
     return DestinationResult(dest, tuple(refs), False)
 
 
-def _llm_summarizer(notion: Notion, contacts_ds: str, current: JoSnapshot, llm: LlmClient) -> TaskSummarizer | None:
+def _llm_summarizer(notion, current: JoSnapshot, llm: LlmClient) -> TaskSummarizer | None:
     """Haiku behind the name masker: Contacts people and the projects on the Job Orders are hidden.
     If the masker cannot be built there is no summarizer, so nothing unmasked is ever sent."""
     try:
         labels = {r["id"]: r["name"] for f in current.pages.values() for r in f.get("Projects") or [] if r.get("name")}
         states = {pid: {"Name": name, "Project Code": name} for pid, name in labels.items()}
-        redactor = Redactor.build(load_contacts(notion, contacts_ds).values(), [states])
+        redactor = Redactor.build(notion.read_contacts().values(), [states])
     except Exception:
         return None
     return LlmTaskSummarizer(llm, redactor)
 
 
-def _snapshot_with_retry(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now, target, log, clock, sleep) -> None:
+def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep) -> None:
     """Read Notion until it answers or ``RETRY_FOR`` is up. Only transport errors count as an outage."""
     give_up = clock() + RETRY_FOR
     attempts = 0
     while True:
         attempts += 1
         try:
-            run_jo_snapshot(conn, notion, jo_ds, contacts_ds, projects_ds, slot, now)
+            run_jo_snapshot(conn, notion, slot, now)
             return
         except OSError as exc:  # URLError, HTTPError and timeouts; type only, messages may hold data
             error = type(exc).__name__

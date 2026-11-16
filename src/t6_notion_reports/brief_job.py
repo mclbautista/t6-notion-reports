@@ -11,7 +11,7 @@ from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, dige
 from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
-from .contacts import Contact, load_contacts
+from .contacts import Contact
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .flags import project_flags, stored_decides
 from .gateway import GatewayError
@@ -46,7 +46,6 @@ class BriefResult:
 def run_brief(
     conn: sqlite3.Connection,
     notion,
-    contacts_ds: str,
     brief: BriefSettings,
     now: datetime,
     gateway=None,
@@ -56,7 +55,6 @@ def run_brief(
     log: Callable[[str], None] = print,
     meeting_notes_ds: str | None = None,
     show_llm_input: bool = False,
-    projects_ds: str | None = None,
     matching: MatchSettings = MatchSettings(),
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
@@ -65,7 +63,7 @@ def run_brief(
     Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
     in full and makes no call at all, so what would leave the machine can be read first.
 
-    With ``llm`` and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
+    With ``llm``, one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
     Names nobody matched, and a failed parse, are noted in Cyril's digest only.
     """
@@ -97,13 +95,13 @@ def run_brief(
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
     outcomes: dict[str, Outcome] = {}
-    contacts = load_contacts(notion, contacts_ds)  # read once: the redaction, the leaves and the messages
+    contacts = notion.read_contacts()  # read once: the redaction, the leaves and the messages
     if llm is not None or show_llm_input:
         windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
         minutes = None
         if meeting_notes_ds:
             try:
-                minutes = load_minutes(notion, meeting_notes_ds, today)
+                minutes = load_minutes(notion, today)
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
         # Contacts people, other projects and ids are redacted from free text before it is sent.
@@ -120,9 +118,9 @@ def run_brief(
             elif llm is not None:
                 outcomes[page_id] = consolidate(llm, payloads[page_id], today)
     leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
-    if (llm is not None or show_llm_input) and projects_ds:
+    if llm is not None or show_llm_input:
         leaves = leave_concerns(
-            notion, projects_ds, llm, today, new_state, contacts,
+            notion, llm, today, new_state, contacts,
             brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
@@ -216,7 +214,7 @@ class Leaves:
 
 
 def leave_concerns(
-    notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log,
+    notion, llm, today, states, contacts, clash_days, matching, show_input, out, log,
     redactor: Redactor = Redactor(),
 ) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
@@ -226,7 +224,7 @@ def leave_concerns(
     and leaves the stored leave Concerns open.
     """
     try:
-        description = notion.retrieve_data_source(projects_ds).get("description") or []
+        description = notion.notices().runs
     except Exception as exc:  # type only: never the response
         log(f"brief leaves unavailable error={type(exc).__name__}")
         return Leaves(notes=() if show_input else (UNAVAILABLE_NOTE,), available=False)

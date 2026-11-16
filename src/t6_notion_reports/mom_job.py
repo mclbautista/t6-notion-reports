@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable
 
-from .contacts import load_contacts
 from .holidays import upcoming_entries
 from .llm import LlmClient
 from .mom import build_draft, condense_draft, render_blocks
@@ -34,7 +33,7 @@ def title_for(meeting_date: date) -> str:
 
 
 def run_draft_mom(
-    conn: sqlite3.Connection, notion, projects_ds: str, contacts_ds: str, meeting_notes_ds: str,
+    conn: sqlite3.Connection, notion, meeting_notes_ds: str,
     meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
 ) -> MomResult:
     pair = mom_diff_pair(conn, meeting_date)
@@ -44,10 +43,8 @@ def run_draft_mom(
     old_id, new_id = pair
     title = title_for(meeting_date)
 
-    existing = [p for p in notion.query_data_source(
-        meeting_notes_ds, filter={"property": "Name", "title": {"equals": title}})
-        if _title(p) == title and not p.get("in_trash")]
-    if any(_sent_at(p) for p in existing):
+    existing = [n for n in notion.meeting_notes(title=title, include_body=False) if n.title == title]
+    if any(n.sent_at for n in existing):
         raise MomAlreadySent(f"{title} was already sent; not overwriting")
 
     old_on = _local_date(snapshot_info(conn, old_id).taken_at)
@@ -55,15 +52,14 @@ def run_draft_mom(
     new_state = load_snapshot(conn, new_id)
     old_state = load_snapshot(conn, old_id)
     draft = build_draft(old_state, new_state, old_on, new_on, meeting_date)
-    all_contacts = load_contacts(notion, contacts_ds)
+    all_contacts = notion.read_contacts()
     condensed = raw = 0
     if llm is not None:
         condensed, raw = condense_draft(draft, llm, new_state, Redactor.build(all_contacts.values(), (old_state, new_state)))
 
-    description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
-    others = upcoming_entries(description, meeting_date)
+    others = upcoming_entries(notion.notices().description, meeting_date)
 
-    people = _people(_previous_draft(notion, meeting_notes_ds, meeting_date))
+    people = _people(_previous_draft(notion, meeting_date))
     contacts = {c.name.lower(): c for c in all_contacts.values()}
     mentions = []
     for p in people:
@@ -83,40 +79,20 @@ def run_draft_mom(
         notion.append_children(page["id"], blocks[i:i + CHUNK])
     # A re-run replaces the unsent draft, but only once the new page exists.
     for old_page in existing:
-        notion.update_page(old_page["id"], {"in_trash": True})
+        notion.update_page(old_page.page_id, {"in_trash": True})
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
     return MomResult(page["id"], len(draft.entries), len(draft.unchanged))
 
 
-def _previous_draft(notion, meeting_notes_ds: str, before: date) -> dict | None:
-    pages = notion.query_data_source(
-        meeting_notes_ds, filter={"property": "Name", "title": {"starts_with": TITLE_PREFIX}})
-    dated = []
-    for p in pages:
-        start = ((p["properties"].get("Meeting Date") or {}).get("date") or {}).get("start")
-        if start and _title(p).startswith(TITLE_PREFIX) and not p.get("in_trash") and date.fromisoformat(start[:10]) < before:
-            dated.append((start[:10], p))
-    return max(dated, key=lambda t: t[0])[1] if dated else None
+def _previous_draft(notion, before: date):
+    pages = [n for n in notion.meeting_notes(title_prefix=TITLE_PREFIX, include_body=False)
+             if n.title.startswith(TITLE_PREFIX) and n.meeting_day and n.meeting_day < before]
+    return max(pages, key=lambda n: n.meeting_day) if pages else None
 
 
-def _people(page: dict | None) -> list[dict]:
-    if not page:
-        return []
-    return list((page["properties"].get("Team Attendees") or {}).get("people") or [])
-
-
-def _title(page: dict) -> str:
-    prop = page["properties"].get("Name") or {}
-    return "".join(t.get("plain_text", "") for t in prop.get("title") or [])
-
-
-def _sent_at(page: dict) -> bool:
-    return bool(((page["properties"].get("Sent at") or {}).get("date") or {}).get("start"))
-
-
-def _plain(rich: list[dict]) -> str:
-    return "".join(t.get("plain_text", "") for t in rich)
+def _people(note) -> list[dict]:
+    return [] if note is None else [{"id": i, "name": n} for i, n in note.attendees]
 
 
 def _local_date(taken_at: str) -> date:

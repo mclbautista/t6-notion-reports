@@ -41,8 +41,8 @@ def pages(monday):
 def conn():
     c = sqlite3.connect(":memory:")
     c.executescript(SCHEMA)
-    run_snapshot(c, FakeNotion(pages(False), []), PROJECTS, CONTACTS, "friday", FRIDAY)
-    run_snapshot(c, FakeNotion(pages(True), []), PROJECTS, CONTACTS, "monday", MONDAY)
+    run_snapshot(c, FakeNotion(pages(False), []), "friday", FRIDAY)
+    run_snapshot(c, FakeNotion(pages(True), []), "monday", MONDAY)
     return c
 
 
@@ -54,7 +54,7 @@ def contacts():
 
 def draft(conn, **kw):
     n = FakeNotion(pages(True), contacts(), kw.pop("meetings", []), kw.pop("description", ""))
-    res = run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, kw.pop("day", D), log=lambda _: None)
+    res = run_draft_mom(conn, n, MEETING, kw.pop("day", D), log=lambda _: None)
     return n, res
 
 
@@ -161,10 +161,10 @@ def test_header_present(conn):
 
 def test_long_pages_are_chunked_to_100_blocks(conn):
     many = [project(f"x{i}", f"X{i}", f"X{i:03d}") for i in range(130)]
-    run_snapshot(conn, FakeNotion(many, []), PROJECTS, CONTACTS, "friday", FRIDAY + timedelta(hours=1))
-    run_snapshot(conn, FakeNotion(many, []), PROJECTS, CONTACTS, "monday", MONDAY + timedelta(days=7))
+    run_snapshot(conn, FakeNotion(many, []), "friday", FRIDAY + timedelta(hours=1))
+    run_snapshot(conn, FakeNotion(many, []), "monday", MONDAY + timedelta(days=7))
     n = FakeNotion(many, contacts())
-    run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, date(2026, 11, 23), log=lambda _: None)
+    run_draft_mom(conn, n, MEETING, date(2026, 11, 23), log=lambda _: None)
     assert len(n.created[0]["children"]) == 100 and n.appended
 
 
@@ -174,7 +174,7 @@ def test_refuses_to_overwrite_sent_page(conn):
     sent = meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16", sent_at="2026-11-16T05:00:00Z")
     n = FakeNotion(pages(True), contacts(), [sent])
     with pytest.raises(MomAlreadySent):
-        run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
+        run_draft_mom(conn, n, MEETING, D, log=lambda _: None)
     assert not n.created and not n.trashed
 
 
@@ -187,9 +187,9 @@ def test_rerun_replaces_unsent_draft(conn):
 def test_no_pair_yet_creates_nothing():
     c = sqlite3.connect(":memory:")
     c.executescript(SCHEMA)
-    run_snapshot(c, FakeNotion(pages(True), []), PROJECTS, CONTACTS, "monday", MONDAY)
+    run_snapshot(c, FakeNotion(pages(True), []), "monday", MONDAY)
     n = FakeNotion(pages(True), contacts())
-    assert run_draft_mom(c, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None).page_id is None
+    assert run_draft_mom(c, n, MEETING, D, log=lambda _: None).page_id is None
     assert not n.created
 
 
@@ -227,8 +227,8 @@ def file_db(tmp_path):
     path = tmp_path / "psr.db"
     c = sqlite3.connect(path)
     c.executescript(SCHEMA)
-    run_snapshot(c, FakeNotion(pages(False), []), PROJECTS, CONTACTS, "friday", FRIDAY)
-    run_snapshot(c, FakeNotion(pages(True), []), PROJECTS, CONTACTS, "monday", MONDAY)
+    run_snapshot(c, FakeNotion(pages(False), []), "friday", FRIDAY)
+    run_snapshot(c, FakeNotion(pages(True), []), "monday", MONDAY)
     c.close()
     return path
 
@@ -293,5 +293,5 @@ def test_failed_create_keeps_the_old_unsent_draft(conn):
     n = FakeNotion(pages(True), contacts(), [old])
     n.create_page = lambda *a: (_ for _ in ()).throw(RuntimeError("notion down"))
     with pytest.raises(RuntimeError):
-        run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
+        run_draft_mom(conn, n, MEETING, D, log=lambda _: None)
     assert n.trashed == []
