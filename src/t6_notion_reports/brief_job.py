@@ -9,12 +9,13 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
+from .concern_api import ConcernApiError, observe
+from .concerns import AgedConcerns, aged_from_reply
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
-from .flags import ProjectFlags, project_flags, stored_decides
+from .flags import ProjectFlags, project_flags
 from .gateway import GatewayError
 from .holidays import leave_lines
 from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
@@ -27,6 +28,7 @@ from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
 )
 from .status_gate import gate, is_archiving, looks_like_in_progress
+from .t6_api import ApiUnavailable
 
 
 class BriefFailed(Exception):
@@ -34,6 +36,10 @@ class BriefFailed(Exception):
 
 
 CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
+
+# The sources of a finding, as ``concern observe`` names them.
+FLAG_RULE, PM_NOTES_READ, LEAVE = "flag_rule", "pm_notes_read", "leave"
+HISTORY_UNAVAILABLE_NOTE = "⚠️ Concern history unavailable"
 
 
 @dataclass(frozen=True)
@@ -130,7 +136,7 @@ def run_brief(
                     outcomes[page_id] = consolidate(llm, payloads[page_id], today)
         if skipped:
             log(f"brief llm budget_exhausted={skipped}")
-    leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
+    leaves = Leaves(available=False)  # no leave call: nothing says an open leave Concern went away
     if leaves_llm is not None or show_llm_input:
         leaves = leave_concerns(
             notion, leaves_llm, today, new_state,
@@ -149,30 +155,22 @@ def run_brief(
     unavailable: set[tuple[str, str]] = set()
     for p, f in flagged.items():
         o = outcomes.get(p)
-        if p in flags_failed:
-            unavailable.update({(p, FLAGS), (p, FLAGS_NOTES)})  # no flags were read: nothing says they went away
-        # Code-made Concerns are recomputed every run. A source that could not be read (a failed or
-        # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
+        # A source that could not be read (a failed or skipped project call, a flags call, unavailable leaves) is
+        # sent as unavailable: the API keeps its open Concerns, nothing says they went away.
         if o is None or o.failed:
-            unavailable.add((p, LLM))
-            unavailable.add((p, FLAGS_NOTES))  # the dates from the notes are unknown, not gone
+            unavailable.add((p, PM_NOTES_READ))
+        if p in flags_failed:
+            unavailable.update({(p, FLAG_RULE), (p, PM_NOTES_READ)})
         if not leaves.available:
             unavailable.add((p, LEAVE))
         current[p] = (
-            *((t, FLAGS_NOTES if t in f.from_notes else FLAGS) for t in f.concerns),
-            *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
+            *((t, PM_NOTES_READ if t in f.from_notes else FLAG_RULE) for t in f.concerns),
+            *((t, PM_NOTES_READ) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
-    # A notes-dependent Concern whose dates are all stored now needs no inference: it is in ``current`` or fixed.
-    aged = update_concerns(
-        conn, current, today, brief.concern_chronic_weeks, unavailable,
-        lambda p, text: p in new_state and stored_decides(new_state[p], text),
+    aged, history = observe_concerns(
+        notion, current, unavailable, today, dry_print or gateway is None, new_state, rules, log,
     )
-    # A dry run shows the ages and the resolved line but leaves the store as it was.
-    if dry_print or gateway is None:
-        conn.rollback()
-    else:
-        conn.commit()
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
@@ -190,7 +188,8 @@ def run_brief(
         ch.group = gate(rules.get(ch.page_id))
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state, rules), first=first, notes=list(leaves.notes),
+        llm_failed, active_coordinators_in(new_state, rules), first=first,
+        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,))],
         cyril_notes=list(leaves.cyril_notes),
     )
     no_digest = digest_missing(settings)
@@ -219,6 +218,36 @@ def run_brief(
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
 
 
+def observe_concerns(
+    notion, current, unavailable, today, dry_run, state, rules, log,
+) -> tuple[dict[str, AgedConcerns], bool]:
+    """Hand the run's findings to the API (``concern observe``) and render what it answers.
+
+    ``current`` maps a project page id to its (text, source) findings; ``unavailable`` holds the (page id, source) pairs
+    that could not be read. The owner of a finding is the project's one coordinator, when the API knows that person.
+    Returns each project's aged Concerns and whether the history was available. If the API does not answer the brief
+    is not held: each project shows this run's findings without age, and the second value is False. Only the rule
+    name is logged.
+    """
+    send = lambda p: rules[p].t6_id or p  # the API takes a T6 ID or a page id
+    try:
+        people = notion.t6_person_ids()
+        findings = []
+        for page_id, items in current.items():
+            coordinators = [r["id"] for r in state[page_id].get("T6 Post Coordinator") or [] if isinstance(r, dict)]
+            owner = people.get(coordinators[0]) if len(coordinators) == 1 else None
+            findings += [(send(page_id), text, source, owner) for text, source in items]
+        reply = observe(
+            notion.client, today.isoformat(), findings, {(send(p), s) for p, s in unavailable}, dry_run,
+        )
+    except OSError as exc:  # the rule name of a refusal; for any other error its type only, messages may hold data
+        log(f"brief concerns unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+        return {p: AgedConcerns(tuple(dict.fromkeys(t for t, _ in items))) for p, items in current.items() if items}, False
+    counts = reply["counts"]
+    log("brief concerns " + " ".join(f"{name}={counts[name]}" for name in ("new", "known", "not_seen", "skipped")))
+    return aged_from_reply(reply, {send(p): p for p in current}), True
+
+
 @dataclass(frozen=True)
 class Leaves:
     """What the leave step gives the brief. ``available``: the leaves were read, so a leave Concern
@@ -237,7 +266,7 @@ def leave_concerns(
 
     No leave lines under the heading means no call and nothing to clash. A failed call, an unreadable
     description or a missing heading gives no clash Concerns this run, says leaves were unavailable,
-    and leaves the stored leave Concerns open.
+    and sends the leave source as unavailable, so the API keeps its open leave Concerns.
     """
     try:
         description = notion.notices().runs
@@ -259,7 +288,7 @@ def leave_concerns(
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
     try:
         found = leave_clashes(result.entries, notion, states, today, clash_days)
-    except OSError as exc:  # the API did not answer: type only. No clash Concerns, the stored ones stay open.
+    except OSError as exc:  # the API did not answer: type only. No clash Concerns, and the leave source is sent as unavailable.
         log(f"brief leaves unavailable error={type(exc).__name__}")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
     unmatched = (UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ()

@@ -2,7 +2,7 @@
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import timedelta, datetime, timezone
 
 from fake_notion import FakeNotion, contact, date, relation, rich
 from t6_notion_reports.brief_job import run_brief
@@ -339,14 +339,20 @@ def test_only_the_leaves_section_is_sent_and_a_later_heading_ends_it():
         assert llm.payloads[0]["lines"] == REAL_LEAVES, description
 
 
-def test_a_clash_concern_ages_through_the_store_and_resolves_when_the_leave_goes():
+def test_a_clash_concern_is_a_leave_finding_that_ages_through_the_api_and_stays_when_the_leave_goes():
     conn, notion = build([team_project()])
     brief(conn, notion, LeaveLlm(STANDARD))
+    assert {f.source for f in notion.api.concerns.observed[-1].findings} == {"leave"}
     first = brief(conn, notion, LeaveLlm(STANDARD))  # same day: no change
     assert dm(first[0]).count("since Nov 14") == 1
     notion.description = HEADING
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Resolved last week: Nia Varnel is on leave" in dm(gw)
+    assert "within 14 days of the Playdate (Nov 28, 2026) · since Nov 14 (0 wks) · not seen this week" in dm(gw)
+    notion.api.concerns.close("on leave", "2026-11-16")  # a person closes it
+    next_week, logs = Gateway(), []
+    run_brief(conn, notion, BRIEF, SATURDAY + timedelta(weeks=1), gateway=next_week, llm=None,
+              leaves_llm=leave_adapter(LeaveLlm(STANDARD)), log=logs.append)
+    assert "Resolved last week: Nia Varnel is on leave" in dm(next_week)
 
 
 def test_a_standby_project_is_still_checked_for_its_dates():
@@ -364,10 +370,11 @@ def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
     assert any("llm input: leaves" in text and "Nia - leave Nov 20-22" in text for text in out)
 
 
-def test_a_failed_leave_parse_keeps_the_open_clash_concern_instead_of_resolving_it():
+def test_a_failed_leave_parse_sends_the_leave_source_as_unavailable_and_the_open_clash_concern_stays():
     conn, notion = build([team_project()])
     brief(conn, notion, LeaveLlm(STANDARD))
     gw, _ = brief(conn, notion, LeaveLlm(fail=True))
+    assert ("p1", "leave") in {(u.project, u.source) for u in notion.api.concerns.observed[-1].unavailable}
     text = dm(gw)
     assert "Nia Varnel is on leave Nov 20–22" in text and "Resolved last week" not in text
     assert "Leaves unavailable" in digest(gw)

@@ -55,16 +55,6 @@ CREATE TABLE IF NOT EXISTS project_state (
     value_json  TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, page_id, field)
 );
-CREATE TABLE IF NOT EXISTS concerns (
-    page_id     TEXT NOT NULL,
-    key         TEXT NOT NULL,
-    text        TEXT NOT NULL,
-    first_on    TEXT NOT NULL,
-    last_on     TEXT NOT NULL,
-    resolved_on TEXT,
-    source      TEXT NOT NULL DEFAULT 'llm',  -- flags | llm | leave: what produced it (concerns.py)
-    PRIMARY KEY (page_id, key)
-);
 """
 
 

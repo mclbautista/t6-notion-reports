@@ -152,6 +152,10 @@ class ApiNotion:
                 found.append(Person(m["page_id"], m.get("t6_id"), m["name"]) if m and not r.get("needs_review") else None)
         return found
 
+    def t6_person_ids(self) -> dict[str, str]:
+        """Contacts page id -> T6 Person ID, for the Contacts the API has bound to a Person."""
+        return {p["page_id"]: p["t6_id"] for p in self._people() if p.get("t6_id")}
+
     def contact_names(self) -> dict[str, str | None]:
         return {p["page_id"]: p.get("name") for p in self._people()}
 
@@ -248,7 +252,7 @@ class ApiNotion:
 
 def _project_rules(p: dict) -> ProjectRules:
     return ProjectRules(
-        p["status_key"], p.get("status_group"), bool(p["snapshotted"]),
+        p.get("t6_id"), p["status_key"], p.get("status_group"), bool(p["snapshotted"]),
         tuple(PROPERTY_OF[a] for a in p.get("missing_roles") or ()),
         tuple(PROPERTY_OF[a] for a in p.get("relevant_dates") or ()),
     )

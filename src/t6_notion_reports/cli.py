@@ -20,6 +20,7 @@ from .brief_job import BriefFailed, run_brief
 from .llm_api import LLM_TIMEOUT, ApiLlm, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
+from .concern_switch import BACKUP_SUFFIX, switch_concerns
 from .gateway import GatewayClient, GatewayError
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
@@ -57,6 +58,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     mom.add_argument("--db", help="default: database_path from --config")
     mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
     mom.add_argument("--dry-print", action="store_true", help="condense and print the bullets per project, write nothing to Notion")
+    switch = sub.add_parser("switch-concerns", help="once, before the first brief that uses the API: back up the database, drop the old Concern table")
+    switch.add_argument("--config", default="config.yaml")
+    switch.add_argument("--db", help="default: database_path from --config")
     send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
     send.add_argument("--config", default="config.yaml")
     send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
@@ -86,6 +90,9 @@ def _run(args, parser, notion, now) -> int:
 
     if args.command == "send-ready-mom":
         return _send_ready_mom(args, notion, now)
+
+    if args.command == "switch-concerns":
+        return _switch_concerns(args)
 
     if args.command == "serve":
         cfg = _load(args.config)
@@ -252,6 +259,20 @@ def _brief(args, notion, now) -> int:
         return 1
     finally:
         conn.close()
+    return 0
+
+
+def _switch_concerns(args) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    db = args.db or cfg.database_path
+    try:
+        rows = switch_concerns(db)
+    except OSError as exc:  # the backup could not be made, or is already there: nothing was dropped
+        print(f"switch-concerns stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"switch-concerns backup={db}{BACKUP_SUFFIX} rows_dropped={rows}", flush=True)  # counts only
     return 0
 
 

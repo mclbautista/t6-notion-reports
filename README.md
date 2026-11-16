@@ -218,20 +218,31 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   cited lines may supply comparison facts; health comparisons may also use `project_health`. Other
   Concern kinds and changes remain scoped to their primary line. ISO dates may be paraphrased with month
   names while preserving their written year. These checks enforce evidence provenance, not the semantic
-  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
-  the Concern store. A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
+  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go to the API
+  (`concern observe`, below). A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
   update; otherwise Notion's last-edited time does.
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",
-  the failure is logged (project id only) and the digest names it; its open Concerns carry over. With `llm_enabled: false`
+  the failure is logged (project id only) and the digest names it; its open Concerns stay open in the API. With `llm_enabled: false`
   (or no `T6_API_URL`) a real send marks every project "(LLM unavailable)"; `--dry-print` leaves the LLM out.
 - Leave clashes: once per run, one more LLM call parses the Projects database's "Upcoming Holidays and Leaves"
   lines (it gets those lines and today's date, nothing about projects) into entries with exact quotes; an entry
   with a quote that is not a line, or invalid dates, is dropped. Each leave's name is matched to Contacts
   by the t6 API (`person find`, one call for all the names; a match that needs review counts as unmatched). A leave by someone in the project's team relations (including Prod Coor/Supe)
   within `leave_clash_days` (default 14) of its Playdate, Submission Deadline or Archival Deadline becomes one
-  Concern, aged through the Concern store. Holidays and office closures never clash. Names nobody matched are
+  Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
   listed in Cyril's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
+- Concerns: reports keeps no Concern store. The brief hands the run's findings (the date flags and sanity problems,
+  the Concerns of each project's LLM call, the leave clashes) to the API with `concern observe` and shows what
+  comes back: every open Concern of each project, oldest first, with `since <Mon D> (<n> wks)`, the `🔁 chronic`
+  mark (the API decides, after 28 days) and "not seen this week" when this run's findings lack it, and "Resolved
+  last week" for what was closed since the previous brief. The weekly run closes nothing: a person, a settling
+  event or expiry does. A source that could not be read is sent as unavailable, so its open Concerns stay. If
+  the API does not answer, the lines show without age and the digest says "Concern history unavailable".
+  `concern_chronic_weeks` in an old `config.yaml` is ignored (logged at boot). Once, before the first brief that
+  uses the API, run `python -m t6_notion_reports switch-concerns --config config.yaml`: it copies the database
+  file to `<file>.pre-concerns-switch` and drops the old Concern table; the old Concerns are not moved. Rollback:
+  put the previous image tag back and copy that file over the database file.
 - `brief --dry-print --show-llm-input` prints every payload as the app builds it and calls no LLM. The API masks the
   names, so it is not the text the model sees.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).

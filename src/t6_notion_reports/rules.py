@@ -13,6 +13,7 @@ from dataclasses import dataclass
 class ProjectRules:
     """What ``project list`` says of one Project."""
 
+    t6_id: str | None  # the Project's T6 ID, where the API has bound one
     status_key: str  # the Status without emoji and punctuation, lower case ("in-progress")
     status_group: str | None  # "in_progress", "on_hold", "incoming"; None: outside the gate
     snapshotted: bool  # False for Archived and Lost

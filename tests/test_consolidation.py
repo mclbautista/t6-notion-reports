@@ -246,21 +246,26 @@ def test_health_vs_evidence_is_dropped_when_project_health_is_blank():
     assert "Waiting on client notes" in dm(run(one("AT RISK"), Llm(reply_with(concerns=concerns)))[0])
 
 
-def test_llm_concerns_age_through_the_concern_store():
+def test_llm_concerns_age_through_the_api_and_stay_until_a_person_closes_them():
+    from fake_api import FakeConcerns
     pending_notes = NOTES.replace("waiting for client notes", "pending client notes")
     concerns = lambda p: [{"kind": "open_item", "text": "Client notes are still pending", "source": "pm_notes",
                            "line_id": line_id(p, "pending client"), "quote": "• QC on Nov 20, pending client notes"}]
-    conn = conn_one(pending_notes)
-    run(conn, Llm(reply_with(concerns=concerns)))
-    later = datetime(2026, 11, 28, 4, tzinfo=timezone.utc)
-    gw = Gateway()
-    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, later, gateway=gw,
-              llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
-    assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(gw)
-    gw = Gateway()
-    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
-              gateway=gw, llm=Llm(), log=lambda _: None)
-    assert "Resolved last week: Client notes are still pending" in dm(gw)
+    conn, store = conn_one(pending_notes), FakeConcerns()
+
+    def brief_on(when, llm):
+        gw = Gateway()
+        run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, when, gateway=gw, llm=llm, log=lambda _: None)
+        return gw
+
+    brief_on(SATURDAY, Llm(reply_with(concerns=concerns)))
+    assert "pm_notes_read" == store.observed[-1].findings[0].source
+    later = brief_on(datetime(2026, 11, 28, 4, tzinfo=timezone.utc), Llm(reply_with(concerns=concerns)))
+    assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(later)
+    gone = dm(brief_on(datetime(2026, 12, 5, 4, tzinfo=timezone.utc), Llm()))  # the run no longer finds it
+    assert "Client notes are still pending · since Nov 14 (3 wks) · not seen this week" in gone
+    store.close("Client notes", "2026-12-08")
+    assert "Resolved last week: Client notes are still pending" in dm(brief_on(datetime(2026, 12, 12, 4, tzinfo=timezone.utc), Llm()))
 
 
 # ---- last update ----------------------------------------------------------------------------
@@ -367,14 +372,18 @@ def test_invalid_json_counts_as_a_failure():
     assert "(LLM unavailable)" in dm(gw)
 
 
-def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
+def test_a_failed_call_sends_the_notes_source_as_unavailable_and_the_open_concern_stays():
+    from fake_api import FakeConcerns
     concerns = lambda p: [{"kind": "open_item", "text": "Client notes are still pending", "source": "pm_notes",
                            "line_id": line_id(p, "waiting for client"), "quote": "• QC on Nov 20, waiting for client notes"}]
-    conn = conn_one()
-    run(conn, Llm(reply_with(concerns=concerns)))
+    conn, store = conn_one(), FakeConcerns()
     gw = Gateway()
-    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, SATURDAY, gateway=gw,
+              llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
+    gw = Gateway()
+    run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(fail_for={"Show ONE"}), log=lambda _: None)
+    assert ("p1", "pm_notes_read") in {(u.project, u.source) for u in store.observed[-1].unavailable}
     text = dm(gw)
     assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved last week" not in text
 

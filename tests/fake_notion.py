@@ -118,7 +118,8 @@ def _page(page_id, state):
 
 
 class FakeNotion:
-    def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=()):
+    def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=(), concerns=None):
+        self.concerns = concerns  # a FakeConcerns shared across runs; None: a new, empty store
         self.job_orders = list(job_orders)
         self.projects = list(projects)
         self.contacts = list(contacts)
@@ -151,6 +152,9 @@ class FakeNotion:
 
     def read_contacts(self):
         return self._reads().read_contacts()
+
+    def t6_person_ids(self):
+        return self._reads().t6_person_ids()
 
     def contact_names(self):
         return self._reads().contact_names()

@@ -75,6 +75,75 @@ _ROLE_PROPERTY = {
 ROLES = tuple(_ROLE_PROPERTY.values())  # the required roles, as Project property names
 
 
+class FakeConcerns:
+    """The Concern store of the API, with the meaning of ``concern observe``: a finding is new or known; an open Concern
+    the findings lack is "not seen" and stays open (the weekly run closes nothing). A person closes with ``close``.
+    Give one store to several FakeNotion instances to keep the history across runs."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+        self.runs: list[str] = []
+        self.requests: dict[str, tuple[str, dict]] = {}
+        self.observed: list[object] = []  # the inputs of each call, dry runs included
+
+    def close(self, text_part, on):
+        """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
+        for item in self.open(text_part):
+            item["state"], item["closed_on"] = "closed", on
+
+    def go_quiet(self, text_part):
+        for item in self.open(text_part):
+            item["state"] = "quiet"
+
+    def open(self, text_part=""):
+        return [i for i in self.items if i["state"] != "closed" and text_part in i["text"]]
+
+    def observe(self, inputs, ref):
+        self.observed.append(inputs)
+        raw = inputs.model_dump(exclude={"dry_run"})
+        if not inputs.dry_run and inputs.idempotency_key in self.requests:
+            fingerprint, result = self.requests[inputs.idempotency_key]
+            if fingerprint == repr(raw):
+                return Done(result=result)
+            return Refused(rule="idempotency_key", reason="Idempotency key was used for a different request")
+        items = [dict(i) for i in self.items] if inputs.dry_run else self.items
+        seen, counts = set(), {"new": 0, "known": 0, "not_seen": 0, "unavailable": 0, "skipped": 0, "projects_with_both": 0, "closed": 0}
+        for f in inputs.findings:
+            project = ref(f.project)
+            key = " ".join(f.text.split()).casefold()
+            found = next((i for i in items if i["project"] == project and i["key"] == key and i["state"] != "closed"), None)
+            if found is None:
+                found = {"id": f"t6c_{len(items) + 1}", "project": project, "key": key, "text": f.text, "source": f.source,
+                         "opened_on": inputs.run_date, "state": "open", "closed_on": None, "owner": f.owner}
+                items.append(found)
+                counts["new"] += 1
+            else:
+                found["state"] = "open"
+                counts["known"] += 1
+            seen.add(found["id"])
+        missing = {(ref(u.project), u.source) for u in inputs.unavailable}
+        for i in items:
+            if i["state"] != "closed" and i["id"] not in seen and i["source"] in ("flag_rule", "pm_notes_read", "leave"):
+                counts["unavailable" if (i["project"], i["source"]) in missing else "not_seen"] += 1
+        today = date.fromisoformat(inputs.run_date)
+        before = max([r for r in self.runs if r < inputs.run_date], default="0000-00-00")
+        projects: dict[str, dict] = {}
+        for i in sorted(items, key=lambda i: (i["opened_on"], i["id"])):
+            entry = projects.setdefault(i["project"], {"project_id": i["project"], "open": [], "closed_since_last_run": []})
+            if i["state"] != "closed":
+                age = (today - date.fromisoformat(i["opened_on"])).days
+                entry["open"].append({"id": i["id"], "text": i["text"], "source": i["source"], "opened_on": i["opened_on"],
+                                      "age_days": age, "weeks": age // 7, "chronic": age > 28, "state": i["state"],
+                                      "seen_this_run": i["id"] in seen})
+            elif i["closed_on"] >= before:
+                entry["closed_since_last_run"].append({"id": i["id"], "text": i["text"]})
+        result = {"run_date": inputs.run_date, "projects": sorted(projects.values(), key=lambda p: p["project_id"]), "counts": counts}
+        if not inputs.dry_run:
+            self.runs.append(inputs.run_date)
+            self.requests[inputs.idempotency_key] = (repr(raw), result)
+        return Done(result=result)
+
+
 class FakeApi:
     """Every call returns Unavailable, like an unreachable API, while ``down`` or ``notion.down`` is true.
 
@@ -85,6 +154,7 @@ class FakeApi:
 
     def __init__(self, notion, down=False, fail=None):
         self.notion, self._down = notion, down
+        self.concerns = getattr(notion, "concerns", None) or FakeConcerns()
         self.calls: list[str] = []
         self.fail = dict(fail or {})
         self.writes: list[tuple[str, object]] = []
@@ -306,6 +376,14 @@ class FakeApi:
                                "second_date": dates[second].isoformat(),
                                "from_notes": stated.get(first) is not None or stated.get(second) is not None})
         return Done(result={"flags": overdue + other, "missing_roles": project["missing_roles"], "sanity": sanity})
+
+    def concern_observe(self, inputs):
+        self.calls.append("concern observe")
+        if self.down:
+            return Unavailable("connection refused")
+        if "concern observe" in self.fail:
+            return self.fail["concern observe"]
+        return self.concerns.observe(inputs, self._ref)
 
     def jo_list(self, inputs):
         orders = []
