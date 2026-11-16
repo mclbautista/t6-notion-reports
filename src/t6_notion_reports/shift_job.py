@@ -14,7 +14,7 @@ from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, 
 from .llm_api import LlmClient
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
-from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
+from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
 
 # The t6 API unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
 # are at least six hours apart, so a retrying slot is always done before the next one is due.
@@ -136,20 +136,20 @@ def run_shift_report(
     before rendering, with a cache. With neither, a Task shows its first three words.
     """
     if target is None:
-        run_jo_snapshot(conn, notion, slot, now)
+        rules = run_jo_snapshot(conn, notion, slot, now).rules
     else:
-        _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep)
+        rules = _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep)
     current = load_latest(conn)
     older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
     stats = SummaryStats()
     if summarizer is None and llm is not None:
         summarizer = LlmTaskSummarizer(llm)
     if summarizer is not None:
-        tasks = {p: f.get("Task") for p, f in current.pages.items() if is_active(f)}
+        tasks = {p: f.get("Task") for p, f in current.pages.items() if rules[p].active}
         summarizer, stats = summarize_tasks(conn, summarizer, tasks, now)
     report = build_end_of_shift(
         slot, current, older, compared_with, banner,
-        window_start=nominal_window_start(slot, current), summarizer=summarizer)
+        window_start=nominal_window_start(slot, current), summarizer=summarizer, rules=rules)
     received, processed, accomplished = report.counts.received, report.counts.processed, report.counts.accomplished
     unfinished = report.unfinished
     parts = len(report.messages)
@@ -231,15 +231,15 @@ def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence
     return DestinationResult(dest, tuple(refs), False)
 
 
-def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep) -> None:
-    """Read the T6 API until it answers or ``RETRY_FOR`` is up. Only transport errors count as an outage."""
+def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep):
+    """Read the T6 API until it answers or ``RETRY_FOR`` is up; the API's rule results of the Job Orders. Only
+    transport errors count as an outage."""
     give_up = clock() + RETRY_FOR
     attempts = 0
     while True:
         attempts += 1
         try:
-            run_jo_snapshot(conn, notion, slot, now)
-            return
+            return run_jo_snapshot(conn, notion, slot, now).rules
         except OSError as exc:  # URLError, HTTPError and timeouts; type only, messages may hold data
             error = type(exc).__name__
             if clock() + RETRY_EVERY > give_up:

@@ -71,7 +71,7 @@ def make_db(before, after):
 
 def brief(conn, llm=None, logs=None):
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, gateway=gw, llm=llm,
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SATURDAY, gateway=gw, llm=llm,
               log=(logs.append if logs is not None else lambda _: None))
     return gw
 
@@ -99,16 +99,16 @@ def test_other_statuses_appear_nowhere_and_never_reach_the_llm():
     gw = brief(make_db(*changed(rows)), llm=llm, logs=logs)
     text = dm(gw) + digest(gw)
     assert "KEEP" in text
-    assert not any(code in text for code in ("DONE", "NEGO", "ARCH", "LOST"))
-    assert llm.projects == ["Show KEEP"]
+    assert not any(code in text for code in ("DONE", "ARCH", "LOST"))
+    assert llm.projects == ["Show KEEP", "Show NEGO"]  # Negotiations is Incoming, so it is gated in (#109)
 
 
 def test_an_excluded_status_that_looks_like_in_progress_is_logged_by_name():
-    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "TYPO", "In-Progress", {}), ("p3", "DONE", "✅ Done", {})]
+    rows = [("p1", "KEEP", IN_PROGRESS, {}), ("p2", "TYPO", "In Progress", {}), ("p3", "DONE", "✅ Done", {})]
     logs = []
     gw = brief(make_db(*changed(rows)), llm=Llm(), logs=logs)
     assert "TYPO" not in dm(gw)
-    assert any("TYPO" in line and "In-Progress" in line for line in logs)
+    assert any("TYPO" in line and "In Progress" in line for line in logs)
     assert not any("DONE" in line for line in logs)
 
 
@@ -197,7 +197,7 @@ def test_the_first_brief_has_the_banner_and_no_changes():
 def staffed(**props):
     """Every role filled and both dates set: nothing to flag, so an unchanged project stays quiet."""
     from fake_notion import date
-    from t6_notion_reports.flags import ROLES
+    from fake_api import ROLES
     return {**{r: relation("c-ida") for r in ROLES if r != "T6 Post Coordinator"},
             "Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-20"), **props}
 

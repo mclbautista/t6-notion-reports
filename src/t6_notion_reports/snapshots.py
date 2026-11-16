@@ -15,6 +15,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
+from .rules import ProjectRules
+
 KINDS = ("monday", "friday", "manual")
 
 RELATION_FIELDS = (
@@ -80,6 +82,7 @@ class ProjectRecord:
 
     page_id: str
     fields: dict[str, object] = field(default_factory=dict)
+    rules: ProjectRules | None = None  # the API's rule results; kept in memory, never stored
 
     def normalized(self) -> dict[str, object]:
         """What is stored. Status keeps its raw value for display (emoji, odd whitespace)."""

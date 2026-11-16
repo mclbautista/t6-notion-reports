@@ -11,6 +11,7 @@ from t6_notion_reports import cli
 from t6_notion_reports.cli import make_job, main
 from t6_notion_reports.config import load_config
 from t6_notion_reports.holidays import upcoming_entries
+from fake_api import rules_of
 from t6_notion_reports.mom import GROUPS, build_draft, group_of
 from t6_notion_reports.mom_job import MomAlreadySent, run_draft_mom
 from t6_notion_reports.schedule import MANILA, Scheduler
@@ -74,7 +75,9 @@ def all_blocks(n):
 # ---- group rules ----
 
 def test_group_rules_first_match_wins():
-    g = lambda **f: group_of({"Status": "In-Progress", "Stage": "Offline", "Project Health": "On Track", **f})
+    def g(**f):
+        state = {"Status": "In-Progress", "Stage": "Offline", "Project Health": "On Track", **f}
+        return group_of(state, rules_of({"p": state})["p"])
     assert g(Stage="Archiving", **{"Project Health": "Critical"}) == "archiving"  # archiving beats health
     assert g(Status="📦 Archiving") == "archiving"
     assert g(Stage="For Drives Turnover") == "archiving"

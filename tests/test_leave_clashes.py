@@ -78,7 +78,7 @@ def build(projects, description="\n".join([HEADING, *LEAVES])):
     conn.executescript(SCHEMA)
     run_snapshot(conn, FakeNotion(projects, contacts()), "monday", MONDAY)
     run_snapshot(conn, FakeNotion(projects, contacts()), "friday", FRIDAY)
-    return conn, FakeNotion([], contacts(), description=description)
+    return conn, FakeNotion.live(conn, contacts(), description=description)
 
 
 def team_project(status=IN_PROGRESS, **props):
@@ -233,7 +233,7 @@ def test_a_namesake_the_api_cannot_tell_apart_is_unmatched_never_a_guess():
     people = contacts() + [contact("c-nia2", "Nia Varnel")]
     people[-1]["properties"].update(tg("nia2_h", 555))
     conn, _ = build([team_project()])
-    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     assert "on leave" not in dm(gw)
     assert "Unmatched leave names (add an alias in Contacts): Nia Varnel" in digest(gw)
@@ -378,7 +378,7 @@ def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipient
     people = contacts() + [page_of("c-kit", "Kit")]
     people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
-    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
     settings = replace(BRIEF, digest_recipients=("c-cyril", "c-kit"))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
     by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
@@ -442,7 +442,7 @@ def _unmatched_run(recipients, cyril_id):
     people = contacts() + [page_of("c-kit", "Kit")]
     people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
-    notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
+    notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
     settings = replace(BRIEF, cyril_contact_id=cyril_id, digest_recipients=recipients)
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
     return lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)

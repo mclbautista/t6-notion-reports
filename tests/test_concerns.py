@@ -24,7 +24,7 @@ def props(concern=True):
 
 def run(conn, weeks=0, brief=BRIEF, **kw):
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), brief, SATURDAY + timedelta(weeks=weeks), gateway=gw, **kw)
+    run_brief(conn, FakeNotion.live(conn, contacts()), brief, SATURDAY + timedelta(weeks=weeks), gateway=gw, **kw)
     return gw
 
 
@@ -119,7 +119,7 @@ def test_a_same_day_rerun_still_shows_the_resolved_line():
 def test_a_dry_run_shows_ages_but_stores_nothing():
     conn = setup()
     out = []
-    run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, dry_print=True, out=out.append)
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SATURDAY, dry_print=True, out=out.append)
     assert "since Nov 14" in "\n".join(out)
     assert conn.execute("SELECT COUNT(*) FROM concerns").fetchone()[0] == 0
 

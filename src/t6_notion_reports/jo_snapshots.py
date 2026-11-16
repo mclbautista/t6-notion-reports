@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from .rules import JoRules
 from .snapshots import squash
 
 MANILA = ZoneInfo("Asia/Manila")
@@ -118,6 +119,7 @@ class JoRecord:
 
     page_id: str
     fields: dict[str, object] = field(default_factory=dict)
+    rules: JoRules | None = None  # the API's rule results; kept in memory, never stored
 
     def normalized(self) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -149,6 +151,7 @@ class JoSnapshotResult:
     unchanged: int
     removed: int
     pruned: int  # snapshots deleted by retention
+    rules: dict[str, JoRules] = field(default_factory=dict)  # the API's results for the pages of this run
 
 
 @dataclass(frozen=True)
@@ -227,7 +230,8 @@ def take_snapshot(
             conn.execute("INSERT INTO jo_snapshot_pages VALUES (?, ?, ?, ?, 1)",
                          (snapshot_id, page_id, h, state_id))
         pruned = prune(conn, taken_at)
-    return JoSnapshotResult(snapshot_id, prev is None, changed, unchanged, len(gone), pruned)
+    rules = {r.page_id: r.rules for r in records if r.rules is not None}
+    return JoSnapshotResult(snapshot_id, prev is None, changed, unchanged, len(gone), pruned, rules)
 
 
 def prune(conn: sqlite3.Connection, now: datetime) -> int:

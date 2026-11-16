@@ -1,6 +1,6 @@
 """Dates from PM Notes (#48): a blank date property filled from a quoted line, precise or fuzzy."""
 from fake_notion import date, relation, rich
-from t6_notion_reports.flags import ROLES
+from fake_api import ROLES
 from test_consolidation import Llm, line_id, make_db, reply_with, run
 from test_gated_briefs import AIRING, IN_PROGRESS, LEADS, STANDBY, digest, dm, proj
 

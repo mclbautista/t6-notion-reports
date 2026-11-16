@@ -7,11 +7,12 @@ older snapshot that bounds the window, and returns the messages. Task text goes 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 from datetime import datetime
 
 from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
+from .rules import JoRules
 from .task_summary import FirstWordsSummarizer, TaskSummarizer, for_page, task_label
 from .telegram_html import Block, Line, bold, line, link, render_messages
 
@@ -35,7 +36,8 @@ SECTIONS = (  # (heading, departments in it), after TOC and AE
     ("🟣 For COOR & ADMIN", ("COOR", "ADMIN")),
 )
 NO_DEPARTMENT_HEADING = "🔴 No Department"
-FLAGGED_HEALTH = ("🔴 Blocked", "⚠️ Delayed", "🔥 Urgent")
+# The emoji each Health flag the API returns shows with (layout).
+HEALTH_EMOJI = {"Blocked": "🔴", "Delayed": "⚠️", "Urgent": "🔥"}
 UNASSIGNED = "Unassigned"
 
 
@@ -59,10 +61,6 @@ Fields = dict[str, object]
 
 def parse_instant(value: object) -> datetime | None:
     return datetime.fromisoformat(value) if isinstance(value, str) and value else None
-
-
-def is_active(fields: Fields) -> bool:
-    return fields.get("Status") not in (DONE, CANCELLED)
 
 
 def page_url(page_id: str) -> str:
@@ -134,11 +132,12 @@ def assignee_names(fields: Fields) -> list[str]:
     return [str(r.get("name") or r["id"]) for r in fields.get("Assigned") or [] if isinstance(r, dict)]
 
 
-def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owner: str | None) -> Line:
+def turnover_line(
+    page_id: str, fields: Fields, rules: JoRules, summarizer: TaskSummarizer, owner: str | None,
+) -> Line:
     """``[health emoji]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
-    health = fields.get("Health")
     others = [n for n in assignee_names(fields) if n != owner]
-    parts: list = [str(health).split()[0] if health in FLAGGED_HEALTH else "",
+    parts: list = [next((HEALTH_EMOJI[f] for f in rules.health_flags if f in HEALTH_EMOJI), ""),
                    link(jo_id_text(fields), page_url(page_id)),
                    f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",
@@ -148,7 +147,7 @@ def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owne
     return line(*[p for p in parts if p != ""])
 
 
-def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer) -> list[Block]:
+def assignee_blocks(items: list[tuple[str, Fields]], rules: Mapping[str, JoRules], summarizer: TaskSummarizer) -> list[Block]:
     """One block per assignee, bold name, a blank line between blocks (alphabetical, Unassigned last); a JO
     with several assignees is in each."""
     by_person: dict[str | None, list[tuple[str, Fields]]] = {}
@@ -161,7 +160,7 @@ def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer)
         if blocks:
             blocks.append(Line())
         blocks.append(line(bold(person or UNASSIGNED)))
-        blocks += [turnover_line(p, f, summarizer, person) for p, f in sort_by_deadline(by_person[person])]
+        blocks += [turnover_line(p, f, rules[p], summarizer, person) for p, f in sort_by_deadline(by_person[person])]
     return blocks
 
 
@@ -247,11 +246,14 @@ def build_end_of_shift(
     banner: bool = False,
     window_start: datetime | None = None,
     summarizer: TaskSummarizer | None = None,
+    *,
+    rules: Mapping[str, JoRules],
 ) -> EndOfShiftReport:
     """``older`` None means the baseline: received only, with a note. ``compared_with`` is the
     "<slot> on <date>" text when ``older`` is a fallback rather than the expected bounding snapshot.
     ``window_start`` opens the received window when there is no ``older``. ``summarizer`` shortens the
-    Task text (default: the first three words)."""
+    Task text (default: the first three words). ``rules`` are the API's results for each page of ``current``: which
+    Job Orders are active and which Health flags they show."""
     summarizer = summarizer or FirstWordsSummarizer()
     report_slot = SLOTS[slot]
     moment = current.taken_at.astimezone(MANILA)
@@ -260,14 +262,14 @@ def build_end_of_shift(
         line(moment_text(moment)),
     ]
 
-    active = [(p, f) for p, f in current.pages.items() if is_active(f)]
+    active = [(p, f) for p, f in current.pages.items() if rules[p].active]
     groups = group_by_department(active)
 
     def section(heading: str, items: list[tuple[str, Fields]], always: bool = False) -> None:
         if not items and not always:
             return
         blocks.extend([Line(), line(bold(heading))])
-        blocks.extend(assignee_blocks(items, summarizer) or [line("none")])
+        blocks.extend(assignee_blocks(items, rules, summarizer) or [line("none")])
 
     section(report_slot.toc_heading, groups.get("TOC", []), always=True)
     section(AE_HEADING, groups.get("AE", []), always=True)

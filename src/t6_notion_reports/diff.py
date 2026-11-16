@@ -9,7 +9,6 @@ from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
-from .status_gate import gate
 
 # Project Health order inside a section; a blank one sorts last.
 HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
@@ -55,7 +54,7 @@ class ProjectChange:
     code: str | None = None
     title: str | None = None
     stage: str | None = None
-    group: str | None = None  # status gate: on_hold | in_progress | leads
+    group: str | None = None  # status gate: on_hold | in_progress | leads (set by the brief job from the API's result)
     edited: date | None = None  # Notion last-edited day (Manila)
     dates: tuple[str, ...] = ()  # the date properties that are set, as of this state: "Playdate Dec 1, 2026"
     flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
@@ -161,7 +160,7 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         last_updated=last_updated(state.get("PM Notes"), snap_date),
         code=state.get("Project Code") or None, title=state.get("Name") or None,
         stage=squash(str(state["Stage"])) if state.get("Stage") else None,
-        group=gate(state.get("Status")), edited=_edited_day(state.get(LAST_EDITED)),
+        edited=_edited_day(state.get(LAST_EDITED)),
         dates=_dates(state),
     )
 

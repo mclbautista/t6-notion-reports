@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 # t6 is pinned to a t6-core commit until the v0.6.7 tag exists; then pin the tag (ADR 0002 rule 7).
 dependencies = [
     "PyYAML>=6", "pydantic>=2", "tzdata",
-    "t6[client] @ git+https://github.com/mclbautista/t6-core@94057f05dcd5611143791d56290752098c5812ba",
+    "t6[client] @ git+https://github.com/mclbautista/t6-core@44cae71508c0028eda63ac7dd0562fe0cd4577d3",
 ]
 
 [project.optional-dependencies]

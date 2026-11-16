@@ -14,13 +14,14 @@ from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
-from .flags import project_flags, stored_decides
+from .flags import ProjectFlags, project_flags, stored_decides
 from .gateway import GatewayError
 from .holidays import leave_lines
 from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
 from .llm_api import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
+from .rules import ProjectRules
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
@@ -88,7 +89,8 @@ def run_brief(
     else:
         old_id, new_id = pair
     raw_old, raw_new = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
-    old_state, new_state = apply_gate(raw_old, raw_new, log)
+    rules = gate_rules(notion, raw_old, raw_new)
+    old_state, new_state = apply_gate(raw_old, raw_new, rules, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
     changes = [] if first else diff_snapshots(
@@ -113,6 +115,7 @@ def run_brief(
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
+                rules[p].relevant_dates,
             ) for p, s in new_state.items()
         }
         started, skipped = monotonic(), 0
@@ -135,7 +138,7 @@ def run_brief(
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
-    flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
+    flagged, flags_failed = read_flags(notion, new_state, rules, today, brief.lead_warning_days, stated, log)
     note_dates = {p: note_date_lines(o) for p, o in outcomes.items() if o.dates}
     failed_ids = sorted(p for p, o in outcomes.items() if o.failed)
     llm_failed = sorted(names[p] for p in failed_ids)
@@ -146,6 +149,8 @@ def run_brief(
     unavailable: set[tuple[str, str]] = set()
     for p, f in flagged.items():
         o = outcomes.get(p)
+        if p in flags_failed:
+            unavailable.update({(p, FLAGS), (p, FLAGS_NOTES)})  # no flags were read: nothing says they went away
         # Code-made Concerns are recomputed every run. A source that could not be read (a failed or
         # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
         if o is None or o.failed:
@@ -181,9 +186,11 @@ def run_brief(
         cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner,
         digest_recipients=digest_contacts, coordinator_recipients=brief.coordinator_recipients,
     )
+    for ch in changes:
+        ch.group = gate(rules.get(ch.page_id))
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first, notes=list(leaves.notes),
+        llm_failed, active_coordinators_in(new_state, rules), first=first, notes=list(leaves.notes),
         cyril_notes=list(leaves.cyril_notes),
     )
     no_digest = digest_missing(settings)
@@ -375,8 +382,35 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
     return sort_projects(changes + extra) if extra else changes
 
 
-def apply_gate(old, new, log: Callable[[str], None] = print):
-    """Drop every project outside the status gate from both snapshots, judged by its latest state.
+def gate_rules(notion, old, new) -> dict[str, ProjectRules]:
+    """The API's rule results for every project of the two snapshots: one ``project list`` call, and one
+    ``project get`` for each project the list no longer holds (removed since)."""
+    rules = notion.project_rules()
+    for page_id in sorted({*old, *new} - rules.keys()):
+        if (rule := notion.project_rule(page_id)) is not None:
+            rules[page_id] = rule
+    return rules
+
+
+def read_flags(notion, state, rules, today, lead_warning_days, stated, log) -> tuple[dict[str, ProjectFlags], set[str]]:
+    """The flags of every gated project: one ``project flags`` call each. A call the API did not answer gives that
+    project no flags this run, and is logged by error type only."""
+    flagged: dict[str, ProjectFlags] = {}
+    failed: set[str] = set()
+    for page_id, project in state.items():
+        try:
+            result = notion.project_flags(page_id, today, lead_warning_days, stated.get(page_id) or {})
+        except OSError as exc:
+            log(f"brief flags unavailable error={type(exc).__name__}")
+            flagged[page_id] = ProjectFlags()
+            failed.add(page_id)
+            continue
+        flagged[page_id] = project_flags(project, rules[page_id], result)
+    return flagged, failed
+
+
+def apply_gate(old, new, rules: dict[str, ProjectRules], log: Callable[[str], None] = print):
+    """Drop every project outside the status gate from both snapshots, judged by the API's result.
 
     Runs before the LLM or any message. An excluded Status that looks like an In-Progress option is
     logged by project name, so the Notion data can be fixed.
@@ -385,18 +419,18 @@ def apply_gate(old, new, log: Callable[[str], None] = print):
     latest = {**old, **new}
     keep = set()
     for page_id, state in latest.items():
-        if gate(state.get("Status")) is not None:
+        if gate(rules.get(page_id)) is not None:
             keep.add(page_id)
         elif looks_like_in_progress(state.get("Status")):
             log(f"brief status excluded looks like In-Progress project={names[page_id]} status={state.get('Status')!r}")
     return ({p: s for p, s in old.items() if p in keep}, {p: s for p, s in new.items() if p in keep})
 
 
-def active_coordinators_in(state: dict[str, dict[str, object]]) -> set[str]:
+def active_coordinators_in(state: dict[str, dict[str, object]], rules: dict[str, ProjectRules]) -> set[str]:
     """Contact page ids of coordinators with an In-Progress (any kind) or Archiving project."""
     return {
         str(ref["id"])
-        for project in state.values()
-        if gate(project.get("Status")) == "in_progress" or is_archiving(project.get("Status"))
+        for page_id, project in state.items()
+        if gate(rules.get(page_id)) == "in_progress" or is_archiving(rules.get(page_id))
         for ref in project.get("T6 Post Coordinator") or [] if isinstance(ref, dict)
     }

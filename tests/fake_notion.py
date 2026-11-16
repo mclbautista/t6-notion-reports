@@ -101,6 +101,22 @@ def block(kind, text="", children=(), **rich_kw):
             "_children": list(children), kind: {"rich_text": items}}
 
 
+def _page(page_id, state):
+    """A Projects page as the API reads it now, built from a snapshot state."""
+    page = project(page_id, state.get("Name") or "", state.get("Project Code"))
+    props = page["properties"]
+    props.update({"Stage": select(state.get("Stage")), "Status": select(state.get("Status")),
+                  "Project Health": select(state.get("Project Health")), "PM Notes": rich(state.get("PM Notes"))})
+    for name in ("Playdate", "Submission Deadline", "Archival Deadline"):
+        value = state.get(name)
+        props[name] = date(value["start"], value.get("end")) if value else date(None)
+    for name in ("T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Prod Coor/Supe",
+                 "Assistant Editor", "Director", "Cinematographer"):
+        props[name] = relation(*[r["id"] for r in state.get(name) or []])
+    page["last_edited_time"] = state.get("Last Edited")
+    return page
+
+
 class FakeNotion:
     def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=()):
         self.job_orders = list(job_orders)
@@ -109,6 +125,14 @@ class FakeNotion:
         self.meetings = list(meetings)
         self.description = description
         self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
+
+    @classmethod
+    def live(cls, conn, contacts=(), **kw):
+        """A fake whose Projects are the latest snapshot of ``conn``: the API as it reads when a brief runs."""
+        from t6_notion_reports.snapshots import latest_snapshot_ids, load_snapshot
+        ids = latest_snapshot_ids(conn, 1)
+        state = load_snapshot(conn, ids[0]) if ids else {}
+        return cls([_page(p, s) for p, s in state.items()], contacts, **kw)
 
     # The reads: what the jobs call on ``ApiNotion``, served by ``FakeApi`` from the fixtures. Set ``down`` to
     # true to make the API unreachable.
@@ -145,3 +169,12 @@ class FakeNotion:
 
     def job_order_records(self):
         return self._reads().job_order_records()
+
+    def project_rules(self):
+        return self._reads().project_rules()
+
+    def project_rule(self, page_id):
+        return self._reads().project_rule(page_id)
+
+    def project_flags(self, *args):
+        return self._reads().project_flags(*args)

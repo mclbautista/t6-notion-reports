@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 from .condense import ungrounded
 from .dates import has_future_date, is_period, mentions
 from .diff import FieldChange
-from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, relevant_dates, stored_day
+from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .llm_api import LlmClient, LlmError, grounding_text, same_text
 from .pm_notes import parse_pm_notes
 from .schedule import MANILA
@@ -205,16 +205,16 @@ def build_payload(
     minutes_lines: tuple[str, ...] = (),
     minutes_meta: dict[str, str | None] | None = None,
     notes_weeks: int = DEFAULT_PM_NOTES_WEEKS,
+    relevant_dates: tuple[str, ...] = (),
 ) -> Payload:
     """The payload for one project, in real text: the API masks known names and ids before the model sees it.
 
     ``minutes_meta`` holds the minutes page's date, last-edited time and Sent at; it is sent only with
-    lines about this project.
+    lines about this project. ``relevant_dates`` are the date properties the API says matter for the project's Status.
     """
     build = _Build()
     notes = _notes_lines(state.get("PM Notes"), today, snapshot_day, notes_weeks, build)
     dates = {name: stored_day(state.get(name)) for name in DATE_KEYS}
-    relevant = relevant_dates(state.get("Status"))
     data: dict = {
         "today": today.isoformat(),
         "project": {
@@ -224,7 +224,7 @@ def build_payload(
             "project_health": squash(str(state.get("Project Health") or "")) or None,
         },
         "dates": {key: (dates[name].isoformat() if dates[name] else None) for name, key in DATE_KEYS.items()},
-        "blank_date_properties": [DATE_KEYS[n] for n in relevant if dates[n] is None],
+        "blank_date_properties": [DATE_KEYS[n] for n in relevant_dates if dates[n] is None],
         "pm_notes": notes,
         "snapshot_changes": [],
         "minutes": None,

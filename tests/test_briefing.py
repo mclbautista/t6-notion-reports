@@ -2,12 +2,14 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from fake_api import rules_of
 from html_check import assert_valid_html
 from t6_notion_reports.brief_job import active_coordinators_in, coordinators_in
 from t6_notion_reports.briefing import Settings, build_briefing
 from t6_notion_reports.contacts import Contact
 from t6_notion_reports.diff import diff_snapshots
 from t6_notion_reports.snapshots import ProjectRecord, connect, load_snapshot, take_snapshot
+from t6_notion_reports.status_gate import gate
 
 TODAY = date(2026, 11, 15)
 OTO, IDA, JUNO, CYRIL = "c-oto", "c-ida", "c-juno", "c-cyril"
@@ -31,13 +33,21 @@ def rec(page_id, code, coordinators=("c-oto",), **fields):
     return ProjectRecord(page_id, base)
 
 
+def grouped(changes, *states):
+    """The changes with the status gate's group, as the brief job sets it from the API's results."""
+    rules = rules_of({p: s for state in states for p, s in state.items()})
+    for ch in changes:
+        ch.group = gate(rules.get(ch.page_id))
+    return changes
+
+
 def run(before, after, settings=SETTINGS, contacts=CONTACTS, filter_active=False):
     conn = connect()
     a = take_snapshot(conn, before, datetime(2026, 11, 9, 3, tzinfo=timezone.utc), "monday").snapshot_id
     b = take_snapshot(conn, after, datetime(2026, 11, 13, 10, tzinfo=timezone.utc), "friday").snapshot_id
     old, new = load_snapshot(conn, a), load_snapshot(conn, b)
-    changes = diff_snapshots(old, new, date(2026, 11, 9), date(2026, 11, 13))
-    active = active_coordinators_in(new) if filter_active else None
+    changes = grouped(diff_snapshots(old, new, date(2026, 11, 9), date(2026, 11, 13)), old, new)
+    active = active_coordinators_in(new, rules_of(new)) if filter_active else None
     return build_briefing(changes, coordinators_in(old, new), contacts, settings, TODAY, active=active)
 
 
@@ -170,7 +180,7 @@ def test_active_coordinators_are_those_with_in_progress_or_archiving_projects():
         "c": {"Status": "🏋️ Standby", "T6 Post Coordinator": [person(JUNO)]},
         "d": {"Status": None, "T6 Post Coordinator": []},
     }
-    assert active_coordinators_in(state) == {OTO, IDA}
+    assert active_coordinators_in(state, rules_of(state)) == {OTO, IDA}
 
 
 # ---- splitting a project too long for one message (#60) -------------------------------------
@@ -237,7 +247,8 @@ def test_a_single_oversized_summary_line_keeps_project_context():
     conn = connect()
     a = take_snapshot(conn, [rec("p1", "BIG")], datetime(2026, 11, 9, 3, tzinfo=timezone.utc), "monday").snapshot_id
     b = take_snapshot(conn, [rec("p1", "BIG", Stage="Online")], datetime(2026, 11, 13, 10, tzinfo=timezone.utc), "friday").snapshot_id
-    changes = diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13))
+    changes = grouped(diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13)),
+                      load_snapshot(conn, b))
     changes = [replace(ch, summary=[_words(2500, "s")], consolidated=True) for ch in changes]
     msgs = [m for m in build_briefing(changes, {"c-oto": "Oto"}, CONTACTS, SETTINGS, TODAY) if m.recipient == "Oto"]
     assert len(msgs) >= 3
@@ -315,7 +326,8 @@ def test_oversized_tail_after_projects_keeps_title_banner_and_every_warning_atom
     conn = connect()
     a = take_snapshot(conn, [rec("p1", "ONE")], datetime(2026, 11, 9, 3, tzinfo=timezone.utc), "monday").snapshot_id
     b = take_snapshot(conn, [rec("p1", "ONE", Stage="Online")], datetime(2026, 11, 13, 10, tzinfo=timezone.utc), "friday").snapshot_id
-    changes = diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13))
+    changes = grouped(diff_snapshots(load_snapshot(conn, a), load_snapshot(conn, b), date(2026, 11, 9), date(2026, 11, 13)),
+                      load_snapshot(conn, b))
     warnings = ["⚠️ " + _words(2500, "warning"), "⚠️ final warning"]
     messages = [m for m in build_briefing(changes, {OTO: "Oto"}, CONTACTS, settings, TODAY, notes=warnings)
                 if m.recipient == "Cyril"]

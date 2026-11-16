@@ -13,7 +13,9 @@ from .condense import condense_bullets
 from .diff import ProjectChange, diff_snapshots, display_names, last_updated_text
 from .llm_api import LlmClient
 from .pm_notes import last_updated
+from .rules import ProjectRules
 from .snapshots import squash
+from .status_gate import is_archiving
 
 # (key, emoji, title). Page order: critical, at risk, on track, archiving, incoming, then Others.
 GROUPS = (
@@ -29,21 +31,21 @@ HEALTH_NOT_SET = "Health not set"
 RAW_TOGGLE = "Raw source"
 
 ARCHIVING_STAGES = {"archiving", "for drives turnover", "waiting for payment"}
-INCOMING_STATUSES = {"leads", "lead", "negotiations", "proposal made"}
 CHANGE_FIELDS = {"Project Health", "Stage", "Status"}
 _HEALTH_GROUP = {"critical": "critical", "at risk": "at_risk", "on track": "on_track"}
 
 
 def norm(value: object) -> str:
-    """Compare form for Status and Stage: no emoji, whitespace squashed, lower case."""
+    """Compare form for Stage and Project Health: no emoji, whitespace squashed, lower case."""
     return squash(re.sub(r"[^\w\s-]", "", str(value or ""))).lower()
 
 
-def group_of(state: dict[str, object]) -> str:
-    """First match wins (spec 8.2). Empty or unknown Health lands in on_track."""
-    if norm(state.get("Status")) == "archiving" or norm(state.get("Stage")) in ARCHIVING_STAGES:
+def group_of(state: dict[str, object], rules: ProjectRules | None) -> str:
+    """First match wins (spec 8.2). Empty or unknown Health lands in on_track. ``rules`` are the API's results for the
+    project: its Status key and group."""
+    if is_archiving(rules) or norm(state.get("Stage")) in ARCHIVING_STAGES:
         return "archiving"
-    if norm(state.get("Status")) in INCOMING_STATUSES:
+    if rules is not None and rules.status_group == "incoming":
         return "incoming"
     return _HEALTH_GROUP.get(norm(state.get("Project Health")), "on_track")
 
@@ -70,20 +72,21 @@ class Draft:
 
 def build_draft(
     old: dict[str, dict[str, object]], new: dict[str, dict[str, object]],
-    old_date: date, new_date: date, meeting_date: date,
+    old_date: date, new_date: date, meeting_date: date, rules: dict[str, ProjectRules],
 ) -> Draft:
-    """``old`` is the Friday snapshot, ``new`` the Monday one taken after the PSR."""
+    """``old`` is the Friday snapshot, ``new`` the Monday one taken after the PSR; ``rules`` are the API's results."""
     names = display_names(old, new)
     changed = {c.page_id: c for c in diff_snapshots(old, new, old_date, new_date) if c.kind != "removed"}
     shown: list[Entry] = []
     unchanged: list[Entry] = []
     for page_id, state in new.items():
         change = changed.get(page_id)
-        entry = _entry(page_id, names[page_id], state, change, new_date)
+        rule = rules.get(page_id)
+        entry = _entry(page_id, names[page_id], state, rule, change, new_date)
         group = entry.group
         is_changed = change is not None and (
             change.notes is not None or any(fc.field in CHANGE_FIELDS for fc in change.changes))
-        always = norm(state.get("Status")) == "in-progress" or group == "archiving"
+        always = (rule is not None and rule.status_key == "in-progress") or group == "archiving"
         if is_changed or always:
             if not is_changed:
                 entry.bullets = []
@@ -100,8 +103,8 @@ def build_draft(
     )
 
 
-def _entry(page_id: str, label: str, state, change: ProjectChange | None, snap_date: date) -> Entry:
-    group = group_of(state)
+def _entry(page_id: str, label: str, state, rules: ProjectRules | None, change: ProjectChange | None, snap_date: date) -> Entry:
+    group = group_of(state, rules)
     label = entry_label(label, state.get("Project Code"))
     entry = Entry(page_id, label, group)
     if group == "on_track" and not str(state.get("Project Health") or "").strip():

@@ -51,7 +51,7 @@ def run_draft_mom(
     new_on = _local_date(snapshot_info(conn, new_id).taken_at)
     new_state = load_snapshot(conn, new_id)
     old_state = load_snapshot(conn, old_id)
-    draft = build_draft(old_state, new_state, old_on, new_on, meeting_date)
+    draft = build_draft(old_state, new_state, old_on, new_on, meeting_date, notion.project_rules())
     all_contacts = notion.read_contacts()
     condensed = raw = 0
     if llm is not None:

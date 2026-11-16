@@ -19,12 +19,14 @@ from typing import Any, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectListInput, StudioNoticesInput,
+    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectFlagsInput, ProjectGetInput,
+    ProjectListInput, Refused, StudioNoticesInput,
 )
 
 from .contacts import Contact
 from .holidays import Run
 from .jo_snapshots import JoRecord, manila_instant
+from .rules import JoRules, ProjectRules
 from .snapshots import LAST_EDITED, RELATION_FIELDS, ProjectRecord
 from .telegram_html import Span
 
@@ -42,6 +44,13 @@ _PROJECT_RELATIONS = {
     "Director": "director_ids", "Cinematographer": "cinematographer_ids", "Prod Coor/Supe": "prod_coor_supe_ids",
 }
 assert set(_PROJECT_RELATIONS) == set(RELATION_FIELDS)
+
+# The Project attribute names the rule results use -> the Notion property names the snapshots use.
+PROPERTY_OF = {
+    "playdate": "Playdate", "submission_deadline": "Submission Deadline", "archival_deadline": "Archival Deadline",
+    **{key: name for name, key in _PROJECT_RELATIONS.items()},
+}
+ATTRIBUTE_OF = {name: attr for attr, name in PROPERTY_OF.items()}
 
 
 class ApiUnavailable(OSError):
@@ -182,8 +191,37 @@ class ApiNotion:
             }
             for name, key in _PROJECT_RELATIONS.items():
                 fields[name] = related(p.get(key))
-            records.append(ProjectRecord(p["page_id"], fields))
+            records.append(ProjectRecord(p["page_id"], fields, _project_rules(p)))
         return records
+
+    def project_rules(self) -> dict[str, ProjectRules]:
+        """The rule results of every Project, by page id: one ``project list`` call."""
+        return {p["page_id"]: _project_rules(p) for p in self._read(self.client.project_list, ProjectListInput())["projects"]}
+
+    def project_rule(self, page_id: str) -> ProjectRules | None:
+        """The rule results of one Project, or None when the API does not know the page."""
+        try:
+            outcome = self.client.project_get(ProjectGetInput(project=page_id))
+        except APIError as exc:
+            raise ApiUnavailable(f"t6 API error status={exc.status}") from None
+        if isinstance(outcome, Unavailable):
+            raise ApiUnavailable("t6 API unreachable")
+        if isinstance(outcome, Refused):
+            return None
+        if not isinstance(outcome, Done):
+            raise ApiUnavailable(f"t6 API answered {outcome.outcome}")
+        return _project_rules(outcome.result["project"])
+
+    def project_flags(
+        self, page_id: str, today: date, lead_warning_days: int, stated: Mapping[str, date | None],
+    ) -> dict[str, Any]:
+        """``project flags`` for one Project judged on ``today``. ``stated`` maps a date property name to the day
+        the PM Notes give for it (None: a fuzzy value)."""
+        inputs = ProjectFlagsInput(
+            project=page_id, as_of=today, lead_warning_days=lead_warning_days,
+            stated={ATTRIBUTE_OF[name]: day for name, day in stated.items()},
+        )
+        return self._read(self.client.project_flags, inputs)
 
     def job_order_records(self) -> list[JoRecord]:
         people = self._people()
@@ -204,8 +242,16 @@ class ApiNotion:
                 "Projects": [{"id": i, "name": labels.get(i)} for i in project_pages],
                 "last_edited_time": _notion_time(o.get("last_edited")),
             }
-            records.append(JoRecord(o["page_id"], fields))
+            records.append(JoRecord(o["page_id"], fields, JoRules(bool(o["active"]), tuple(o.get("health_flags") or ()))))
         return records
+
+
+def _project_rules(p: dict) -> ProjectRules:
+    return ProjectRules(
+        p["status_key"], p.get("status_group"), bool(p["snapshotted"]),
+        tuple(PROPERTY_OF[a] for a in p.get("missing_roles") or ()),
+        tuple(PROPERTY_OF[a] for a in p.get("relevant_dates") or ()),
+    )
 
 
 def _note(n: dict) -> Note:

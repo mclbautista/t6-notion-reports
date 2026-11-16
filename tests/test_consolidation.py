@@ -62,7 +62,9 @@ def line_id(payload, text, where="pm_notes"):
 
 def run(conn, llm=None, notion=None, brief=BRIEF, **kw):
     gw, logs = Gateway(), []
-    run_brief(conn, notion or FakeNotion([], contacts()), brief, SATURDAY, gateway=gw, llm=llm,
+    notion = notion or FakeNotion([], contacts())
+    notion.projects = FakeNotion.live(conn).projects  # the API reads the Projects the snapshots came from
+    run_brief(conn, notion, brief, SATURDAY, gateway=gw, llm=llm,
               log=logs.append, **kw)
     return gw, logs
 
@@ -168,7 +170,7 @@ def test_the_latest_minutes_page_on_or_before_today_is_the_one_read():
 def test_show_llm_input_prints_every_payload_and_calls_no_llm():
     llm, printed = Llm(), []
     conn = conn_one()
-    res = run_brief(conn, FakeNotion([], contacts()), BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
+    res = run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
                     dry_print=True, show_llm_input=True, out=printed.append, log=lambda _: None)
     assert llm.payloads == [] and res.sent == 0
     shown = "\n".join(printed)
@@ -176,13 +178,13 @@ def test_show_llm_input_prints_every_payload_and_calls_no_llm():
 
 
 def test_cli_show_llm_input_needs_dry_print(tmp_path, monkeypatch, capsys):
-    from test_brief_job import AnyContacts, cfg_contacts, seeded_db, write_config
+    from test_brief_job import AnyContacts, cfg_contacts, pages, seeded_db, write_config
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     now = datetime(2026, 11, 15, 8, tzinfo=timezone.utc)
-    assert main(["brief", "--show-llm-input", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=now) == 2
+    assert main(["brief", "--show-llm-input", "--config", cfg], notion=AnyContacts(pages("Online"), cfg_contacts()), now=now) == 2
     assert "--dry-print" in capsys.readouterr().err
     assert main(["brief", "--dry-print", "--show-llm-input", "--config", cfg],
-                notion=AnyContacts([], cfg_contacts()), now=now) == 0
+                notion=AnyContacts(pages("Online"), cfg_contacts()), now=now) == 0
     assert "--- llm input:" in capsys.readouterr().out
 
 
@@ -252,11 +254,11 @@ def test_llm_concerns_age_through_the_concern_store():
     run(conn, Llm(reply_with(concerns=concerns)))
     later = datetime(2026, 11, 28, 4, tzinfo=timezone.utc)
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), BRIEF, later, gateway=gw,
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, later, gateway=gw,
               llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
     assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(gw)
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(), log=lambda _: None)
     assert "Resolved last week: Client notes are still pending" in dm(gw)
 
@@ -371,7 +373,7 @@ def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
     conn = conn_one()
     run(conn, Llm(reply_with(concerns=concerns)))
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(fail_for={"Show ONE"}), log=lambda _: None)
     text = dm(gw)
     assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved last week" not in text
