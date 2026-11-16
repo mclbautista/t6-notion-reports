@@ -26,7 +26,7 @@ from .gateway import GatewayClient, GatewayError
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
 
-def main(argv=None, notion=None, now: datetime | None = None) -> int:
+def main(argv=None, notion=None, now: datetime | None = None, client=None) -> int:
     parser = argparse.ArgumentParser(prog="t6_notion_reports")
     sub = parser.add_subparsers(dest="command", required=True)
     snap = sub.add_parser("snapshot", help="snapshot the Notion Projects database")
@@ -84,10 +84,10 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         return _compare_api(args, notion, now)
 
     if args.command == "draft-mom":
-        return _draft_mom(args, notion, now)
+        return _draft_mom(args, notion, now, client)
 
     if args.command == "send-ready-mom":
-        return _send_ready_mom(args, notion, now)
+        return _send_ready_mom(args, notion, now, client)
 
     if args.command == "serve":
         cfg = _load(args.config)
@@ -97,6 +97,10 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
+        client = client or client_from_env()
+        if client is None and cfg.meeting_notes_data_source:
+            print(_NEEDS_API, file=sys.stderr)
+            return 2
         notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
@@ -106,7 +110,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
               flush=True)
         clock = lambda: datetime.now(timezone.utc)
         Scheduler(
-            make_job(conn, notion, cfg, gateway, clock),
+            make_job(conn, notion, cfg, gateway, clock, client=client),
             clock=clock,
             sleep=time.sleep,
             log=lambda line: print(line, flush=True),
@@ -130,6 +134,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     _ensure_dir(db)
     _snapshot(connect(db), notion, projects_ds, contacts_ds, args.kind, now or datetime.now(timezone.utc))
     return 0
+
+
+_NEEDS_API = "config error: the Minutes are written through the t6 API; set T6_API_URL and T6_API_SECRET"
 
 
 def _reads(notion, cfg):
@@ -300,7 +307,7 @@ def _llm(cfg, dry_print=False):
     return None if dry_print else UnavailableLlm()
 
 
-def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
+def make_job(conn, notion, cfg, gateway, clock, shift_target=None, client=None):
     """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
     def job(kind: str) -> None:
         moment = clock()
@@ -316,7 +323,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                 conn_jo.close()
             return
         if kind == "send_mom":
-            run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+            run_send_ready_mom(notion, client, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
                                cfg.brief.group_topic_id, moment, banner=cfg.brief.test_banner,
                                log=lambda text: print(text, flush=True))
             return
@@ -327,13 +334,13 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
             return
         _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:
-            run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
+            run_draft_mom(conn, notion, client, cfg.projects_data_source, cfg.contacts_data_source,
                           cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
                           log=lambda text: print(text, flush=True), llm=_llm(cfg))
     return job
 
 
-def _draft_mom(args, notion, now) -> int:
+def _draft_mom(args, notion, now, client) -> int:
     cfg = _load(args.config)
     if cfg is None:
         return 2
@@ -344,11 +351,15 @@ def _draft_mom(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
+    client = client or client_from_env()
+    if client is None:
+        print(_NEEDS_API, file=sys.stderr)
+        return 2
     notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
     conn = connect(db)
     try:
-        result = run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
+        result = run_draft_mom(conn, notion, client, cfg.projects_data_source, cfg.contacts_data_source,
                                cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
                                llm=_llm(cfg))
     except MomAlreadySent as exc:
@@ -362,7 +373,7 @@ def _draft_mom(args, notion, now) -> int:
     return 0
 
 
-def _send_ready_mom(args, notion, now) -> int:
+def _send_ready_mom(args, notion, now, client) -> int:
     cfg = _load(args.config)
     if cfg is None:
         return 2
@@ -377,10 +388,14 @@ def _send_ready_mom(args, notion, now) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
+    client = client or client_from_env()
+    if client is None and not args.dry_print:
+        print(_NEEDS_API, file=sys.stderr)
+        return 2
     notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     try:
-        run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+        run_send_ready_mom(notion, client, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
                            cfg.brief.group_topic_id, now or datetime.now(timezone.utc),
                            banner=cfg.brief.test_banner, dry_print=args.dry_print,
                            log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))

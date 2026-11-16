@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 import test_mom
+from fake_minutes import MinutesApi
 from fake_api import FakeApi
 from fake_notion import (CONTACTS, JOB_ORDERS, MEETING, PROJECTS, FakeNotion, contact, job_order, meeting_page,
                          project, relation, rich, rt, select)
@@ -56,11 +57,11 @@ def test_notices_runs_keep_the_bold_flag():
 def test_send_ready_mom_messages_and_sent_at_are_the_same():
     old, new = setup(), setup()
     gw_old, gw_new = FakeGateway(), FakeGateway()
-    run_send_ready_mom(old, MEETING, gw_old, CHAT, TOPIC, NOW, log=lambda _: None)
+    run_send_ready_mom(old, old.api, MEETING, gw_old, CHAT, TOPIC, NOW, log=lambda _: None)
     api = via_api(new)
-    run_send_ready_mom(api, MEETING, gw_new, CHAT, TOPIC, NOW, log=lambda _: None)
+    run_send_ready_mom(api, new.api, MEETING, gw_new, CHAT, TOPIC, NOW, log=lambda _: None)
     assert gw_new.sent == gw_old.sent and gw_new.sent
-    assert new.sent_marked == old.sent_marked and new.sent_marked  # the write went to Notion
+    assert new.api.verbs("mark-sent") == old.api.verbs("mark-sent") and new.api.verbs("mark-sent")
 
 
 def test_build_messages_keep_rich_text_and_nesting():
@@ -93,8 +94,9 @@ def test_draft_mom_creates_the_same_page():
                        "Upcoming Holidays and Leaves\nOto Nov 17\nNov 18 holiday")
         reader = via_api(n) if wrap else n
         conn = draft(n)
-        run_draft_mom(conn, reader, PROJECTS, CONTACTS, MEETING, test_mom.D, log=lambda _: None)
-        return n.created, n.trashed
+        api = MinutesApi(n)
+        run_draft_mom(conn, reader, api, PROJECTS, CONTACTS, MEETING, test_mom.D, log=lambda _: None)
+        return [(v, i.model_dump()) for v, i in api.writes]
     assert run(True) == run(False)
 
 
@@ -149,7 +151,7 @@ def test_a_second_related_project_is_a_gap_the_records_show():
     lambda a: load_contacts(a, CONTACTS),
     lambda a: a.retrieve_data_source(PROJECTS),
     lambda a: load_minutes(a, MEETING, date(2026, 11, 20)),
-    lambda a: run_send_ready_mom(a, MEETING, FakeGateway(), CHAT, TOPIC, NOW, log=lambda _: None),
+    lambda a: run_send_ready_mom(a, MinutesApi(FakeNotion()), MEETING, FakeGateway(), CHAT, TOPIC, NOW, log=lambda _: None),
     lambda a: run_snapshot(sqlite3.connect(":memory:"), a, PROJECTS, CONTACTS, "manual", NOW),
     lambda a: run_jo_snapshot(jo_connect(), a, JOB_ORDERS, CONTACTS, PROJECTS, "manual", NOW),
 ])
@@ -163,15 +165,16 @@ def test_unavailable_api_raises_an_oserror_without_data(call):
 def test_send_ready_mom_marks_nothing_when_unavailable():
     n = setup()
     with pytest.raises(ApiUnavailable):
-        run_send_ready_mom(via_api(n, down=True), MEETING, FakeGateway(), CHAT, TOPIC, NOW, log=lambda _: None)
-    assert not n.sent_marked
+        run_send_ready_mom(via_api(n, down=True), n.api, MEETING, FakeGateway(), CHAT, TOPIC, NOW, log=lambda _: None)
+    assert not n.api.writes
 
 
 def test_draft_mom_unavailable_creates_nothing():
     n = FakeNotion(test_mom.pages(True), test_mom.contacts())
+    api = MinutesApi(n)
     with pytest.raises(ApiUnavailable):
-        run_draft_mom(draft(n), via_api(n, down=True), PROJECTS, CONTACTS, MEETING, test_mom.D, log=lambda _: None)
-    assert not n.created
+        run_draft_mom(draft(n), via_api(n, down=True), api, PROJECTS, CONTACTS, MEETING, test_mom.D, log=lambda _: None)
+    assert not api.writes
 
 
 def test_shift_report_treats_an_unavailable_api_as_the_notion_outage():

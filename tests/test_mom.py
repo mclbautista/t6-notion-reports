@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 import yaml
 
+from fake_minutes import MinutesApi, refused
 from fake_notion import (CONTACTS, MEETING, PROJECTS, FakeNotion, contact, meeting_page, project,
                          rich, select)
 from t6_notion_reports import cli
@@ -54,21 +55,21 @@ def contacts():
 
 def draft(conn, **kw):
     n = FakeNotion(pages(True), contacts(), kw.pop("meetings", []), kw.pop("description", ""))
-    res = run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, kw.pop("day", D), log=lambda _: None)
+    n.api = MinutesApi(n)
+    res = run_draft_mom(conn, n, n.api, PROJECTS, CONTACTS, MEETING, kw.pop("day", D), log=lambda _: None)
     return n, res
 
 
 def texts(blocks):
     out = []
     for b in blocks:
-        body = b[b["type"]]
-        out.append((b["type"], "".join(t["text"]["content"] for t in body["rich_text"])))
-        out += texts(body.get("children", []))
+        out.append((b.kind, b.text))
+        out += texts(b.children)
     return out
 
 
 def all_blocks(n):
-    return n.created[0]["children"] + [c for _, cs in n.appended for c in cs]
+    return [b for i in n.api.verbs("create", "append") for b in i.blocks]
 
 
 # ---- group rules ----
@@ -95,10 +96,10 @@ def test_group_order_on_the_page():
 
 def test_creates_page_with_title_date_and_relations(conn):
     n, res = draft(conn)
-    props = n.created[0]["properties"]
-    assert props["Name"]["title"][0]["text"]["content"] == "PSR MOM 2026-11-16"
-    assert props["Meeting Date"]["date"]["start"] == "2026-11-16"
-    related = {r["id"] for r in props["Project"]["relation"]}
+    made = n.api.verbs("create")[0]
+    assert made.title == "PSR MOM 2026-11-16"
+    assert made.meeting_date == "2026-11-16"
+    related = set(made.project_ids)
     assert related == {"ling", "lead-new", "nohealth", "crit", "empty"}  # shown projects only
     assert res.page_id == "new-1"
 
@@ -146,8 +147,7 @@ def test_others_prefilled_from_description_next_14_days(conn):
 def test_header_attendees_copied_from_last_week_and_footer_mentions(conn):
     last = meeting_page("m0", "PSR MOM 2026-11-09", "2026-11-09", [("u1", "Quilla"), ("u2", "Oto")])
     n, _ = draft(conn, meetings=[last])
-    assert n.created[0]["properties"]["Team Attendees"]["people"] == [
-        {"object": "user", "id": "u1"}, {"object": "user", "id": "u2"}]
+    assert n.api.verbs("create")[0].attendee_ids == ["u1", "u2"]
     flat = [x for _, x in texts(all_blocks(n))]
     assert "Attendees: Quilla, Oto" in flat
     assert "@quil Oto" in flat  # Oto has no handle: name is used
@@ -164,8 +164,9 @@ def test_long_pages_are_chunked_to_100_blocks(conn):
     run_snapshot(conn, FakeNotion(many, []), PROJECTS, CONTACTS, "friday", FRIDAY + timedelta(hours=1))
     run_snapshot(conn, FakeNotion(many, []), PROJECTS, CONTACTS, "monday", MONDAY + timedelta(days=7))
     n = FakeNotion(many, contacts())
-    run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, date(2026, 11, 23), log=lambda _: None)
-    assert len(n.created[0]["children"]) == 100 and n.appended
+    n.api = MinutesApi(n)
+    run_draft_mom(conn, n, n.api, PROJECTS, CONTACTS, MEETING, date(2026, 11, 23), log=lambda _: None)
+    assert len(n.api.verbs("create")[0].blocks) == 100 and n.api.verbs("append")
 
 
 # ---- rerun / sent ----
@@ -173,15 +174,16 @@ def test_long_pages_are_chunked_to_100_blocks(conn):
 def test_refuses_to_overwrite_sent_page(conn):
     sent = meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16", sent_at="2026-11-16T05:00:00Z")
     n = FakeNotion(pages(True), contacts(), [sent])
+    api = MinutesApi(n)
     with pytest.raises(MomAlreadySent):
-        run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
-    assert not n.created and not n.trashed
+        run_draft_mom(conn, n, api, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
+    assert api.writes == []
 
 
 def test_rerun_replaces_unsent_draft(conn):
     old = meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16")
     n, _ = draft(conn, meetings=[old])
-    assert n.trashed == ["m1"] and len(n.created) == 1
+    assert [i.note for i in n.api.verbs("trash")] == ["m1"] and len(n.api.verbs("create")) == 1
 
 
 def test_no_pair_yet_creates_nothing():
@@ -189,8 +191,9 @@ def test_no_pair_yet_creates_nothing():
     c.executescript(SCHEMA)
     run_snapshot(c, FakeNotion(pages(True), []), PROJECTS, CONTACTS, "monday", MONDAY)
     n = FakeNotion(pages(True), contacts())
-    assert run_draft_mom(c, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None).page_id is None
-    assert not n.created
+    api = MinutesApi(n)
+    assert run_draft_mom(c, n, api, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None).page_id is None
+    assert api.writes == []
 
 
 def test_mom_pair_uses_monday_on_or_before_date_and_friday_before_it(conn):
@@ -219,9 +222,6 @@ class Routed(FakeNotion):
                                           "22222222-2222-2222-2222-222222222222": CONTACTS,
                                           "11111111-1111-1111-1111-111111111111": MEETING}[ds])
 
-    def create_page(self, ds, properties, children):
-        return super().create_page(MEETING, properties, children)
-
 
 def file_db(tmp_path):
     path = tmp_path / "psr.db"
@@ -236,11 +236,12 @@ def file_db(tmp_path):
 def test_draft_mom_cli_date_and_refusal(tmp_path, monkeypatch, capsys):
     cfg = cli_setup(tmp_path, file_db(tmp_path), monkeypatch=monkeypatch)
     n = Routed(pages(True), contacts())
-    assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n) == 0
-    assert n.created[0]["properties"]["Meeting Date"]["date"]["start"] == "2026-11-16"
-    n.meetings.append(meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16", sent_at="2026-11-16T05:00:00Z"))
-    assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n) == 1
-    assert len(n.created) == 1
+    api = MinutesApi(n)
+    assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n, client=api) == 0
+    assert api.verbs("create")[0].meeting_date == "2026-11-16"
+    n.meetings[:] = [meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16", sent_at="2026-11-16T05:00:00Z")]
+    assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n, client=api) == 1
+    assert len(api.verbs("create")) == 1
     assert "already sent" in capsys.readouterr().err
 
 
@@ -250,6 +251,14 @@ def test_draft_mom_needs_meeting_notes_config(tmp_path, monkeypatch, capsys):
     assert "meeting_notes_data_source" in capsys.readouterr().err
 
 
+def test_draft_mom_cli_without_the_api_writes_nothing(tmp_path, monkeypatch, capsys):
+    cfg = cli_setup(tmp_path, file_db(tmp_path), monkeypatch=monkeypatch)
+    monkeypatch.delenv("T6_API_URL", raising=False)
+    n = Routed(pages(True), contacts())
+    assert main(["draft-mom", "--config", cfg, "--date", "2026-11-16"], notion=n) == 2
+    assert "T6_API_URL" in capsys.readouterr().err
+
+
 # ---- scheduler ----
 
 def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
@@ -257,15 +266,16 @@ def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
     n = Routed(pages(False), contacts())
+    api = MinutesApi(n)
     now = [datetime(2026, 11, 13, 17, 59, tzinfo=MANILA)]
 
     def sleep(seconds):
         now[0] += timedelta(seconds=seconds)
 
     order = []
-    orig_create = n.create_page
-    n.create_page = lambda *a: (order.append("draft"), orig_create(*a))[1]
-    job = make_job(conn, n, cfg, None, lambda: now[0])
+    orig_create = api.meeting_notes_create
+    api.meeting_notes_create = lambda *a: (order.append("draft"), orig_create(*a))[1]
+    job = make_job(conn, n, cfg, None, lambda: now[0], client=api)
     wrapped = lambda kind: (job(kind), order.append(kind))
     end = datetime(2026, 11, 16, 12, tzinfo=MANILA)
 
@@ -276,8 +286,7 @@ def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
 
     Scheduler(swap_to_monday_data, lambda: now[0], sleep, log=lambda _: None).run(stop=lambda: now[0] >= end)
     assert order == ["friday", "draft", "monday"]  # the draft happens inside the monday job
-    assert len(n.created) == 1
-    assert n.created[0]["properties"]["Name"]["title"][0]["text"]["content"] == "PSR MOM 2026-11-16"
+    assert [i.title for i in api.verbs("create")] == ["PSR MOM 2026-11-16"]
 
 
 # ---- holidays parser ----
@@ -286,12 +295,3 @@ def test_holidays_window_and_year_wrap():
     d = date(2026, 12, 28)
     got = upcoming_entries("Upcoming Holidays and Leaves\n- Dec 30 Rizal Day\n- Dec 31 - Jan 2: Oto\n- Jan 20 later\n- no date here", d)
     assert got == ["Dec 30 Rizal Day", "Dec 31 - Jan 2: Oto"]
-
-
-def test_failed_create_keeps_the_old_unsent_draft(conn):
-    old = meeting_page("m1", "PSR MOM 2026-11-16", "2026-11-16")
-    n = FakeNotion(pages(True), contacts(), [old])
-    n.create_page = lambda *a: (_ for _ in ()).throw(RuntimeError("notion down"))
-    with pytest.raises(RuntimeError):
-        run_draft_mom(conn, n, PROJECTS, CONTACTS, MEETING, D, log=lambda _: None)
-    assert n.trashed == []

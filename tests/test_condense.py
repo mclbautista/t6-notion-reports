@@ -97,6 +97,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, MEETING, PROJECTS, FakeNotion, project, rich
+from fake_minutes import MinutesApi
 from t6_notion_reports.mom_job import run_draft_mom
 from t6_notion_reports.snapshot_job import run_snapshot
 from t6_notion_reports.snapshots import SCHEMA
@@ -122,6 +123,7 @@ def drafted(answers):
     run_snapshot(conn, FakeNotion(snap(OLD_ALL), []), PROJECTS, CONTACTS, "friday", FRI)
     run_snapshot(conn, FakeNotion(snap(NEW_ALL), []), PROJECTS, CONTACTS, "monday", MON)
     notion = FakeNotion(snap(NEW_ALL), [])
+    api = MinutesApi(notion)
 
     class Llm:
         def complete(self, system, user, schema):
@@ -129,19 +131,16 @@ def drafted(answers):
             if isinstance(answers[code], Exception):
                 raise answers[code]
             return schema(bullets=answers[code])
-    run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, date(2026, 10, 26), log=lambda _: None, llm=Llm())
-    return notion.created[0]["children"] + [c for _, cs in notion.appended for c in cs]
+    run_draft_mom(conn, notion, api, PROJECTS, CONTACTS, MEETING, date(2026, 10, 26), log=lambda _: None, llm=Llm())
+    return [b for i in api.verbs("create", "append") for b in i.blocks]
 
 
 def project_block(blocks, code):
-    return next(b for b in blocks if b["type"] == "bulleted_list_item"
-                and "".join(t["text"]["content"] for t in b[b["type"]]["rich_text"]).startswith(code))
+    return next(b for b in blocks if b.kind == "bulleted_list_item" and b.text.startswith(code))
 
 
 def flat(block):
-    body = block[block["type"]]
-    return [("".join(t["text"]["content"] for t in body["rich_text"]), block["type"]),
-            *[x for c in body.get("children", []) for x in flat(c)]]
+    return [(block.text, block.kind), *[x for c in block.children for x in flat(c)]]
 
 
 import json  # noqa: E402
@@ -193,12 +192,13 @@ def test_minutes_job_redacts_contacts_other_projects_and_ids_then_restores_bulle
     run_snapshot(conn, FakeNotion(before, people), PROJECTS, CONTACTS, "friday", FRI)
     run_snapshot(conn, FakeNotion(after, people), PROJECTS, CONTACTS, "monday", MON)
     notion = FakeNotion(after, people)
+    api = MinutesApi(notion)
     class Llm:
         def complete(self, system, user, schema):
             assert all(private not in user for private in ("Dario", "Other Show", "123456789", "person-page"))
             return schema(bullets=json.loads(user)["new_blocks"])
-    run_draft_mom(conn, notion, PROJECTS, CONTACTS, MEETING, MEET, log=lambda _: None, llm=Llm())
-    blocks = notion.created[0]["children"]
+    run_draft_mom(conn, notion, api, PROJECTS, CONTACTS, MEETING, MEET, log=lambda _: None, llm=Llm())
+    blocks = api.verbs("create")[0].blocks
     lines = [text for text, _ in flat(project_block(blocks, "OWN"))]
     assert "Dario confirmed Other Show [id]" in lines
     assert "(raw)" not in lines[0]

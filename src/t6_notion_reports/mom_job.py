@@ -1,4 +1,4 @@
-"""Draft the PSR minutes in Notion: after the Monday 11:00 snapshot, or by hand with ``draft-mom``."""
+"""Draft the PSR minutes (written through the t6 API): after the Monday 11:00 snapshot, or by hand with ``draft-mom``."""
 from __future__ import annotations
 
 import sqlite3
@@ -9,13 +9,13 @@ from typing import Callable
 from .contacts import load_contacts
 from .holidays import upcoming_entries
 from .llm import LlmClient
+from .minutes_api import MinutesApiError, create_draft, previous_attendees, trash_draft
 from .mom import build_draft, condense_draft, render_blocks
 from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
 
 TITLE_PREFIX = "PSR MOM"
-CHUNK = 100  # Notion accepts at most 100 child blocks per request
 
 
 class MomAlreadySent(Exception):
@@ -34,7 +34,7 @@ def title_for(meeting_date: date) -> str:
 
 
 def run_draft_mom(
-    conn: sqlite3.Connection, notion, projects_ds: str, contacts_ds: str, meeting_notes_ds: str,
+    conn: sqlite3.Connection, notion, client, projects_ds: str, contacts_ds: str, meeting_notes_ds: str,
     meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
 ) -> MomResult:
     pair = mom_diff_pair(conn, meeting_date)
@@ -63,47 +63,26 @@ def run_draft_mom(
     description = _plain(notion.retrieve_data_source(projects_ds).get("description") or [])
     others = upcoming_entries(description, meeting_date)
 
-    people = _people(_previous_draft(notion, meeting_notes_ds, meeting_date))
+    people = previous_attendees(client, TITLE_PREFIX, meeting_date)
     contacts = {c.name.lower(): c for c in all_contacts.values()}
     mentions = []
-    for p in people:
-        c = contacts.get(str(p.get("name") or "").lower())
-        mentions.append(f"@{c.handle}" if c and c.handle else str(p.get("name") or ""))
+    for _, name in people:
+        c = contacts.get(name.lower())
+        mentions.append(f"@{c.handle}" if c and c.handle else name)
 
-    blocks = render_blocks(draft, [str(p.get("name") or "") for p in people], others, [m for m in mentions if m])
+    blocks = render_blocks(draft, [name for _, name in people], others, [m for m in mentions if m])
 
-    properties = {
-        "Name": {"title": [{"type": "text", "text": {"content": title}}]},
-        "Meeting Date": {"date": {"start": meeting_date.isoformat()}},
-        "Project": {"relation": [{"id": i} for i in draft.project_ids[:100]]},
-        "Team Attendees": {"people": [{"object": "user", "id": p["id"]} for p in people]},
-    }
-    page = notion.create_page(meeting_notes_ds, properties, blocks[:CHUNK])
-    for i in range(CHUNK, len(blocks), CHUNK):
-        notion.append_children(page["id"], blocks[i:i + CHUNK])
-    # A re-run replaces the unsent draft, but only once the new page exists.
+    page_id = create_draft(client, title, meeting_date, draft.project_ids[:100], [i for i, _ in people], blocks)
+    # A re-run replaces the unsent draft, but only once the new page exists. A failed trash leaves two
+    # unsent drafts; the next run finds both by title and trashes them.
     for old_page in existing:
-        notion.update_page(old_page["id"], {"in_trash": True})
+        try:
+            trash_draft(client, old_page["id"])
+        except MinutesApiError as exc:
+            log(f"mom trash failed: {exc}")
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
-    return MomResult(page["id"], len(draft.entries), len(draft.unchanged))
-
-
-def _previous_draft(notion, meeting_notes_ds: str, before: date) -> dict | None:
-    pages = notion.query_data_source(
-        meeting_notes_ds, filter={"property": "Name", "title": {"starts_with": TITLE_PREFIX}})
-    dated = []
-    for p in pages:
-        start = ((p["properties"].get("Meeting Date") or {}).get("date") or {}).get("start")
-        if start and _title(p).startswith(TITLE_PREFIX) and not p.get("in_trash") and date.fromisoformat(start[:10]) < before:
-            dated.append((start[:10], p))
-    return max(dated, key=lambda t: t[0])[1] if dated else None
-
-
-def _people(page: dict | None) -> list[dict]:
-    if not page:
-        return []
-    return list((page["properties"].get("Team Attendees") or {}).get("people") or [])
+    return MomResult(page_id, len(draft.entries), len(draft.unchanged))
 
 
 def _title(page: dict) -> str:

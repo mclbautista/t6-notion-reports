@@ -14,6 +14,7 @@ from typing import Callable
 
 from .briefing import BANNER
 from .gateway import GatewayError
+from .minutes_api import MinutesApiError, mark_sent
 from .mom_job import TITLE_PREFIX
 from .schedule import MANILA
 from .telegram_html import Block, Line, Span, Quote, render_messages
@@ -37,7 +38,7 @@ class SendResult:
 
 
 def run_send_ready_mom(
-    notion, meeting_notes_ds: str, gateway, chat_id: int, topic_id: int | None, now: datetime,
+    notion, client, meeting_notes_ds: str, gateway, chat_id: int, topic_id: int | None, now: datetime,
     banner: bool = False, dry_print: bool = False,
     out: Callable[[str], None] = print, log: Callable[[str], None] = print,
 ) -> SendResult:
@@ -63,13 +64,17 @@ def run_send_ready_mom(
                 continue
             for key, text in keyed:  # in order; the first failure stops this page, the next check retries it
                 gateway.notify(chat_id, text, key, topic_id)
-            notion.update_page(page["id"], {"properties": {
-                "Sent at": {"date": {"start": now.astimezone(MANILA).isoformat(timespec="seconds")}}}})
+            # A failed mark leaves Sent at empty and counts the page as failed; the next check re-sends the
+            # parts, which is safe because the gateway keys stop an accepted part from going twice.
+            mark_sent(client, page["id"], now.astimezone(MANILA))
             sent_pages += 1
             total += len(keyed)
         except GatewayError as exc:
             failed += 1
             log(f"send-ready-mom send failed page={page['id']} error={exc}")
+        except MinutesApiError as exc:  # the verb and the API's rule, no page text
+            failed += 1
+            log(f"send-ready-mom mark failed page={page['id']} error={exc}")
         except Exception as exc:  # type only: messages may hold page text
             failed += 1
             log(f"send-ready-mom failed page={page['id']} error={type(exc).__name__}")

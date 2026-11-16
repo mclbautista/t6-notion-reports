@@ -106,10 +106,6 @@ class FakeNotion:
         self.meetings = list(meetings)
         self.description = description
         self.queried: list[str] = []
-        self.created: list[dict] = []  # raw create_page bodies: {"properties", "children"}
-        self.appended: list[tuple[str, list[dict]]] = []
-        self.trashed: list[str] = []
-        self.sent_marked: list[tuple[str, dict]] = []  # (page id, properties) from property updates
         self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
 
     def query_data_source(self, data_source_id, filter=None):
@@ -123,25 +119,6 @@ class FakeNotion:
         rich_items = self.description if isinstance(self.description, list) else [{"plain_text": self.description}]
         return {"id": data_source_id, "description": rich_items}
 
-    def create_page(self, data_source_id, properties, children):
-        assert data_source_id == MEETING and len(children) <= 100
-        page_id = f"new-{len(self.created) + 1}"
-        self.created.append({"id": page_id, "properties": properties, "children": children})
-        return {"id": page_id}
-
-    def update_page(self, page_id, body):
-        if "properties" in body:
-            self.sent_marked.append((page_id, body["properties"]))
-            for p in self.meetings:
-                if p["id"] == page_id:
-                    p["properties"].update(body["properties"])
-            return {"id": page_id}
-        self.trashed.append(page_id)
-        for p in self.meetings:
-            if p["id"] == page_id:
-                p["in_trash"] = True
-        return {"id": page_id}
-
     def list_block_children(self, block_id):
         """Children of a page (from ``page_blocks``) or of a block built with block(children=...)."""
         if block_id in self.page_blocks:
@@ -151,11 +128,6 @@ class FakeNotion:
             if found is not None:
                 return list(found["_children"])
         raise KeyError(block_id)
-
-    def append_children(self, block_id, children):
-        assert len(children) <= 100
-        self.appended.append((block_id, children))
-        return {}
 
 
 def _find(blocks, block_id):
