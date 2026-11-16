@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
-from .concern_api import ConcernApiError, observe, open_concerns, scan
+from .concern_api import ConcernApiError, observe, open_concerns, record_message, scan
 from .concerns import AgedConcerns, QuietConcern, aged_from_reply, quiet_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
@@ -36,6 +36,9 @@ class BriefFailed(Exception):
 
 
 CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
+RECORD_TRIES = 6  # polls of the gateway for a message's Telegram id
+RECORD_WAIT = 10  # seconds between polls
+RECORD_CAP = 2 * 60  # seconds for the whole record-message step
 SCAN_BUDGET = 10 * 60  # seconds for the whole PM Notes scan step; a project not reached is skipped
 
 # The sources of a finding, as ``concern observe`` names them.
@@ -69,6 +72,7 @@ def run_brief(
     budget: float = CONSOLIDATION_BUDGET,
     scan_budget: float = SCAN_BUDGET,
     monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
@@ -208,19 +212,67 @@ def run_brief(
         return BriefResult(messages=tuple(messages), changed=changed, llm_failed=len(llm_failed))
 
     sent = failed = 0
+    refs: list[tuple[OutboundMessage, int]] = []
     for m in messages:
         try:
-            gateway.notify(m.to, m.text, m.key, m.topic)
+            refs.append((m, gateway.notify(m.to, m.text, m.key, m.topic)))
             sent += 1
         except GatewayError as exc:
             failed += 1
             log(f"brief send failed key={m.key} error={exc}")
     log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} llm_failed={len(llm_failed)}")
+    try:  # best effort, after the last message is queued: nothing in it changes what the brief returns
+        record_concerns(notion.client, gateway, refs, today.isoformat(), log, sleep, monotonic)
+    except Exception as exc:
+        log(f"brief record-message failed error={type(exc).__name__}")
     if no_digest:
         raise BriefFailed("No digest recipient has a TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
+
+
+def record_concerns(
+    client, gateway, sent, brief_date: str, log, sleep: Callable[[float], None], monotonic: Callable[[], float],
+    cap: float = RECORD_CAP,
+) -> None:
+    """Tell the API which sent message carried each Concern (``concern record-message``), so a reply to it can be kept.
+
+    ``sent`` holds each queued message with its gateway ``message_ref``. For a message that carried Concerns the Telegram
+    id is polled (``RECORD_TRIES`` times, ``RECORD_WAIT`` seconds apart, until the first id); then each Concern is
+    recorded once, with the key ``psr-brief-<date>-<message key>-<concern id>``. A message with no id in time, and
+    everything past the total ``cap``, counts as missing_id; a refused or failed call counts as refused, logged by rule
+    name or error type only. Nothing here raises, and no send is repeated.
+    """
+    started = monotonic()
+    over = lambda: monotonic() - started >= cap
+    ok = missing = refused = 0
+    for m, ref in sent:
+        if not m.concern_ids:
+            continue
+        mid = None
+        for attempt in range(RECORD_TRIES):
+            if attempt:
+                sleep(RECORD_WAIT)
+            if over():
+                break
+            mid = gateway.sent_message_id(ref)
+            if mid is not None:
+                break
+        if mid is None:
+            missing += len(m.concern_ids)
+            continue
+        for concern in m.concern_ids:
+            if over():
+                missing += 1
+                continue
+            try:
+                record_message(client, concern, m.to, mid, brief_date, f"psr-brief-{brief_date}-{m.key}-{concern}")
+                ok += 1
+            except OSError as exc:
+                refused += 1
+                log(f"brief record-message failed error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+    log(f"brief record-message ok={ok} missing_id={missing} refused={refused}")
 
 
 def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monotonic: Callable[[], float] = time.monotonic) -> None:
@@ -454,6 +506,7 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
         if ch.kind != "removed" and ch.page_id in flagged:
             a = aged.get(ch.page_id, AgedConcerns())
             ch.flags, ch.concerns, ch.resolved = flagged[ch.page_id].lines, a.open, a.resolved
+            ch.concern_ids = a.open_ids
             ch.note_dates = note_dates.get(ch.page_id, ())
         shown.add(ch.page_id)
     extra = []
@@ -463,6 +516,7 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
         if page_id not in shown and (f.lines or a.open or a.resolved or notes):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
             ch.flags, ch.concerns, ch.resolved, ch.note_dates = f.lines, a.open, a.resolved, notes
+            ch.concern_ids = a.open_ids
             extra.append(ch)
     return sort_projects(changes + extra) if extra else changes
 

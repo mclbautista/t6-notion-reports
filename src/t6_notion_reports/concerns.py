@@ -23,6 +23,7 @@ class AgedConcerns:
 
     open: tuple[str, ...] = ()
     resolved: tuple[str, ...] = ()
+    open_ids: tuple[str, ...] = ()  # the Concern ID of each line of ``open``, in order; empty when the API gave none
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dic
     return {
         page_of[p["project_id"]]: AgedConcerns(
             tuple(line_text(c) for c in p["open"] if c["state"] != QUIET), tuple(c["text"] for c in p["closed_since_last_run"]),
+            tuple(c["id"] for c in p["open"] if c["state"] != QUIET),
         )
         for p in reply["projects"] if p["project_id"] in page_of
     }

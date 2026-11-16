@@ -89,3 +89,18 @@ class GatewayClient:
         # The body key is not pinned down in the spec: accept {"state": ..} or {"status": ..}.
         state = (data.get("state") or data.get("status")) if status == 200 and isinstance(data, dict) else None
         return state if isinstance(state, str) and state in DELIVERY_STATES else UNKNOWN
+
+    def sent_message_id(self, message_ref: int) -> int | None:
+        """The Telegram message id of one ``message_ref`` once it is ``sent`` (``GET /notify/{ref}``), else ``None``.
+
+        Never raises: a transport error, a non-200 status, a state other than ``sent`` or a body without an integer
+        ``telegram_message_id`` is ``None``. One attempt, no retries; the caller polls.
+        """
+        try:
+            status, data = self._transport(f"{self._url}/{int(message_ref)}", dict(self._headers), None)
+        except Exception:
+            return None
+        if status != 200 or not isinstance(data, dict) or (data.get("state") or data.get("status")) != "sent":
+            return None
+        mid = data.get("telegram_message_id")
+        return mid if isinstance(mid, int) and not isinstance(mid, bool) else None

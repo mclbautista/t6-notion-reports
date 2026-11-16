@@ -12,12 +12,14 @@ from typing import Any
 
 from t6.client import APIError, Unavailable
 from t6.verbs import (
-    ConcernFinding, ConcernListInput, ConcernObserveInput, ConcernScanInput, ConcernUnavailable, Done, Refused,
+    ConcernFinding, ConcernListInput, ConcernObserveInput, ConcernRecordMessageInput, ConcernScanInput, ConcernUnavailable,
+    Done, Preview, Refused,
 )
 
 OBSERVE_TIMEOUT = 30
 SCAN_TIMEOUT = 60  # the API calls a model for each scan
 LIST_TIMEOUT = 30
+RECORD_TIMEOUT = 20
 
 
 class ConcernApiError(OSError):
@@ -73,3 +75,25 @@ def open_concerns(client) -> list[dict[str, Any]]:
     """Every Concern that is not closed (``concern list`` with ``open``), oldest first: id, project_id, owner_id,
     waiting_on, text, state ("open" or "quiet") and more."""
     return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(open=True))["concerns"]
+
+
+def record_message(client, concern: str, chat: int, message_id: int, brief_date: str, key: str) -> None:
+    """``concern record-message``: the Telegram message ``message_id`` of ``chat`` carried ``concern`` in the brief of
+    ``brief_date``. The verb is two-step: the first call answers a preview with a token, and the same call with the same
+    key and ``confirm`` set to that token does it. A repeat of a done call is answered as done."""
+    method = limited(client, RECORD_TIMEOUT).concern_record_message
+    inputs = ConcernRecordMessageInput(
+        concern=concern, chat=str(chat), message_id=str(message_id), brief_date=brief_date, idempotency_key=key,
+    )
+    try:
+        outcome = method(inputs)
+        if isinstance(outcome, Preview):
+            outcome = method(inputs.model_copy(update={"confirm": outcome.token}))
+    except APIError as exc:
+        raise ConcernApiError(f"concern record-message http status={exc.status}") from None
+    if isinstance(outcome, Unavailable):
+        raise ConcernApiError("concern record-message unreachable")
+    if isinstance(outcome, Refused):
+        raise ConcernApiError(f"concern record-message refused rule={outcome.rule}")
+    if not isinstance(outcome, Done):
+        raise ConcernApiError(f"concern record-message answered {outcome.outcome}")

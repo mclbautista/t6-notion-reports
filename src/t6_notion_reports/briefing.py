@@ -5,7 +5,7 @@ coordinator, then Cyril's digest.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 from .concerns import QUIET_LABEL, RESOLVED_LABEL, QuietConcern
@@ -35,6 +35,7 @@ class OutboundMessage:
     text: str
     key: str
     recipient: str  # for logs: a name, never message text
+    concern_ids: tuple[str, ...] = ()  # the Concerns this message shows, for ``concern record-message``
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,7 @@ def _raise_block(items: list[QuietConcern]) -> list[Block]:
     """The "Raise at PSR" heading and one line per quiet Concern, or nothing."""
     if not items:
         return []
-    return [line(bold(RAISE_AT_PSR)), *(line(_raise_text(q)) for q in items), line()]
+    return [line(bold(RAISE_AT_PSR)), *(replace(line(_raise_text(q)), concern=q.concern_id) for q in items), line()]
 
 
 def _raise_text(q: QuietConcern) -> str:
@@ -225,7 +226,7 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
     return units
 
 
-def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[str]:
+def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[tuple[str, tuple[str, ...]]]:
     """Render the head, the projects and the tail into messages, splitting between projects.
 
     Policy: README's "PSR message splitting policy" records the owner's #96 approval of oversized
@@ -234,6 +235,7 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
     a message of its own goes on in the next part under the section and its own name, both marked
     "(cont.)", so no part has lines without the project they belong to; nothing is dropped. A tail
     that no longer fits starts a part headed by the message title "(cont.)", never a bare warning.
+    Each text comes with the Concern IDs of the tagged lines that landed in it (a line cut in pieces counts in the first).
     """
     def fits(blocks: list[Block]) -> bool:
         return len(render_messages(blocks, prefix=banner, limit=limit)) <= 1
@@ -246,6 +248,8 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
         quoted = isinstance(atom, Quote)
         item = atom.lines[0] if isinstance(atom, Quote) else atom
         pieces = split_line(item, quoted, limit - used)
+        if pieces and isinstance(item, Line):
+            pieces[0] = replace(pieces[0], concern=item.concern)
         return [quote(p) if quoted else p for p in pieces]
 
     parts: list[list[Block]] = []
@@ -276,7 +280,10 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
                 current = list(restart)
             current = current + [atom]
     parts.append(current)
-    return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
+    return [
+        (text, tuple(dict.fromkeys(b.concern for b in blocks if isinstance(b, Line) and b.concern)) if n == 0 else ())
+        for blocks in parts for n, text in enumerate(render_messages(blocks, prefix=banner, limit=limit))
+    ]
 
 
 def _split_points(blocks: list[Block]) -> list[Block]:
@@ -294,11 +301,11 @@ def _join(blocks: list[Block], atom: Block) -> list[Block]:
     return [*blocks, atom]
 
 
-def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[OutboundMessage]:
+def _send(to, topic, parts: list[tuple[str, tuple[str, ...]]], key: str, recipient: str) -> list[OutboundMessage]:
     # The first part keeps the spec's key, so a rerun is deduplicated by the gateway.
     return [
-        OutboundMessage(to, topic, text, key if n == 1 else f"{key}-{n}", recipient)
-        for n, text in enumerate(texts, 1)
+        OutboundMessage(to, topic, text, key if n == 1 else f"{key}-{n}", recipient, ids)
+        for n, (text, ids) in enumerate(parts, 1)
     ]
 
 
@@ -320,7 +327,8 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
-        blocks += [line(f"• {text}") for text in ch.concerns]
+        ids = ch.concern_ids or (None,) * len(ch.concerns)
+        blocks += [replace(line(f"• {text}"), concern=cid) for text, cid in zip(ch.concerns, ids)]
     if ch.resolved:
         blocks.append(line(f"{RESOLVED_LABEL}: " + "; ".join(ch.resolved)))
     blocks += [line(f"• {text}") for text in ch.summary]

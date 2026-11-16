@@ -251,6 +251,12 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   in the digest all of them, in a coordinator's DM the ones that coordinator owns, each with its owner and the party
   it waits on. A quiet Concern is not repeated in its project's lines. If the list cannot be read the section is left out
   and the digest says "Raise at PSR unavailable".
+- Recording the message that carried each Concern: after the last message is queued (never on `--dry-print`, never
+  before) the app asks the gateway (`GET /notify/{ref}`) for the Telegram id of each message that showed Concerns (6
+  tries, 10 s apart) and calls `concern record-message` for each Concern of that message (preview, then confirm, key
+  `psr-brief-<date>-<message key>-<concern id>`), so a reply to the message can be kept as a Concern note. The step
+  takes at most 2 minutes and is best effort: it changes no sent or failed count, raises nothing and repeats no send.
+  The log line is `brief record-message ok=<n> missing_id=<n> refused=<n>`; a refusal is logged by rule name only.
 - `brief --dry-print --show-llm-input` prints every payload as the app builds it and calls no LLM. The API masks the
   names, so it is not the text the model sees.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).

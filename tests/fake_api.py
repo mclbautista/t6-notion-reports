@@ -5,7 +5,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from t6.client import Unavailable
-from t6.verbs import Done, Refused
+from t6.verbs import Done, Preview, Refused
 
 MANILA = timezone(timedelta(hours=8))
 
@@ -86,6 +86,7 @@ class FakeConcerns:
         self.requests: dict[str, tuple[str, dict]] = {}
         self.observed: list[object] = []  # the inputs of each call, dry runs included
         self.scans: list[object] = []  # the inputs of each ``concern scan``
+        self.recorded: list[tuple[str, str, str, str | None, str]] = []  # (concern, chat, message_id, brief_date, key), once done
 
     def close(self, text_part, on):
         """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
@@ -396,6 +397,24 @@ class FakeApi:
         if fail is not None:
             return fail(inputs) if callable(fail) else fail
         return Done(result={"project": inputs.project})
+
+    def concern_record_message(self, inputs):
+        """Two steps, as the verb: without ``confirm`` a preview with a token, with it the record. ``fail["concern
+        record-message"]`` is an outcome (or a function of the inputs) returned instead."""
+        self.calls.append("concern record-message")
+        if self.down:
+            return Unavailable("connection refused")
+        fail = self.fail.get("concern record-message")
+        if fail is not None:
+            return fail(inputs) if callable(fail) else fail
+        if inputs.confirm is None:
+            return Preview(plan={"concern": inputs.concern}, token=f"tok-{inputs.idempotency_key}")
+        if inputs.confirm != f"tok-{inputs.idempotency_key}":
+            return Refused(rule="confirm", reason="token does not match")
+        row = (inputs.concern, inputs.chat, inputs.message_id, inputs.brief_date, inputs.idempotency_key)
+        if row not in self.concerns.recorded:
+            self.concerns.recorded.append(row)
+        return Done(result={"concern": inputs.concern})
 
     def concern_list(self, inputs):
         self.calls.append("concern list")
