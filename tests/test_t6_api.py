@@ -204,3 +204,11 @@ def test_prod_coor_supe_people_are_stored_as_page_ids_when_the_api_binds_them():
     n.t6_ids = {"c-quil": "per_q1"}
     rec = n.project_records()[0].normalized()
     assert rec["Prod Coor/Supe"] == [{"id": "c-oto", "name": "Oto"}, {"id": "c-quil", "name": "Quilla"}]
+
+
+def test_find_people_asks_at_most_50_names_a_call_and_keeps_the_order():
+    n = FakeNotion(contacts=people())
+    names = ["Quilla"] + [f"Nobody{i}" for i in range(54)] + ["Oto"]
+    found = n.find_people(names)
+    assert [len(c[0]) for c in n.api.find_calls] == [50, 6] and all(c[1] for c in n.api.find_calls)
+    assert [f.name if f else None for f in found][:1] == ["Quilla"] and found[-1].name == "Oto" and len(found) == 56

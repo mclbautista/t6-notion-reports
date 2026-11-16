@@ -5,8 +5,8 @@ database description into entries (who, kind, start, end, quote). The call sees 
 today's date and nothing about projects. Code checks each entry: the quote must be an exact input
 line (a leading bullet mark aside) and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
 
-Each leave entry's name is resolved to a Contacts page with ``people_match`` (onboarded Contacts
-first). A leave clashes with a project when that page is in the project's team relations and the
+Each leave entry's name is resolved to a Contacts page by the t6 API (``person find``, one call for all the
+names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations and the
 leave comes within ``clash_days`` of the project's Playdate, Submission Deadline or Archival Deadline.
 A holiday or an office closure (kind holiday, or who ALL) never clashes. The Concern text comes from a
 code template; names that matched nobody are listed for Cyril's digest only.
@@ -21,10 +21,8 @@ from typing import Iterable
 
 from pydantic import BaseModel
 
-from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .llm import LlmClient, LlmError
-from .people_match import MatchSettings, match_person
 from .redact import Mapping, Redactor, unresolved
 from .snapshots import RELATION_FIELDS, squash
 
@@ -114,26 +112,29 @@ class LeaveClashes:
 
 def leave_clashes(
     entries: Iterable[Leave],
-    contacts: Iterable[Contact],
+    notion,
     states: dict[str, dict[str, object]],
     today: date,
     clash_days: int = DEFAULT_CLASH_DAYS,
-    matching: MatchSettings = MatchSettings(),
 ) -> LeaveClashes:
-    """Clash Concerns by project, and the leave names nobody matched. Leaves already over are ignored."""
-    contacts = list(contacts)
+    """Clash Concerns by project, and the leave names nobody matched. Leaves already over are ignored.
+
+    ``notion.find_people`` answers for all the names at once; if it raises (the API is down) so does this.
+    """
+    current = [e for e in entries if e.kind == "leave" and e.who != ALL and e.end >= today]
+    names = list(dict.fromkeys(e.who for e in current))
+    people = dict(zip(names, notion.find_people(names))) if names else {}
     concerns: dict[str, list[str]] = {}
     unmatched: list[str] = []
-    for leave in entries:
-        if leave.kind != "leave" or leave.who == ALL or leave.end < today:
-            continue
-        person = match_person(leave.who, contacts, matching)
+    for leave in current:
+        person = people[leave.who]
         if person is None:
             if leave.who not in unmatched:
                 unmatched.append(leave.who)
             continue
         for page_id, state in states.items():
-            if not any(isinstance(r, dict) and str(r.get("id")) == person.page_id
+            ids = {person.page_id, person.t6_id}
+            if not any(isinstance(r, dict) and str(r.get("id")) in ids
                        for field in RELATION_FIELDS for r in state.get(field) or []):
                 continue
             near = _nearest_date(leave, state, clash_days)

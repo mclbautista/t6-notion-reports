@@ -117,14 +117,23 @@ class FakeNotion:
 
     # The reads: what the jobs call on ``ApiNotion``, served by ``FakeApi`` from the fixtures. Set ``down`` to
     # true to make the API unreachable.
+    @property
+    def api(self):
+        if not hasattr(self, "_api"):
+            self._api = FakeApi(self)
+        return self._api
+
     def _reads(self):
-        return ApiNotion(FakeApi(self))
+        return ApiNotion(self.api)
 
     def read_contacts(self):
         return self._reads().read_contacts()
 
     def contact_names(self):
         return self._reads().contact_names()
+
+    def find_people(self, names):
+        return self._reads().find_people(names)
 
     def notices(self):
         return self._reads().notices()

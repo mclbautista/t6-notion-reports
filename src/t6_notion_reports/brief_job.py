@@ -20,7 +20,6 @@ from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_cla
 from .llm import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
-from .people_match import MatchSettings
 from .redact import Redactor
 from .schedule import MANILA
 from .snapshots import (
@@ -55,7 +54,6 @@ def run_brief(
     log: Callable[[str], None] = print,
     meeting_notes_ds: str | None = None,
     show_llm_input: bool = False,
-    matching: MatchSettings = MatchSettings(),
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
@@ -120,8 +118,8 @@ def run_brief(
     leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
     if llm is not None or show_llm_input:
         leaves = leave_concerns(
-            notion, llm, today, new_state, contacts,
-            brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
+            notion, llm, today, new_state,
+            brief.leave_clash_days, show_llm_input, out, log, redactor,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
@@ -214,7 +212,7 @@ class Leaves:
 
 
 def leave_concerns(
-    notion, llm, today, states, contacts, clash_days, matching, show_input, out, log,
+    notion, llm, today, states, clash_days, show_input, out, log,
     redactor: Redactor = Redactor(),
 ) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
@@ -241,7 +239,11 @@ def leave_concerns(
     if result.failed:
         log("brief leaves unavailable")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
-    found = leave_clashes(result.entries, contacts.values(), states, today, clash_days, matching)
+    try:
+        found = leave_clashes(result.entries, notion, states, today, clash_days)
+    except OSError as exc:  # the API did not answer: type only. No clash Concerns, the stored ones stay open.
+        log(f"brief leaves unavailable error={type(exc).__name__}")
+        return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
     unmatched = (UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ()
     return Leaves(found.concerns, cyril_notes=unmatched)
 

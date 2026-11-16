@@ -62,10 +62,6 @@ database_path: /app/data/psr.db
 #      jo_task_summaries table gets new rows (a changed model does not clear the cache, so tasks already
 #      summarised keep their Haiku summary until their Task text changes).
 
-# People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,
-# then a guarded fuzzy match). Defaults shown match the JO watchdog. A fuzzy match needs fuzzy_min_score or
-# more and a lead of fuzzy_min_lead over the runner-up (both 0 to 100). Contacts with a TelegramUserID are
-# searched first, the rest of Contacts only if none of them matches.
-# fuzzy_min_score: 90
-# fuzzy_min_lead: 8
-# honorifics: [ate, kuya, sir]             # dropped from names before matching
+# Names in free text (leave entries) are matched by the t6 API (person find). fuzzy_min_score, fuzzy_min_lead and
+# honorifics no longer do anything: an old config.yaml that has them boots, and each is logged as
+# "config key ignored: <key>".

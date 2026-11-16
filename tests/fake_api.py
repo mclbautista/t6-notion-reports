@@ -55,6 +55,33 @@ class FakeApi:
             })
         return self._done("person list", {"people": people})
 
+    def person_find(self, inputs):
+        """The API's rule is not in this repo. The fake: a name matches a Contact by its name, an alias or its first word;
+        with ``prefer_telegram`` the Contacts that have a Telegram user ID are searched first; more than one is a
+        tie (no match, needs review). ``notion.find_overrides[name]`` gives a scripted result for a name."""
+        people = self.person_list(None).result["people"] if not self.down else []
+        self.find_calls = getattr(self, "find_calls", []) + [(list(inputs.mentions or []), inputs.prefer_telegram)]
+        overrides = getattr(self.notion, "find_overrides", {})
+        results = []
+        for mention in inputs.mentions or []:
+            if mention in overrides:
+                results.append(overrides[mention])
+                continue
+            key = mention.casefold().strip()
+            tiers = [[p for p in people if p["telegram_user_id"] is not None], [p for p in people if p["telegram_user_id"] is None]]
+            if not inputs.prefer_telegram:
+                tiers = [people]
+            hits = []
+            for tier in tiers:
+                hits = [p for p in tier if key in {p["name"].casefold(), p["name"].casefold().split(" ")[0],
+                                                   *(a.casefold() for a in p["aliases"])}]
+                if hits:
+                    break
+            one = hits[0] if len(hits) == 1 else None
+            results.append({"match": one, "method": "fake", "score": 1.0 if one else 0.0,
+                            "needs_review": len(hits) > 1, "reason": None, "candidates": []})
+        return self._done("person find", {"results": results})
+
     def studio_notices(self, inputs):
         d = self.notion.description
         items = d if isinstance(d, list) else [{"plain_text": d}]

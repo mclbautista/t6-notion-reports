@@ -134,33 +134,16 @@ def test_bad_briefing_value_names_key_never_value(tmp_path, bad, key):
     assert key in str(err.value) and "hunter2" not in str(err.value)
 
 
-def test_matching_defaults_match_the_watchdog(tmp_path):
-    m = load_config(write(tmp_path, good()), ENV).matching
-    assert (m.fuzzy_min_score, m.fuzzy_min_lead, m.honorifics) == (90, 8, ("ate", "kuya", "sir"))
+def test_old_matching_keys_are_accepted_and_ignored(tmp_path):
+    text = good() + "\nfuzzy_min_score: 95\nfuzzy_min_lead: 5.5\nhonorifics: [Ate]\n"
+    assert load_config(write(tmp_path, text), ENV).ignored_keys == ("fuzzy_min_score", "fuzzy_min_lead", "honorifics")
 
 
-def test_matching_keys_are_read_from_config(tmp_path):
-    text = good() + "\nfuzzy_min_score: 95\nfuzzy_min_lead: 5.5\nhonorifics: [Ate, ' boss ']\n"
-    m = load_config(write(tmp_path, text), ENV).matching
-    assert (m.fuzzy_min_score, m.fuzzy_min_lead, m.honorifics) == (95, 5.5, ("ate", "boss"))
-
-
-@pytest.mark.parametrize("line,key", [
-    ("fuzzy_min_score: 101", "fuzzy_min_score"),
-    ("fuzzy_min_score: -1", "fuzzy_min_score"),
-    ("fuzzy_min_score: hunter2", "fuzzy_min_score"),
-    ("fuzzy_min_score: true", "fuzzy_min_score"),
-    ("fuzzy_min_lead: 101", "fuzzy_min_lead"),
-    ("fuzzy_min_lead: hunter2", "fuzzy_min_lead"),
-    ("honorifics: hunter2", "honorifics"),
-    ("honorifics: []", "honorifics"),
-    ("honorifics: [ate, 5]", "honorifics"),
-    ("honorifics: [ate, ' ']", "honorifics"),
-])
-def test_bad_matching_value_fails_boot_naming_key(tmp_path, line, key):
-    with pytest.raises(ConfigError) as err:
-        load_config(write(tmp_path, good() + "\n" + line + "\n"), ENV)
-    assert key in str(err.value) and "hunter2" not in str(err.value)
+def test_boot_logs_one_line_for_each_ignored_key(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
+    from t6_notion_reports.cli import _load
+    assert _load(write(tmp_path, good() + "\nhonorifics: [Ate]\nfuzzy_min_score: 95\n")) is not None
+    assert capsys.readouterr().err.splitlines() == ["config key ignored: fuzzy_min_score", "config key ignored: honorifics"]
 
 
 def test_lead_warning_days_defaults_to_30_and_is_read_from_config(tmp_path):

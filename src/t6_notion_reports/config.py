@@ -16,7 +16,6 @@ from .consolidate import DEFAULT_PM_NOTES_WEEKS
 from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .leaves import DEFAULT_CLASH_DAYS
 from .llm import DEFAULT_MODEL, DEFAULT_SHIFT_MODEL
-from .people_match import MatchSettings
 
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
@@ -27,10 +26,9 @@ SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "s
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
-MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
-# Read through the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
-IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source")
-KEYS = {"database_path", "meeting_notes_data_source"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
+# Read or matched by the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
+IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics")
+KEYS = {"database_path", "meeting_notes_data_source"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -87,7 +85,6 @@ class Config:
     brief: BriefSettings | None = None
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
-    matching: MatchSettings = MatchSettings()  # people matching (leave names); defaults match the watchdog
     ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
 
 
@@ -114,34 +111,8 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
-        matching=_matching(raw),
         ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
     )
-
-
-def _matching(raw: dict) -> MatchSettings:
-    d = MatchSettings()
-    honorifics = d.honorifics
-    if "honorifics" in raw:
-        val = raw["honorifics"]
-        if (not isinstance(val, list) or not val
-                or any(not isinstance(h, str) or not h.strip() for h in val)):
-            raise ConfigError("invalid config key: honorifics (expected a non-empty list of words)")
-        honorifics = tuple(h.strip().casefold() for h in val)
-    return MatchSettings(
-        fuzzy_min_score=_percent(raw, "fuzzy_min_score", d.fuzzy_min_score),
-        fuzzy_min_lead=_percent(raw, "fuzzy_min_lead", d.fuzzy_min_lead),
-        honorifics=honorifics,
-    )
-
-
-def _percent(raw: dict, key: str, default: float) -> float:
-    if key not in raw:
-        return default
-    value = raw[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
-        raise ConfigError(f"invalid config key: {key} (expected a number from 0 to 100)")
-    return value
 
 
 def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:

@@ -178,21 +178,59 @@ def test_a_nickname_is_matched_through_the_contacts_alias():
     assert "Nia Varnel is on leave" in dm(gw)
 
 
-def test_an_onboarded_contact_wins_over_a_namesake_without_a_telegram_id():
+def test_all_the_leave_names_of_a_run_go_to_person_find_in_one_call_with_telegram_first():
+    conn, notion = build([team_project()])
+    brief(conn, notion, LeaveLlm(STANDARD))
+    assert notion.api.find_calls == [(["Nia Varnel", "Cal Pardo"], True)]  # distinct, in order; no holiday, no ALL
+
+
+def test_a_namesake_the_api_cannot_tell_apart_is_unmatched_never_a_guess():
     people = contacts() + [contact("c-nia2", "Nia Varnel")]
-    conn, _ = build([team_project(Editors=relation("c-nia2"))])
+    people[-1]["properties"].update(tg("nia2_h", 555))
+    conn, _ = build([team_project()])
     notion = FakeNotion([], people, description="\n".join([HEADING, *LEAVES]))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "on leave" not in dm(gw)  # the match is the onboarded Nia, who is not on this project
-    conn, _ = build([team_project(Editors=relation("c-nia"))])
+    assert "on leave" not in dm(gw)
+    assert "Unmatched leave names (add an alias in Contacts): Nia Varnel" in digest(gw)
+
+
+def test_a_match_the_api_marks_for_review_is_unmatched():
+    conn, notion = build([team_project()])
+    nia = {"page_id": "c-nia", "t6_id": None, "name": "Nia Varnel"}
+    notion.find_overrides = {"Nia Varnel": {"match": nia, "needs_review": True, "method": "fuzzy", "score": 0.7,
+                                            "reason": None, "candidates": []}}
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Nia Varnel is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" not in dm(gw)
+    assert "Unmatched leave names (add an alias in Contacts): Nia Varnel" in digest(gw)
 
 
 def test_a_name_with_no_onboarded_match_falls_through_to_the_rest_of_contacts():
     conn, notion = build([team_project(Editors=relation("c-uma"))])
     gw, _ = brief(conn, notion, LeaveLlm([entry("Uma Belk", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")]))
     assert "Uma Belk is on leave" in dm(gw)
+
+
+def test_a_team_relation_that_holds_the_t6_id_of_the_person_is_a_clash_too():
+    conn, notion = build([team_project(Editors=relation("per_nia"))])  # a snapshot value that is a T6 ID
+    nia = {"page_id": "c-nia", "t6_id": "per_nia", "name": "Nia Varnel"}
+    notion.find_overrides = {"Nia Varnel": {"match": nia, "needs_review": False, "method": "exact", "score": 1.0,
+                                            "reason": None, "candidates": []}}
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
+    assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
+
+
+def test_an_unavailable_api_gives_no_clash_notes_leaves_unavailable_and_still_sends():
+    conn, notion = build([team_project()])
+    llm = LeaveLlm(STANDARD)
+
+    def down(names):
+        from t6_notion_reports.t6_api import ApiUnavailable
+        raise ApiUnavailable("t6 API unreachable")
+    notion.find_people = down
+    gw, logs = brief(conn, notion, llm)
+    assert "on leave" not in dm(gw) and dm(gw)
+    assert "⚠️ Leaves unavailable: no leave clash Concerns this run" in digest(gw)
+    assert "brief leaves unavailable error=ApiUnavailable" in logs
 
 
 def test_unmatched_names_appear_only_in_the_digest():

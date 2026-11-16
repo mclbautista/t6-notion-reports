@@ -20,7 +20,7 @@ from typing import Any, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonListInput, ProjectListInput, StudioNoticesInput,
+    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectListInput, StudioNoticesInput,
 )
 
 from .contacts import Contact
@@ -32,6 +32,9 @@ from .telegram_html import Span
 # The full-list reads are slow: ``jo list`` reads every page body and ``meeting-notes list`` every
 # note body. The client's own 10 s limit is too short for them.
 READ_TIMEOUT = 120
+
+# ``person find`` takes at most this many names in one call.
+FIND_LIMIT = 50
 
 # Project field -> the ``project list`` field that holds its related Contacts.
 _PROJECT_RELATIONS = {
@@ -52,6 +55,15 @@ class Notices:
 
     description: str
     runs: tuple[Run, ...]
+
+
+@dataclass(frozen=True)
+class Person:
+    """The Contact ``person find`` matched. Snapshot relations hold ``page_id``, or ``t6_id`` where the API gave one."""
+
+    page_id: str
+    t6_id: str | None
+    name: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +137,17 @@ class ApiNotion:
                 p.get("telegram_user_id"), ", ".join(p.get("aliases") or ()),
             )
         return out
+
+    def find_people(self, names: list[str]) -> list[Person | None]:
+        """One ``person find`` call for the names (``mentions``, Telegram-onboarded Contacts first); the Person each
+        names, in order, or None when the API has no match or marks it ``needs_review``. A tie is None, never a guess."""
+        found: list[Person | None] = []
+        for i in range(0, len(names), FIND_LIMIT):
+            inputs = PersonFindInput(mentions=names[i:i + FIND_LIMIT], prefer_telegram=True)
+            for r in self._read(self._client.person_find, inputs)["results"]:
+                m = r.get("match")
+                found.append(Person(m["page_id"], m.get("t6_id"), m["name"]) if m and not r.get("needs_review") else None)
+        return found
 
     def contact_names(self) -> dict[str, str | None]:
         return {p["page_id"]: p.get("name") for p in self._people()}
