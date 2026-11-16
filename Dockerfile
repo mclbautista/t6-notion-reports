@@ -15,7 +15,12 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install . \
+# t6 is installed from a git URL and the slim image has no git: add it for the install only.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && pip install . \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/data \
     && chown psr:psr /app/data \
     && chmod 0700 /app/data
