@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
 from .notion import NotionClient
+from .compare_api import run_compare
 from .t6_api import ApiNotion, client_from_env
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
@@ -62,6 +63,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
     send.add_argument("--config", default="config.yaml")
     send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
+    cmp = sub.add_parser("compare-api", help="build snapshots and the brief from Notion and from the t6 API, send nothing")
+    cmp.add_argument("--config", default="config.yaml")
+    cmp.add_argument("--out", required=True, help="folder for both outputs (they hold names; keep it on the host)")
     args = parser.parse_args(argv)
 
     if args.command == "diff":
@@ -75,6 +79,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
 
     if args.command == "brief":
         return _brief(args, notion, now)
+
+    if args.command == "compare-api":
+        return _compare_api(args, notion, now)
 
     if args.command == "draft-mom":
         return _draft_mom(args, notion, now)
@@ -131,6 +138,26 @@ def _reads(notion, cfg):
     if client is None:
         return notion
     return ApiNotion(notion, client, cfg.projects_data_source, cfg.meeting_notes_data_source)
+
+
+def _compare_api(args, notion, now) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    client = client_from_env()
+    if client is None or cfg.brief is None or not cfg.jo_data_source:
+        print("config error: compare-api needs T6_API_URL, the briefing keys and jo_data_source", file=sys.stderr)
+        return 2
+    notion = notion or NotionClient(cfg.notion_token)
+    new = ApiNotion(notion, client, cfg.projects_data_source, cfg.meeting_notes_data_source, snapshots=True)
+    try:
+        results = run_compare(cfg, notion, new, args.out, now or datetime.now(timezone.utc))
+    except OSError as exc:
+        print(f"compare-api failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    for r in results:
+        print(r.line())
+    return 0 if all(r.differing == 0 for r in results) else 1
 
 
 def _jo_snapshot(args, notion, now) -> int:

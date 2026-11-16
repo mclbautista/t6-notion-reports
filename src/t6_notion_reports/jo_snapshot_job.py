@@ -21,6 +21,8 @@ def run_jo_snapshot(
     kind: str,
     now: datetime,
 ) -> JoSnapshotResult:
+    if getattr(notion, "snapshots", False):  # compare-api: records built from ``jo list`` and ``project list``
+        return take_snapshot(conn, notion.job_order_records(), now, kind)
     if hasattr(notion, "read_contact_names"):  # a t6_api.ApiNotion
         contacts = notion.read_contact_names()
     else:

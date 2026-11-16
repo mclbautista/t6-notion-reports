@@ -30,7 +30,9 @@ def people():
     quil = contact("c-quil", "Quilla")
     quil["properties"].update({"TelegramHandle": rich("@quil"), "TelegramUserID": rich("100000001"),
                                "Aliases": rich("Quil, Q")})
-    return [quil, contact("c-oto", "Oto"), contact("c-none", "")]
+    oto = contact("c-oto", "Oto")
+    oto["properties"]["TelegramUserID"] = rich("100000002")
+    return [quil, oto, contact("c-none", "")]
 
 
 def test_contacts_are_the_same():
@@ -182,3 +184,36 @@ def test_shift_report_treats_an_unavailable_api_as_the_notion_outage():
     err, logs = go(conn, via_api(n, down=True), clock, FakeTransport())
     assert isinstance(err, NotionUnavailable) and snapshot_count(conn) == 0
     assert any("notion unavailable" in line for line in logs)
+
+
+# ---- compare-api ----
+
+def compare(tmp_path, pages, jos=()):
+    from types import SimpleNamespace
+    from t6_notion_reports.compare_api import run_compare
+    from t6_notion_reports.config import BriefSettings
+    brief = BriefSettings("http://gw:8780", -100123, None, "c-oto", False, None)
+    cfg = SimpleNamespace(database_path=str(tmp_path / "absent.db"), projects_data_source=PROJECTS,
+                          contacts_data_source=CONTACTS, jo_data_source=JOB_ORDERS,
+                          meeting_notes_data_source=MEETING, brief=brief, matching=SimpleNamespace())
+    from t6_notion_reports.people_match import MatchSettings
+    cfg.matching = MatchSettings()
+    n = FakeNotion(pages, people(), [], "", list(jos))
+    n.page_blocks = {}
+    return run_compare(cfg, n, via_api(n, snapshots=True), str(tmp_path / "out"),
+                       datetime(2026, 11, 13, 15, tzinfo=timezone.utc))
+
+
+def test_compare_reports_equal_and_counts_only(tmp_path, capsys):
+    pages = [project("p1", "Show", "QAZ", **{"T6 Post Coordinator": relation("c-quil")})]
+    results = compare(tmp_path, pages, [job_order("j1", Assigned=relation("c-quil"), Projects=relation("p1"))])
+    assert [(r.name, r.differing) for r in results] == [("projects", 0), ("job_orders", 0), ("brief", 0)]
+    assert all("Quilla" not in r.line() and "Show" not in r.line() for r in results)
+    assert "Show" in (tmp_path / "out" / "projects.old.txt").read_text()  # the files hold names, the output does not
+
+
+def test_compare_shows_a_date_end_the_api_cannot_carry(tmp_path):
+    from fake_notion import date as notion_date
+    pages = [project("p1", "Show", "QAZ", Playdate=notion_date("2026-12-01", "2026-12-03"))]
+    by_name = {r.name: r.differing for r in compare(tmp_path, pages)}
+    assert by_name["projects"] > 0
