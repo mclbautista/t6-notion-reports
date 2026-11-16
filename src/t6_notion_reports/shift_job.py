@@ -14,6 +14,7 @@ from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, 
 from .llm_api import LlmClient
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
+from .t6_api import MaskedRead
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift
 
 # The t6 API unreachable at a slot: keep trying this long, then alert once and skip the slot. The slots
@@ -240,6 +241,10 @@ def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep):
         attempts += 1
         try:
             return run_jo_snapshot(conn, notion, slot, now).rules
+        except MaskedRead:  # not an outage: no retry, one ops alert, and the report is not built
+            log(f"shift slot={slot} stopped: the service key would read masked names; nothing sent")
+            _send_masked_alert(target, slot, now, log)
+            raise
         except OSError as exc:  # URLError, HTTPError and timeouts; type only, messages may hold data
             error = type(exc).__name__
             if clock() + RETRY_EVERY > give_up:
@@ -248,6 +253,17 @@ def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep):
     log(f"shift slot={slot} T6 API unavailable attempts={attempts} error={error}; skipping the slot")
     _send_alert(target, slot, now, error, log)
     raise SlotSkipped(f"slot {slot} skipped after {attempts} attempts ({error})")
+
+
+def _send_masked_alert(target: ShiftTarget, slot: str, now: datetime, log=print) -> None:
+    """One ops alert per slot (key ``shift-<date>-<slot>-masked``), through the shared alert-destination rule."""
+    text = (f"🚨 Shift report not sent for slot {slot}: the T6 API would answer with masked names. "
+            "The reports key needs the unmasked grant.")
+    key = f"shift-{now.astimezone(MANILA).date().isoformat()}-{slot}-masked"
+    try:
+        target.send_alert(slot, text, key, log)
+    except GatewayError:
+        log(f"shift slot={slot} masked-names alert not sent: gateway rejected it")
 
 
 def _send_alert(target: ShiftTarget, slot: str, now: datetime, error: str, log=print) -> None:

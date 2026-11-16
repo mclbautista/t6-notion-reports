@@ -634,14 +634,18 @@ def test_a_masked_read_stops_the_shift_report_with_a_clear_error_and_sends_nothi
     assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=ApiNotion(client), now=PM) == 1
     err = capsys.readouterr().err
     assert "unmasked" in err and "grant" in err
-    assert t.calls == [] and client.calls == 1  # no retry, no alert, no message
+    assert client.calls == 1  # no retry
+    (alert,) = t.calls  # one ops alert, and no report
+    assert "masked names" in alert[2]["text"] and alert[2]["idempotency_key"].endswith("-1900-masked")
 
 
 def test_a_masked_read_is_never_an_outage_to_retry(tmp_path):
     from t6_notion_reports.t6_api import ApiNotion, MaskedRead
     notion = ApiNotion(MaskedClient())
+    t = FakeTransport()
     with pytest.raises(MaskedRead):
-        run_shift_report(connect(), notion, "1900", PM, target=target(FakeTransport()), clock=lambda: PM, sleep=lambda _: None)
+        run_shift_report(connect(), notion, "1900", PM, target=target(t), clock=lambda: PM, sleep=lambda _: None)
+    assert len(t.calls) == 1  # the ops alert only
     for read in (notion.read_contacts, notion.project_records, notion.job_order_records, lambda: notion.project_rule("p1")):
         with pytest.raises(MaskedRead):
             read()
