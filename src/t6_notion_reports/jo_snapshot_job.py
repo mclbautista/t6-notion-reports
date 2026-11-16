@@ -21,7 +21,10 @@ def run_jo_snapshot(
     kind: str,
     now: datetime,
 ) -> JoSnapshotResult:
-    contacts = {c["id"]: _value(c["properties"].get("Name")) for c in notion.query_data_source(contacts_ds)}
+    if hasattr(notion, "read_contact_names"):  # a t6_api.ApiNotion
+        contacts = notion.read_contact_names()
+    else:
+        contacts = {c["id"]: _value(c["properties"].get("Name")) for c in notion.query_data_source(contacts_ds)}
     projects = {p["id"]: _project_label(p) for p in notion.query_data_source(projects_ds)}
     records = [
         parse_job_order(page, contacts, projects)

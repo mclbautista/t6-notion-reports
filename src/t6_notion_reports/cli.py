@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
 from .notion import NotionClient
+from .t6_api import ApiNotion, client_from_env
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
@@ -89,7 +90,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-        notion = notion or NotionClient(cfg.notion_token)
+        notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
         gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
@@ -113,7 +114,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
             return 2
         projects_ds = projects_ds or cfg.projects_data_source
         contacts_ds = contacts_ds or cfg.contacts_data_source
-        notion = notion or NotionClient(cfg.notion_token)
+        notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
         db = db or cfg.database_path
     db = db or "data/psr.db"
     if not (projects_ds and contacts_ds):
@@ -124,6 +125,14 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     return 0
 
 
+def _reads(notion, cfg):
+    """Contacts, notices and Meeting Notes through the t6 API when T6_API_URL is set; unset keeps Notion."""
+    client = client_from_env()
+    if client is None:
+        return notion
+    return ApiNotion(notion, client, cfg.projects_data_source, cfg.meeting_notes_data_source)
+
+
 def _jo_snapshot(args, notion, now) -> int:
     cfg = _load(args.config)
     if cfg is None:
@@ -131,7 +140,7 @@ def _jo_snapshot(args, notion, now) -> int:
     if not cfg.jo_data_source:
         print("config error: missing config key: jo_data_source", file=sys.stderr)
         return 2
-    notion = notion or NotionClient(cfg.notion_token)
+    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
@@ -164,7 +173,7 @@ def _shift_report(args, notion, now) -> int:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
         target = _shift_target(cfg)
-    notion = notion or NotionClient(cfg.notion_token)
+    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
@@ -223,7 +232,7 @@ def _brief(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = notion or NotionClient(cfg.notion_token)
+    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     conn = connect(db)
     try:
@@ -308,7 +317,7 @@ def _draft_mom(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = notion or NotionClient(cfg.notion_token)
+    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
     conn = connect(db)
     try:
@@ -341,7 +350,7 @@ def _send_ready_mom(args, notion, now) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-    notion = notion or NotionClient(cfg.notion_token)
+    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     try:
         run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,

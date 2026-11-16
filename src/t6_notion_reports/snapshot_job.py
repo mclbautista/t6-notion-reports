@@ -36,7 +36,10 @@ def run_snapshot(
     kind: str,
     now: datetime,
 ) -> SnapshotResult:
-    names = {c["id"]: _text(c["properties"].get("Name")) for c in notion.query_data_source(contacts_ds)}
+    if hasattr(notion, "read_contact_names"):  # a t6_api.ApiNotion
+        names = notion.read_contact_names()
+    else:
+        names = {c["id"]: _text(c["properties"].get("Name")) for c in notion.query_data_source(contacts_ds)}
     records = []
     for page in notion.query_data_source(projects_ds):
         if page.get("in_trash") or page.get("archived"):
