@@ -18,10 +18,10 @@ permissions:
 
 jobs:
   safety:
-    # Both refs are the same t6-core commit until the v0.6.6 tag exists; then pin the tag.
-    uses: mclbautista/t6-core/.github/workflows/public-repo-safety.yml@2208348ae94a5ba6414412bd888e645afa4f1c65
+    # Both refs are the same t6-core tag as pyproject.toml.
+    uses: mclbautista/t6-core/.github/workflows/public-repo-safety.yml@v0.6.6
     with:
-      t6-core-ref: 2208348ae94a5ba6414412bd888e645afa4f1c65
+      t6-core-ref: v0.6.6
       full-history: ${{ github.event_name == 'workflow_dispatch' && inputs.full-history }}
     secrets:
       T6_NAMES_DENYLIST: ${{ secrets.T6_NAMES_DENYLIST }}
