@@ -550,3 +550,65 @@ def test_turnover_format_requested_by_coordinators():
 def test_task_list_numbers_are_dropped_but_counts_and_case_are_kept(task, label):
     from t6_notion_reports.task_summary import FirstWordsSummarizer, task_label
     assert task_label(task, FirstWordsSummarizer()) == label
+
+
+# ---- the Job Order snapshot keeps the API's status results (#133) ----
+
+def _records_without_rule_results(fake):
+    """What an older snapshot held: the fields only, no ``status_group`` and no ``done``."""
+    from t6_notion_reports.t6_api import ApiNotion
+    records = ApiNotion(fake.api).job_order_records()
+    for record in records:
+        record.rules = None
+    return records
+
+
+def test_the_snapshot_stores_status_group_and_done_from_jo_list():
+    from t6_notion_reports.jo_snapshots import load_latest
+    conn = connect()
+    run_jo_snapshot(conn, world(jo("j1", st="Done"), jo("j2", st="Pending"), jo("j3", st="Cancelled")), "1130", MID)
+    pages = load_latest(conn).pages
+    assert [(pages[p]["status_group"], pages[p]["done"]) for p in ("j1", "j2", "j3")] == [
+        ("started", True), ("not_started", False), ("cancelled", False)]
+
+
+def test_an_older_entry_without_the_two_values_takes_them_from_the_present_jo_list_by_status_name():
+    from t6_notion_reports.jo_snapshots import take_snapshot
+    conn = connect()
+    older = world(
+        jo("j1", "1", "AE", st="Pending"),                 # was not started, is Done now: processed + accomplished
+        jo("j2", "2", "AE", st="In progress"),             # was started, is Done now: accomplished only
+        jo("j3", "3", "VFX", st="Needs Intake Review"),    # was not started, is In progress now: processed
+        jo("j5", "5", "AE", st="Done"),                    # was Done, is Done: nothing
+    )
+    take_snapshot(conn, _records_without_rule_results(older), MID, "1130")
+    fake = world(
+        jo("j1", "1", "AE", st="Done"), jo("j2", "2", "AE", st="Done"), jo("j3", "3", "VFX", st="In progress"),
+        jo("j5", "5", "AE", st="Done"),
+    )
+    report, text, _ = run(conn, fake, "1900", PM)
+    assert blocks_of(text, "✅ Since 11:30 report") == [
+        "AE: Received 0 · Processed 1 · Accomplished 2",
+        "VFX: Received 0 · Processed 1 · Accomplished 0",
+        "<b>Total</b>: Received 0 · Processed 2 · Accomplished 2",
+    ]
+
+
+def test_an_older_status_name_not_in_the_present_jo_list_counts_as_not_started_and_not_done():
+    from t6_notion_reports.jo_snapshots import take_snapshot
+    conn = connect()
+    older = world(jo("j1", "1", "AE", st="Pending"))
+    records = _records_without_rule_results(older)
+    records[0].fields["Status"] = "Retired option"  # no Job Order has this Status now
+    take_snapshot(conn, records, MID, "1130")
+    _, text, _ = run(conn, world(jo("j1", "1", "AE", st="Done")), "1900", PM)
+    assert "AE: Received 0 · Processed 1 · Accomplished 1" in text
+
+
+def test_window_counts_and_the_snapshot_code_name_no_status():
+    import inspect
+    from t6_notion_reports import jo_snapshots, shift_report
+    names = ("Done", "Cancelled", "Pending", "In progress", "Needs Intake Review", "Needs Completion Review")
+    source = inspect.getsource(shift_report.window_counts) + inspect.getsource(jo_snapshots)
+    assert [n for n in names if n in source] == []
+    assert not hasattr(shift_report, "NOT_STARTED") and not hasattr(shift_report, "STARTED")

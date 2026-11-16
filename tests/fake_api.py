@@ -456,7 +456,7 @@ class FakeApi:
             projects = [self._ref(r["id"]) for r in p["Projects"]["relation"]]
             status_name, health = opt("Status"), p["Health"]["formula"]["string"]
             orders.append({
-                "active": status_name not in ("Done", "Cancelled"),
+                "active": status_name not in ("Done", "Cancelled"), "done": status_name == "Done",
                 "health_flags": [f for f in _HEALTH_FLAGS if f.lower() in (health or "").lower()],
                 "status_group": {"Needs Intake Review": "not_started", "Pending": "not_started", "In progress": "started",
                                  "Needs Completion Review": "started", "Done": "started", "Cancelled": "cancelled"}.get(status_name),

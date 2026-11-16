@@ -119,7 +119,7 @@ class JoRecord:
 
     page_id: str
     fields: dict[str, object] = field(default_factory=dict)
-    rules: JoRules | None = None  # the API's rule results; kept in memory, never stored
+    rules: JoRules | None = None  # the API's rule results; its status group and ``done`` are stored, the rest are not
 
     def normalized(self) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -135,6 +135,8 @@ class JoRecord:
             elif isinstance(value, str) and name not in DATE_FIELDS and name != "last_edited_time":
                 value = squash(value)
             out[name] = value
+        if self.rules is not None:  # the API's status results, kept so a later report can compare against them
+            out["status_group"], out["done"] = self.rules.status_group, self.rules.done
         return out
 
     def content_hash(self) -> str:

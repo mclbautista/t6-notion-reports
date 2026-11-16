@@ -18,10 +18,6 @@ from .telegram_html import Block, Line, bold, line, link, render_messages
 
 SEP = " · "
 
-DONE, CANCELLED = "Done", "Cancelled"
-NOT_STARTED = ("Needs Intake Review", "Pending")
-STARTED = ("In progress", "Needs Completion Review", DONE)
-
 # Section order after TOC and AE (COOR and ADMIN share one section); any other Department value follows
 # them under its own name, then "No Department". Counts in the tally are per department, in this order.
 OTHER_DEPARTMENTS = ("OE", "COOR", "COLOR", "VFX", "SOUND", "ADMIN")
@@ -198,28 +194,41 @@ class WindowCounts:
         return sum(self.by_department.values(), Counts())
 
 
+def _status_results(
+    fields: Fields, by_status: Mapping[object, tuple[str | None, bool]],
+) -> tuple[str | None, bool]:
+    """(``status_group``, ``done``) of a snapshot entry: as stored, or for an entry without them (a snapshot taken
+    before they were stored) from ``by_status``; a Status that is not in it is not started and not done."""
+    if "status_group" in fields and "done" in fields:
+        return fields["status_group"], bool(fields["done"])
+    return by_status.get(fields.get("Status"), ("not_started", False))
+
+
 def window_counts(
     newer: dict[str, Fields], older: dict[str, Fields] | None, start: datetime, end: datetime,
+    by_status: Mapping[object, tuple[str | None, bool]],
 ) -> WindowCounts:
     """Received, processed and accomplished between two snapshots, by Department.
 
     ``older`` None (the baseline) gives received only. Received is ``Date`` in ``(start, end]``.
-    Cancelled JOs, judged by their Status in the newer snapshot, are in no count.
+    The counts read each entry's stored ``status_group`` and ``done``; ``by_status`` maps a Status name to that
+    pair for entries that lack them (the present ``jo list`` answer). JOs in the cancelled group, judged by the newer
+    snapshot, are in no count.
     """
     totals: dict[str | None, Counts] = {}
     counted: set[str] = set()
     for page_id, f in newer.items():
-        status = f.get("Status")
-        if status == CANCELLED:
+        group, done = _status_results(f, by_status)
+        if group == "cancelled":
             continue
         posted = parse_instant(f.get("Date"))
         received = int(posted is not None and start < posted <= end)
         processed = accomplished = 0
         if older is not None:
-            before = older.get(page_id, {}).get("Status") if page_id in older else None
             absent = page_id not in older
-            processed = int(status in STARTED and (absent or before in NOT_STARTED))
-            accomplished = int(status == DONE and (absent or before != DONE))
+            before_group, before_done = (None, False) if absent else _status_results(older[page_id], by_status)
+            processed = int(group == "started" and (absent or before_group == "not_started"))
+            accomplished = int(done and (absent or not before_done))
         row = Counts(received, processed, accomplished)
         if row.zero:
             continue
@@ -284,7 +293,8 @@ def build_end_of_shift(
     start = older.taken_at if older else window_start
     if start is None:
         raise ValueError("window_start is required when there is no older snapshot")
-    counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at)
+    by_status = {f.get("Status"): (rules[p].status_group, rules[p].done) for p, f in current.pages.items()}
+    counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at, by_status)
     blocks += [Line(), line(bold(f"✅ Since {SLOT_LABEL[report_slot.opens_kind]} report"))]
     if older is None:
         blocks.append(line("First snapshot: processed and accomplished start next time."))

@@ -30,7 +30,7 @@ def test_round_trips_every_field_with_ids_and_names():
                       "Status": status("In progress"), "Department": select("VFX")})
     sid = snap(conn, notion(jo)).snapshot_id
     page = load_snapshot(conn, sid).pages["j1"]
-    assert set(page) == set(TRACKED_FIELDS)
+    assert set(page) == set(TRACKED_FIELDS) | {"status_group", "done"}  # the two stored from jo list
     assert page["Blocker "] == "waiting on rushes"
     assert page["Health"] == "🔴 Blocked"
     assert (page["Name"], page["JO Number"], page["Task"]) == ("FAKEX - AE - JO #48", "48", "Export")
