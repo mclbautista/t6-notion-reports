@@ -1,6 +1,6 @@
 """Leave clash Concerns (spec #40, ticket #49).
 
-Once per brief run, one LLM call parses the "Upcoming Holidays and Leaves" lines of the Projects
+Once per brief run, one LLM call (through ``llm run``) parses the "Upcoming Holidays and Leaves" lines of the Projects
 database description into entries (who, kind, start, end, quote). The call sees those lines and
 today's date and nothing about projects. Code checks each entry: the quote must be an exact input
 line (a leading bullet mark aside) and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
@@ -22,8 +22,7 @@ from typing import Iterable
 from pydantic import BaseModel
 
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
-from .llm import LlmClient, LlmError
-from .redact import Mapping, Redactor, unresolved
+from .llm_api import LlmClient, LlmError, same_text
 from .snapshots import RELATION_FIELDS, squash
 
 DEFAULT_CLASH_DAYS = 14
@@ -69,31 +68,25 @@ class LeaveResult:
     failed: bool = False
 
 
-def payload(lines: Iterable[str], today: date, redactor: Redactor = Redactor(), mapping: Mapping | None = None) -> dict:
-    """What leaves the machine: the leave lines and today's date, and nothing about projects."""
-    mapping = mapping if mapping is not None else Mapping()
-    return {"today": today.isoformat(), "lines": [redactor.redact(line, "", mapping) for line in lines]}
+def payload(lines: Iterable[str], today: date) -> dict:
+    """What goes to the API: the leave lines and today's date, and nothing about projects. The API masks the names."""
+    return {"today": today.isoformat(), "lines": list(lines)}
 
 
-def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Redactor = Redactor()) -> LeaveResult:
+def parse_leaves(llm: LlmClient, lines: list[str], today: date) -> LeaveResult:
     """One call. Never raises: a failed call is ``failed``; an entry that fails its checks is dropped."""
-    mapping = Mapping()
-    data = payload(lines, today, redactor, mapping)
+    data = payload(lines, today)
     try:
         reply = llm.complete(SYSTEM, json.dumps(data, ensure_ascii=False), LeaveParse)
     except LlmError:
         return LeaveResult(failed=True)
     # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
-    exact = {_BULLET.sub("", ln.strip()) for ln in data["lines"]}
+    exact = [_BULLET.sub("", ln.strip()) for ln in data["lines"]]
     kept: list[Leave] = []
-    dropped = False
-    for item in reply.entries:
-        who, quote = mapping.restore(item.who), mapping.restore(item.quote)
-        if unresolved(who) or unresolved(quote):
-            dropped = True
-            continue
+    for item in reply.value.entries:
+        who = item.who
         if (item.kind not in KINDS or not squash(who)
-                or _BULLET.sub("", mapping.canonicalize(item.quote).strip()) not in exact):
+                or not any(same_text(_BULLET.sub("", item.quote.strip()), line) for line in exact)):
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)
@@ -101,7 +94,8 @@ def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Red
             continue
         if start <= end:
             kept.append(Leave(squash(who), item.kind, start, end))
-    return LeaveResult(tuple(dict.fromkeys(kept)), failed=dropped and not kept)
+    # An entry the API had to drop (a placeholder it could not restore) is only a failure when nothing else was kept.
+    return LeaveResult(tuple(dict.fromkeys(kept)), failed=bool(reply.dropped) and not kept)
 
 
 @dataclass(frozen=True)

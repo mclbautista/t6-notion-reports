@@ -144,8 +144,8 @@ def test_a_resolved_concern_lists_its_project_once_even_with_nothing_else_to_sho
 
 
 class FailingLlm:
-    def complete(self, system, user, schema):
-        from t6_notion_reports.llm import LlmError
+    def complete(self, system, user, schema, **kw):
+        from t6_notion_reports.llm_api import LlmError, Reply
         raise LlmError("down")
 
 

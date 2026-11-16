@@ -1,9 +1,8 @@
 """Haiku task summaries behind the ``TaskSummarizer`` seam, with a cache (#73, #77).
 
-``LlmTaskSummarizer`` sends only the Task text, masked by ``redact`` and restored after. ``summarize_tasks``
+``LlmTaskSummarizer`` sends only the Task text; the API masks it and restores the reply. ``summarize_tasks``
 is the report job's step between the snapshot and the render: it fills the ``jo_task_summaries`` cache so
-a Task is never summarised twice, and hands the renderer a lookup. Moving onto the t6 adapter (#68) swaps
-``LlmTaskSummarizer`` and its wiring only.
+a Task is never summarised twice, and hands the renderer a lookup.
 """
 from __future__ import annotations
 
@@ -14,13 +13,12 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from .llm import LlmClient, LlmError
-from .redact import Mapping, Redactor, unresolved
+from .llm_api import LlmClient, LlmError
 from .task_summary import MAX_WORDS, TaskSummarizer
 
 SYSTEM = (
     "You label a Job Order's task for a shift report. Reply with a summary of the task in at most "
-    f"{MAX_WORDS} words, as the JSON field \"summary\". Keep any placeholder such as [person 1] exactly as written."
+    f"{MAX_WORDS} words, as the JSON field \"summary\"."
 )
 
 
@@ -29,18 +27,15 @@ class SummaryReply(BaseModel):
 
 
 class LlmTaskSummarizer:
-    def __init__(self, client: LlmClient, redactor: Redactor | None = None):
-        self._client, self._redactor = client, redactor or Redactor()
+    def __init__(self, client: LlmClient):
+        self._client = client
 
     def summarize(self, task_text: str) -> str | None:
-        mapping = Mapping()
-        masked = self._redactor.redact(task_text, "", mapping)
         try:
-            reply = self._client.complete(SYSTEM, masked, SummaryReply)
+            reply = self._client.complete(SYSTEM, task_text, SummaryReply)
         except LlmError:
             return None
-        restored = mapping.restore(reply.summary)
-        return None if unresolved(restored) else restored
+        return reply.value.summary
 
 
 @dataclass(frozen=True)

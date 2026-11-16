@@ -1,10 +1,12 @@
-"""Haiku task summaries: the OpenRouter summarizer with a fake transport, the cache and its retention (#77)."""
+"""Task summaries: the summarizer over a fake ``llm run`` API, the cache and its retention (#77)."""
 import re
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
-from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
+from fake_llm_api import FakeLlmApi, invalid, ok, refused, unreachable
 from t6_notion_reports.jo_snapshots import connect, take_snapshot
-from t6_notion_reports.llm import OpenRouterClient
+from t6_notion_reports.llm_api import ApiLlm
 from t6_notion_reports.shift_job import run_shift_report
 from t6_notion_reports.task_summary_llm import LlmTaskSummarizer, summarize_tasks
 from test_shift_report import PM, jo, prior, world
@@ -12,33 +14,48 @@ from test_shift_report import PM, jo, prior, world
 NOW = datetime(2026, 11, 3, 19, tzinfo=timezone(timedelta(hours=8)))
 
 
-class Transport:
-    def __init__(self, content='{"summary": "Color grade"}', status=200):
-        self.content, self.status, self.bodies = content, status, []
-
-    def __call__(self, url, headers, body):
-        self.bodies.append(body)
-        if self.status != 200:
-            return self.status, None
-        return 200, {"choices": [{"message": {"content": self.content}}]}
+def summarizer(api):
+    return LlmTaskSummarizer(ApiLlm(api, "shift_task_summary", "m", sleep=lambda _: None))
 
 
-def summarizer(transport):
-    return LlmTaskSummarizer(OpenRouterClient("key", transport=transport))
+def reply(text="Color grade"):
+    return ok({"summary": text})
 
 
-def test_valid_reply_is_returned_and_only_the_task_is_sent_zdr_at_temperature_zero():
-    t = Transport()
-    assert summarizer(t).summarize("Color grade the final cut") == "Color grade"
-    body = t.bodies[0]
-    assert body["provider"] == {"zdr": True} and body["temperature"] == 0
-    assert [m["content"] for m in body["messages"] if m["role"] == "user"] == ["Color grade the final cut"]
+def test_valid_reply_is_returned_and_only_the_task_is_sent_through_llm_run():
+    api = FakeLlmApi(reply())
+    assert summarizer(api).summarize("Color grade the final cut") == "Color grade"
+    sent = api.sent[0]
+    assert sent.input_text == "Color grade the final cut"  # the API masks; the app sends the text as it is
+    assert sent.require_zdr and sent.temperature_zero and sent.masking_preset == "strict"
+    assert sent.restore == "per_field" and sent.repair_quotes and sent.allow_projects == []
+    assert sent.task_name == "shift_task_summary" and sent.model_hint == "m"
+    assert sent.prompt_template.endswith("\n\n{input}") and "placeholder" not in sent.prompt_template
 
 
-def test_four_word_reply_and_error_become_fallbacks_and_are_not_cached():
+FAILURES = {
+    "refused": refused("masking"),
+    "provider error": refused("provider", "api_error"),
+    "timeout": refused("provider", "timeout"),
+    "output invalid": invalid(),
+    "unreachable": unreachable(),
+    "unresolved placeholder": ok({"summary": "Ask [person 9]"}, unresolved=["summary"]),
+}
+
+
+@pytest.mark.parametrize("failure", FAILURES.values(), ids=FAILURES.keys())
+def test_every_failure_gives_no_summary_and_the_report_shows_three_words(failure):
     conn = connect()
-    for transport in (Transport('{"summary": "one two three four"}'), Transport(status=500)):
-        lookup, stats = summarize_tasks(conn, summarizer(transport), {"p1": "Color grade the final cut"}, NOW)
+    lookup, stats = summarize_tasks(conn, summarizer(FakeLlmApi(failure)), {"p1": "Color grade the final cut"}, NOW)
+    assert (stats.new, stats.cached, stats.fallback) == (0, 0, 1)
+    assert lookup.for_page("p1").summarize("Color grade the final cut") is None
+    assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 0
+
+
+def test_four_word_reply_becomes_a_fallback_and_is_not_cached():
+    conn = connect()
+    for api in (FakeLlmApi(reply("one two three four")),):
+        lookup, stats = summarize_tasks(conn, summarizer(api), {"p1": "Color grade the final cut"}, NOW)
         assert (stats.new, stats.cached, stats.fallback) == (0, 0, 1)
         assert lookup.for_page("p1").summarize("Color grade the final cut") is None
     assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 0
@@ -46,27 +63,27 @@ def test_four_word_reply_and_error_become_fallbacks_and_are_not_cached():
 
 def test_cached_jo_makes_no_call_and_a_changed_task_is_summarised_again():
     conn = connect()
-    t = Transport()
+    t = FakeLlmApi(reply())
     s = summarizer(t)
     _, stats = summarize_tasks(conn, s, {"p1": "Color grade the final cut"}, NOW)
     assert (stats.new, stats.cached) == (1, 0)
     lookup, stats = summarize_tasks(conn, s, {"p1": "Color grade the final cut"}, NOW)
-    assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.bodies) == 1
+    assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.sent) == 1
     assert lookup.for_page("p1").summarize("Color grade the final cut") == "Color grade"
     _, stats = summarize_tasks(conn, s, {"p1": "Fix the audio sync"}, NOW)
-    assert stats.new == 1 and len(t.bodies) == 2
+    assert stats.new == 1 and len(t.sent) == 2
     assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 2  # the old Task's summary stays cached
 
 
 def test_task_a_then_b_then_a_again_reuses_the_cached_summary_of_a():
     conn = connect()
-    t = Transport()
+    t = FakeLlmApi(reply())
     s = summarizer(t)
     for task in ("Color grade the final cut", "Fix the audio sync"):
         summarize_tasks(conn, s, {"p1": task}, NOW)
-    assert len(t.bodies) == 2
+    assert len(t.sent) == 2
     lookup, stats = summarize_tasks(conn, s, {"p1": "Color grade the final cut"}, NOW)
-    assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.bodies) == 2
+    assert (stats.new, stats.cached, stats.fallback) == (0, 1, 0) and len(t.sent) == 2
     assert lookup.for_page("p1").summarize("Color grade the final cut") == "Color grade"
 
 
@@ -93,21 +110,15 @@ def test_one_jos_fallback_does_not_borrow_another_jos_summary_for_identical_task
     assert sorted(label for _, label in labels) == ["Color grade", "Export the final"]
 
 
-def test_names_in_the_task_are_masked_on_the_way_out_and_restored():
-    conn = world(jo("j1", "1", "TOC", task="Ask Oto about grade")), None
-    fake, seen = conn[0], []
-
-    def transport(url, headers, body):
-        user = [m["content"] for m in body["messages"] if m["role"] == "user"][0]
-        seen.append(user)
-        return 200, {"choices": [{"message": {"content": '{"summary": "Ask [person 1]"}'}}]}
-
+def test_the_report_sends_the_task_text_as_it_is_and_shows_the_restored_summary():
+    fake = world(jo("j1", "1", "TOC", task="Ask Oto about grade"))
+    api = FakeLlmApi(ok({"summary": "Ask Oto"}))
     db = connect()
     prior(db)
     out = []
     run_shift_report(db, fake, "1900", PM, False, out.append, lambda _: None,
-                     llm=OpenRouterClient("key", transport=transport))
-    assert seen == ["Ask [person 1] about grade"] and "Oto" not in seen[0]
+                     llm=ApiLlm(api, "shift_task_summary", "m"))
+    assert [i.input_text for i in api.sent] == ["Ask Oto about grade"]
     assert "</a> - Ask Oto - Pending" in "\n".join(out)
 
 
@@ -117,16 +128,16 @@ def test_report_logs_summary_counts_and_survives_an_llm_failure():
     fake = world(jo("j1", "1", "TOC", task="Color grade the final cut"))
     log, out = [], []
     run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport(status=500)))
+                     llm=ApiLlm(FakeLlmApi(refused("provider", "api_error")), "t", "m", sleep=lambda _: None))
     assert log[0].endswith("summaries=0 cached=0 fallback=1") and "Color grade" not in log[0]
     assert "</a> - Color grade the - Pending" in "\n".join(out)
     log.clear()
     run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport()))
+                     llm=ApiLlm(FakeLlmApi(reply()), "t", "m"))
     assert log[0].endswith("summaries=1 cached=0 fallback=0")
     log.clear()
     run_shift_report(db, fake, "1900", PM, False, out.append, log.append,
-                     llm=OpenRouterClient("key", transport=Transport(status=500)))
+                     llm=ApiLlm(FakeLlmApi(refused("provider", "api_error")), "t", "m", sleep=lambda _: None))
     assert log[0].endswith("summaries=0 cached=1 fallback=0")
 
 

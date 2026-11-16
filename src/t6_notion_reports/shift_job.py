@@ -11,8 +11,7 @@ from .config import Destination
 from .gateway import GatewayError
 from .jo_snapshot_job import run_jo_snapshot
 from .jo_snapshots import MANILA, JoSnapshot, keep_report_parts, load_bounding, load_latest
-from .llm import LlmClient
-from .redact import Redactor
+from .llm_api import LlmClient
 from .task_summary import TaskSummarizer
 from .task_summary_llm import LlmTaskSummarizer, SummaryStats, summarize_tasks
 from .shift_report import SLOT_LABEL, SLOTS, EndOfShiftReport, build_end_of_shift, is_active
@@ -133,7 +132,7 @@ def run_shift_report(
     alert is queued and ``NotionUnavailable`` is raised. Nothing is stored and nothing is caught up
     later. A dry print fails at once, as it always has.
 
-    Task summaries: ``summarizer``, or Haiku through ``llm`` when given, runs after the snapshot and
+    Task summaries: ``summarizer``, or the model through ``llm`` (the API masks the Task text) when given, runs after the snapshot and
     before rendering, with a cache. With neither, a Task shows its first three words.
     """
     if target is None:
@@ -144,7 +143,7 @@ def run_shift_report(
     older, compared_with = (None, None) if current.is_baseline else find_older(conn, slot, current)
     stats = SummaryStats()
     if summarizer is None and llm is not None:
-        summarizer = _llm_summarizer(notion, current, llm)
+        summarizer = LlmTaskSummarizer(llm)
     if summarizer is not None:
         tasks = {p: f.get("Task") for p, f in current.pages.items() if is_active(f)}
         summarizer, stats = summarize_tasks(conn, summarizer, tasks, now)
@@ -230,18 +229,6 @@ def _send_to(gateway, dest: Destination, messages: Sequence[str], keys: Sequence
         except GatewayError:
             return DestinationResult(dest, tuple(refs), True)
     return DestinationResult(dest, tuple(refs), False)
-
-
-def _llm_summarizer(notion, current: JoSnapshot, llm: LlmClient) -> TaskSummarizer | None:
-    """Haiku behind the name masker: Contacts people and the projects on the Job Orders are hidden.
-    If the masker cannot be built there is no summarizer, so nothing unmasked is ever sent."""
-    try:
-        labels = {r["id"]: r["name"] for f in current.pages.values() for r in f.get("Projects") or [] if r.get("name")}
-        states = {pid: {"Name": name, "Project Code": name} for pid, name in labels.items()}
-        redactor = Redactor.build(notion.read_contacts().values(), [states])
-    except Exception:
-        return None
-    return LlmTaskSummarizer(llm, redactor)
 
 
 def _snapshot_with_retry(conn, notion, slot, now, target, log, clock, sleep) -> None:

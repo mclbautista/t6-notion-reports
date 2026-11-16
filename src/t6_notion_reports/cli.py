@@ -18,7 +18,7 @@ from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient, UnavailableLlm
+from .llm_api import LLM_TIMEOUT, ApiLlm, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
 from .gateway import GatewayClient, GatewayError
@@ -57,6 +57,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     mom.add_argument("--config", default="config.yaml")
     mom.add_argument("--db", help="default: database_path from --config")
     mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
+    mom.add_argument("--dry-print", action="store_true", help="condense and print the bullets per project, write nothing to Notion")
     send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
     send.add_argument("--config", default="config.yaml")
     send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
@@ -206,10 +207,18 @@ def _shift_target(cfg) -> ShiftTarget:
 
 
 def _shift_llm(cfg):
-    """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
-    if cfg.shift is not None and cfg.shift.openrouter_api_key:
-        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+    """The shift report's task summaries through ``llm run`` with ``shift_llm_model``; None (the first three words) when LLM calls are off."""
+    if cfg.shift is not None:
+        return _api_llm(cfg, "shift_task_summary", cfg.shift.llm_model)
     return None
+
+
+def _api_llm(cfg, task: str, model: str):
+    """An ``ApiLlm`` for one task; None when ``llm_enabled`` is false or ``T6_API_URL`` is unset."""
+    client = client_from_env(timeout=LLM_TIMEOUT) if cfg.llm_enabled else None
+    if client is None:
+        return None
+    return ApiLlm(client, task, model, log=lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def _brief(args, notion, now) -> int:
@@ -236,8 +245,9 @@ def _brief(args, notion, now) -> int:
     conn = connect(db)
     try:
         run_brief(conn, notion, cfg.brief, now or datetime.now(timezone.utc),
-                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
+                  gateway=gateway, dry_print=args.dry_print, llm=_task_llm(cfg, "brief_consolidation", args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
+                  leaves_llm=_task_llm(cfg, "brief_leaves", args.dry_print),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
@@ -262,13 +272,11 @@ def _brief_secrets(cfg):
     return [("PSR_SECRET", cfg.brief.psr_secret)]
 
 
-def _llm(cfg, dry_print=False):
-    """No key: a dry print leaves the LLM out (raw changes); a real send marks every project "(LLM unavailable)"."""
+def _task_llm(cfg, task, dry_print=False):
+    """A brief or Minutes task through ``llm run`` with ``llm_model``. Off: a dry print leaves the LLM out (raw output); a real run marks it unavailable."""
     if cfg.brief is None:
         return None
-    if cfg.brief.openrouter_api_key:
-        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
-    return None if dry_print else UnavailableLlm()
+    return _api_llm(cfg, task, cfg.brief.llm_model) or (None if dry_print else UnavailableLlm())
 
 
 def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
@@ -291,14 +299,14 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                                log=lambda text: print(text, flush=True))
             return
         if kind == "brief":
-            run_brief(conn, notion, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
-                      meeting_notes_ds=cfg.meeting_notes_data_source,
+            run_brief(conn, notion, cfg.brief, moment, gateway=gateway, llm=_task_llm(cfg, "brief_consolidation"),
+                      meeting_notes_ds=cfg.meeting_notes_data_source, leaves_llm=_task_llm(cfg, "brief_leaves"),
                       log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:
             run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
-                          log=lambda text: print(text, flush=True), llm=_llm(cfg))
+                          log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"))
     return job
 
 
@@ -318,7 +326,7 @@ def _draft_mom(args, notion, now) -> int:
     conn = connect(db)
     try:
         result = run_draft_mom(conn, notion, cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
-                               llm=_llm(cfg))
+                               llm=_task_llm(cfg, "minutes_condense", args.dry_print), dry_print=args.dry_print)
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
         return 1

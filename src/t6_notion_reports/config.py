@@ -15,11 +15,12 @@ from .concerns import DEFAULT_CHRONIC_WEEKS
 from .consolidate import DEFAULT_PM_NOTES_WEEKS
 from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .leaves import DEFAULT_CLASH_DAYS
-from .llm import DEFAULT_MODEL, DEFAULT_SHIFT_MODEL
 
+DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+# JO shift report task summaries; the t6 API maps the name to a provider with zero data retention.
+DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
 SECRET_ENV = "NOTION_TOKEN"
 PSR_SECRET_ENV = "PSR_SECRET"
-OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
@@ -28,7 +29,7 @@ BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_c
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 # Read or matched by the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
 IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics")
-KEYS = {"database_path", "meeting_notes_data_source"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
+KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -48,7 +49,6 @@ class BriefSettings:
     psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
     digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
-    openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
     lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
     concern_chronic_weeks: int = DEFAULT_CHRONIC_WEEKS  # a Concern open longer than this many weeks gets a chronic marker
     leave_clash_days: int = DEFAULT_CLASH_DAYS  # a team member's leave within this many days of a project date is a Concern
@@ -74,7 +74,6 @@ class ShiftSettings:
     ops_chat_id: int | None  # where the Notion-outage alert goes; unset: the first group entry of the slot's list
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
-    openrouter_api_key: str | None = None  # unset: task summaries are the first three words, no LLM call
     llm_model: str = DEFAULT_SHIFT_MODEL  # shift_llm_model; the briefing's llm_model is separate
 
 
@@ -86,6 +85,7 @@ class Config:
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
     ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
+    llm_enabled: bool = True  # false: no model is called; summaries fall back to three words, a real brief says "LLM unavailable"
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -112,6 +112,7 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
         ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
+        llm_enabled=_flag(raw, "llm_enabled"),
     )
 
 
@@ -162,7 +163,6 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         digest_recipients=tuple(digest_recipients),
         coordinator_recipients=coordinator_recipients,
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
-        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
         concern_chronic_weeks=_days(raw, "concern_chronic_weeks", DEFAULT_CHRONIC_WEEKS, "weeks"),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
@@ -184,6 +184,13 @@ def _gateway_url(raw: dict) -> str:
     if not url.startswith(("http://", "https://")):
         raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
     return url
+
+
+def _flag(raw: dict, key: str) -> bool:
+    value = raw.get(key, True)
+    if not isinstance(value, bool):
+        raise ConfigError(f"invalid config key: {key} (expected true or false)")
+    return value
 
 
 def _banner(raw: dict) -> bool:
@@ -212,7 +219,6 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         ops_chat_id=ops,
         test_banner=_banner(raw),
         shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
-        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         llm_model=_string(raw, "shift_llm_model", default=DEFAULT_SHIFT_MODEL),
     )
 

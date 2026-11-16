@@ -12,7 +12,7 @@ from t6_notion_reports import cli
 from t6_notion_reports.config import ConfigError, Destination, load_config
 from t6_notion_reports.gateway import GatewayClient, GatewayError
 from t6_notion_reports.jo_snapshots import connect
-from t6_notion_reports.llm import DEFAULT_SHIFT_MODEL
+from t6_notion_reports.config import DEFAULT_SHIFT_MODEL
 from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
 from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 

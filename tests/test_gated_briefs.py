@@ -1,4 +1,3 @@
-"""Gated, sectioned briefs (#44), through the brief job with a fake Notion, LLM and gateway."""
 import json
 import re
 import sqlite3
@@ -6,6 +5,7 @@ from datetime import datetime, timezone
 
 from fake_notion import CONTACTS, PROJECTS, FakeNotion, contact, project, relation, rich, select
 from html_check import assert_valid_html
+from t6_notion_reports.llm_api import Reply
 from t6_notion_reports.brief_job import run_brief
 from t6_notion_reports.config import BriefSettings
 from t6_notion_reports.snapshot_job import run_snapshot
@@ -56,9 +56,9 @@ class Llm:
     def __init__(self):
         self.projects = []
 
-    def complete(self, system, user, schema):
+    def complete(self, system, user, schema, **kw):
         self.projects.append(json.loads(user)["project"]["name"])
-        return schema()
+        return Reply(schema())
 
 
 def make_db(before, after):
@@ -182,8 +182,8 @@ def test_the_first_brief_has_the_banner_and_no_changes():
     run_snapshot(conn, FakeNotion([proj("p1", "ONE", stage="Online")], contacts()), "friday", FRIDAY)
 
     class ChangeLlm:
-        def complete(self, system, user, schema):
-            return schema(changes=[{"text": "Online started", "source": "snapshot"}])
+        def complete(self, system, user, schema, **kw):
+            return Reply(schema(changes=[{"text": "Online started", "source": "snapshot"}]))
 
     gw = brief(conn, llm=ChangeLlm())
     assert gw.sent

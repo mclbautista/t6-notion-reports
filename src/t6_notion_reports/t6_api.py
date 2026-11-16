@@ -94,12 +94,13 @@ class Note:
     body: tuple[Block, ...]
 
 
-def client_from_env(env: Mapping[str, str] | None = None) -> Client | None:
-    """A client for ``T6_API_URL`` and ``T6_API_SECRET``; None when the URL is unset."""
+def client_from_env(env: Mapping[str, str] | None = None, timeout: float = READ_TIMEOUT) -> Client | None:
+    """A client for ``T6_API_URL`` and ``T6_API_SECRET``; None when the URL is unset. The reads use the
+    long default, ``llm run`` its own limit (``llm_api.LLM_TIMEOUT``)."""
     env = os.environ if env is None else env
     if not env.get("T6_API_URL", "").strip():
         return None
-    return Client(env["T6_API_URL"].strip(), env.get("T6_API_SECRET", ""), timeout=READ_TIMEOUT)
+    return Client(env["T6_API_URL"].strip(), env.get("T6_API_SECRET", ""), timeout=timeout)
 
 
 class ApiNotion:

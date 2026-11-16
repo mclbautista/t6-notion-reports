@@ -24,18 +24,6 @@
     "expires": "2027-02-15"
   },
   {
-    "name": "#68 stage 1, src/t6_notion_reports/llm.py: names a provider API host",
-    "file": "src/t6_notion_reports/llm.py",
-    "rule": "direct-http",
-    "expires": "2027-02-15"
-  },
-  {
-    "name": "#68 stage 1, src/t6_notion_reports/llm.py: holds a Notion or LLM credential name",
-    "file": "src/t6_notion_reports/llm.py",
-    "rule": "credential",
-    "expires": "2027-02-15"
-  },
-  {
     "name": "#68 stage 1, src/t6_notion_reports/notion.py: names a provider API host",
     "file": "src/t6_notion_reports/notion.py",
     "rule": "direct-http",
