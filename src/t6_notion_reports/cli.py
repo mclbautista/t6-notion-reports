@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
-from .t6_api import ApiNotion, client_from_env
+from .t6_api import ApiNotion, MaskedRead, client_from_env
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
@@ -70,6 +70,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+    except MaskedRead as exc:
+        print(f"stopped: {exc}", file=sys.stderr)
+        return 1
 
 
 def _run(args, parser, notion, now) -> int:

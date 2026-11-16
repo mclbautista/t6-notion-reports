@@ -64,6 +64,10 @@ permission). Every read of Contacts, Projects, Job Orders, Meeting Notes and the
 write (draft and Sent at), goes through the t6 API; this app holds no Notion token. A Notion token left in an old
 `.env` is not read. `projects_data_source`, `contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
 
+Every client the app makes (`client_from_env`) is made with `require_unmasked=True`: the API refuses every call, with
+rule `unmasked`, when the key would read masked names. If the key loses the `unmasked` grant, the run stops with
+`stopped: t6 API refused the read, rule=unmasked ...` (exit code 1) and sends nothing. It is not retried as an outage.
+
 To compare two builds on the same data, run `shift-report --dry-print` and `brief --dry-print` with each image
 on a copy of the database and `diff` the texts.
 

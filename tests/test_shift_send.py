@@ -600,3 +600,48 @@ def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
     assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=fake, now=PM) == 1
     assert "shift-s3cret" not in capsys.readouterr().err
+
+
+# ---- the masked-read guard (#133) ----
+
+class MaskedClient:
+    """A t6 client whose API refuses every call because the service key lost the ``unmasked`` grant."""
+
+    calls = 0
+
+    def __getattr__(self, name):
+        from t6.verbs import Refused
+
+        def refuse(inputs):
+            self.calls += 1
+            return Refused(rule="unmasked", reason="The caller asks for real names and has neither operator nor the unmasked grant")
+        return refuse
+
+
+def test_the_clients_are_made_to_refuse_masked_names():
+    from t6_notion_reports.t6_api import client_from_env
+    assert client_from_env({"T6_API_URL": "http://api:8081", "T6_API_SECRET": "x"}).require_unmasked is True
+
+
+def test_a_masked_read_stops_the_shift_report_with_a_clear_error_and_sends_nothing(tmp_path, monkeypatch, capsys):
+    from t6_notion_reports.t6_api import ApiNotion
+    monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
+    t = FakeTransport()
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
+                        lambda url, secret, **k: GatewayClient(url, secret, t, sleep=lambda _: None))
+    client = MaskedClient()
+    path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
+    assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=ApiNotion(client), now=PM) == 1
+    err = capsys.readouterr().err
+    assert "unmasked" in err and "grant" in err
+    assert t.calls == [] and client.calls == 1  # no retry, no alert, no message
+
+
+def test_a_masked_read_is_never_an_outage_to_retry(tmp_path):
+    from t6_notion_reports.t6_api import ApiNotion, MaskedRead
+    notion = ApiNotion(MaskedClient())
+    with pytest.raises(MaskedRead):
+        run_shift_report(connect(), notion, "1900", PM, target=target(FakeTransport()), clock=lambda: PM, sleep=lambda _: None)
+    for read in (notion.read_contacts, notion.project_records, notion.job_order_records, lambda: notion.project_rule("p1")):
+        with pytest.raises(MaskedRead):
+            read()

@@ -57,6 +57,11 @@ class ApiUnavailable(OSError):
     """The t6 API did not answer or refused. The message names the kind of failure, never the data."""
 
 
+class MaskedRead(Exception):
+    """The API refused a call with rule ``unmasked``: the service key would read masked names. Not an ``OSError``:
+    it is no outage, so nothing retries it and nothing is sent."""
+
+
 @dataclass(frozen=True)
 class Notices:
     """The Projects database description: its plain text and its runs (text and a bold flag each)."""
@@ -104,11 +109,12 @@ class Note:
 
 def client_from_env(env: Mapping[str, str] | None = None, timeout: float = READ_TIMEOUT) -> Client | None:
     """A client for ``T6_API_URL`` and ``T6_API_SECRET``; None when the URL is unset. The reads use the
-    long default, ``llm run`` its own limit (``llm_api.LLM_TIMEOUT``)."""
+    long default, ``llm run`` its own limit (``llm_api.LLM_TIMEOUT``). Every client the app makes is made here,
+    and asks the API to refuse a call rather than answer with masked names."""
     env = os.environ if env is None else env
     if not env.get("T6_API_URL", "").strip():
         return None
-    return Client(env["T6_API_URL"].strip(), env.get("T6_API_SECRET", ""), timeout=timeout)
+    return Client(env["T6_API_URL"].strip(), env.get("T6_API_SECRET", ""), timeout=timeout, require_unmasked=True)
 
 
 class ApiNotion:
@@ -122,6 +128,7 @@ class ApiNotion:
             raise ApiUnavailable(f"t6 API error status={exc.status}") from None
         if isinstance(outcome, Unavailable):
             raise ApiUnavailable("t6 API unreachable")
+        _stop_if_masked(outcome)
         if not isinstance(outcome, Done):
             raise ApiUnavailable(f"t6 API answered {outcome.outcome}")
         return outcome.result
@@ -210,6 +217,7 @@ class ApiNotion:
             raise ApiUnavailable(f"t6 API error status={exc.status}") from None
         if isinstance(outcome, Unavailable):
             raise ApiUnavailable("t6 API unreachable")
+        _stop_if_masked(outcome)
         if isinstance(outcome, Refused):
             return None
         if not isinstance(outcome, Done):
@@ -254,6 +262,11 @@ class ApiNotion:
             rules = JoRules(bool(o["active"]), tuple(o.get("health_flags") or ()), o.get("status_group"), bool(o["done"]))
             records.append(JoRecord(o["page_id"], fields, rules))
         return records
+
+
+def _stop_if_masked(outcome) -> None:
+    if isinstance(outcome, Refused) and outcome.rule == "unmasked":
+        raise MaskedRead("t6 API refused the read, rule=unmasked: the service key needs the unmasked grant; nothing was sent")
 
 
 def _project_rules(p: dict) -> ProjectRules:
