@@ -114,6 +114,7 @@ class FakeApi:
                 "online_editor_ids": ids(p, "Online Editor"), "colorist_ids": ids(p, "Colorist"),
                 "sound_tech_ids": ids(p, "Sound Tech"), "assistant_editor_ids": ids(p, "Assistant Editor"),
                 "director_ids": ids(p, "Director"), "cinematographer_ids": ids(p, "Cinematographer"),
+                "prod_coor_supe_ids": ids(p, "Prod Coor/Supe"),
                 "last_edited": page.get("last_edited_time"),
             })
         return self._done("project list", {"projects": projects})

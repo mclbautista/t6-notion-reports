@@ -132,6 +132,19 @@ def test_rejects_unknown_kind():
         snap(connect(), FakeNotion([], CONTACTS_LIST), "tuesday")
 
 
+def test_every_tracked_field_is_a_property_the_projects_schema_has():
+    schema = project("p1")["properties"]
+    assert [f for f in TRACKED_FIELDS if f not in schema and f != "Last Edited"] == []
+
+
+def test_prod_coor_supe_is_stored_with_names():
+    notion = FakeNotion([project("p1", **{"Prod Coor/Supe": relation("c1")})], CONTACTS_LIST)
+    conn = connect()
+    snap(conn, notion)
+    state = load_snapshot(conn, latest_snapshot_ids(conn, 1)[0])["p1"]
+    assert state["Prod Coor/Supe"] == [{"id": "c1", "name": "Oto"}]
+
+
 def test_reads_only_projects_and_contacts():
     api = FakeApi(FakeNotion([project("p1")], CONTACTS_LIST))
     snap(connect(), ApiNotion(api))

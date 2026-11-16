@@ -37,9 +37,9 @@ READ_TIMEOUT = 120
 _PROJECT_RELATIONS = {
     "T6 Post Coordinator": "post_coordinator_ids", "Editors": "editor_ids", "Online Editor": "online_editor_ids",
     "Colorist": "colorist_ids", "Sound Tech": "sound_tech_ids", "Assistant Editor": "assistant_editor_ids",
-    "Director": "director_ids", "Cinematographer": "cinematographer_ids",
+    "Director": "director_ids", "Cinematographer": "cinematographer_ids", "Prod Coor/Supe": "prod_coor_supe_ids",
 }
-assert set(_PROJECT_RELATIONS) | {"Post Supe"} == set(RELATION_FIELDS)
+assert set(_PROJECT_RELATIONS) == set(RELATION_FIELDS)
 
 
 class ApiUnavailable(OSError):
@@ -161,7 +161,6 @@ class ApiNotion:
                 "Playdate": _date_field(p.get("playdate"), p.get("playdate_end")),
                 "Submission Deadline": _date_field(p.get("submission_deadline"), p.get("submission_deadline_end")),
                 "Archival Deadline": _date_field(p.get("archival_deadline"), p.get("archival_deadline_end")),
-                "Post Supe": [],  # Notion has no property by that name: the snapshot holds an empty list (#121)
                 LAST_EDITED: _notion_time(p.get("last_edited")),
             }
             for name, key in _PROJECT_RELATIONS.items():

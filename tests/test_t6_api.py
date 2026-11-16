@@ -197,3 +197,10 @@ def test_shift_report_treats_an_unavailable_api_as_the_outage_it_retries():
     conn = jo_connect()
     err, logs = go(conn, n, clock, FakeTransport())
     assert isinstance(err, NotionUnavailable) and snapshot_count(conn) == 0
+
+
+def test_prod_coor_supe_people_are_stored_as_page_ids_when_the_api_binds_them():
+    n = FakeNotion([project("p1", **{"Prod Coor/Supe": relation("c-quil", "c-oto")})], people())
+    n.t6_ids = {"c-quil": "per_q1"}
+    rec = n.project_records()[0].normalized()
+    assert rec["Prod Coor/Supe"] == [{"id": "c-oto", "name": "Oto"}, {"id": "c-quil", "name": "Quilla"}]

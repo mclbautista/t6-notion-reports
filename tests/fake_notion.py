@@ -47,7 +47,7 @@ def project(page_id, name="Show", code="QAZ", **props):
         "Status": select("🚨 In-Progress"), "Project Health": select("On Track"), "PM Notes": rich(""),
         "Playdate": date(None), "Submission Deadline": date(None), "Archival Deadline": date(None),
         "T6 Post Coordinator": relation(), "Editors": relation(), "Online Editor": relation(),
-        "Colorist": relation(), "Sound Tech": relation(), "Post Supe": relation(),
+        "Colorist": relation(), "Sound Tech": relation(), "Prod Coor/Supe": relation(),
         "Assistant Editor": relation(), "Director": relation(), "Cinematographer": relation(),
     }
     for f in FORMULAS:

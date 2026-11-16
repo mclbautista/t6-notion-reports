@@ -109,6 +109,13 @@ def test_redacted_leave_who_is_restored_before_contacts_matching_in_the_brief():
     assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
 
 
+def test_a_leave_by_someone_in_prod_coor_supe_is_a_clash_like_one_in_editors():
+    conn, notion = build([team_project(Editors=relation(), **{"Prod Coor/Supe": relation("c-nia")})])
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
+    for text in (dm(gw), digest(gw)):
+        assert text.count("Nia Varnel is on leave Nov 20–22") == 1
+
+
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
     conn, notion = build([team_project(Editors=relation("c-cal"))])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))

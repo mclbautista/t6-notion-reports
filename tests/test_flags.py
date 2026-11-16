@@ -147,8 +147,8 @@ def test_assistant_editor_and_coordinator_are_listed_with_the_roles():
     assert "⚠️ Missing roles: Assistant Editor, T6 Post Coordinator" in text
 
 
-def test_post_supe_is_not_flagged():
-    assert "Post Supe" not in one(IN_PROGRESS, **staffed(**{"Post Supe": relation()}))
+def test_prod_coor_supe_is_not_flagged_as_a_missing_role():
+    assert "Prod Coor/Supe" not in one(IN_PROGRESS, **staffed(**{"Prod Coor/Supe": relation()}))
 
 
 def test_director_and_cinematographer_are_listed_on_the_one_roles_line():
