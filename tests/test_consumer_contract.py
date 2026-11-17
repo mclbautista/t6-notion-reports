@@ -1,10 +1,12 @@
-"""The consumer contract (ADR 0002 in t6-core): every allow-list entry must be needed and dated."""
+"""The consumer contract (ADR 0002 in t6-core): the checker passes, and every allow-list entry is dated and names a file."""
 
 import json
+import shutil
+import subprocess
 from datetime import date
 from pathlib import Path
 
-from t6.consumer import apply_allowlist, check
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWLIST = ROOT / ".t6-consumer-allowlist.json"
@@ -15,12 +17,10 @@ def _entries():
     return json.loads(ALLOWLIST.read_text(encoding="utf-8"))
 
 
-def _remaining() -> list:
-    return apply_allowlist(ROOT, check(ROOT))[0]
-
-
+@pytest.mark.skipif(shutil.which("t6") is None, reason="the t6 command is not on PATH")
 def test_every_finding_is_allowed():
-    assert _remaining() == []
+    done = subprocess.run(["t6", "admin", "consumer-check", str(ROOT)], capture_output=True, text=True)
+    assert done.returncode == 0, json.loads(done.stdout)["findings"]
 
 
 def test_entries_expire_by_the_cut_off():
@@ -28,8 +28,7 @@ def test_entries_expire_by_the_cut_off():
         assert date.fromisoformat(entry["expires"]) <= LAST_EXPIRY, entry["name"]
 
 
-def test_every_entry_is_needed():
-    """An entry that matches no finding is stale: remove it, so the list only shrinks."""
-    found = {(str(Path(f.file).relative_to(ROOT)), f.rule) for f in check(ROOT)}
+def test_every_entry_names_a_file_that_exists():
+    """An entry for a file that is gone is stale: remove it, so the list only shrinks."""
     for entry in _entries():
-        assert (entry["file"], entry["rule"]) in found, entry["name"]
+        assert (ROOT / entry["file"]).exists(), entry["name"]

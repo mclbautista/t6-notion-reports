@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from fake_notion import CONTACTS, MEETING, PROJECTS, FakeNotion, block, meeting_page, rich
+from fake_notion import MEETING, FakeNotion, block, meeting_page, rich
 from t6_notion_reports.brief_job import run_brief
 from t6_notion_reports.cli import main
-from t6_notion_reports.llm import LlmError
+from t6_notion_reports.llm_api import LlmError, Reply
 from t6_notion_reports.snapshot_job import run_snapshot
 from t6_notion_reports.snapshots import SCHEMA
 from test_gated_briefs import BRIEF, FRIDAY, IN_PROGRESS, MONDAY, SATURDAY, Gateway, contacts, dm, digest, proj
@@ -29,7 +29,7 @@ def make_db(last_friday, monday, friday):
     conn.executescript(SCHEMA)
     for kind, at, pages in (("friday", LAST_FRIDAY, last_friday), ("monday", MONDAY, monday), ("friday", FRIDAY, friday)):
         if pages is not None:
-            run_snapshot(conn, FakeNotion(pages, contacts()), PROJECTS, CONTACTS, kind, at)
+            run_snapshot(conn, FakeNotion(pages, contacts()), kind, at)
     return conn
 
 
@@ -37,14 +37,15 @@ class Llm:
     """Records every payload it gets and answers with ``reply(payload)``, or fails for the named projects."""
 
     def __init__(self, reply=None, fail_for=()):
-        self.payloads, self.reply, self.fail_for = [], reply or (lambda p: {}), set(fail_for)
+        self.payloads, self.reply, self.fail_for, self.allowed = [], reply or (lambda p: {}), set(fail_for), []
 
-    def complete(self, system, user, schema):
+    def complete(self, system, user, schema, allow_projects=()):
         payload = json.loads(user)
         self.payloads.append(payload)
+        self.allowed.append(tuple(allow_projects))
         if payload["project"]["name"] in self.fail_for:
             raise LlmError("down")
-        return schema(**self.reply(payload))
+        return Reply(schema(**self.reply(payload)))
 
 
 def snapshot_change(payload, window="since_psr", **item):
@@ -61,7 +62,9 @@ def line_id(payload, text, where="pm_notes"):
 
 def run(conn, llm=None, notion=None, brief=BRIEF, **kw):
     gw, logs = Gateway(), []
-    run_brief(conn, notion or FakeNotion([], contacts()), CONTACTS, brief, SATURDAY, gateway=gw, llm=llm,
+    notion = notion or FakeNotion([], contacts())
+    notion.projects = FakeNotion.live(conn).projects  # the API reads the Projects the snapshots came from
+    run_brief(conn, notion, brief, SATURDAY, gateway=gw, llm=llm,
               log=logs.append, **kw)
     return gw, logs
 
@@ -137,7 +140,7 @@ def test_both_diff_windows_and_the_minutes_lines_are_in_the_payload():
          "changes": [{"line_id": 8, "field": "Stage", "old": "Offline", "new": "Online", "text": "Stage: Offline → Online"}]},
     ]  # snapshot changes are numbered after the Minutes lines, so they can be cited too
     assert payload["minutes"] == {
-        "page_date": "2026-11-09", "last_edited": "2026-11-09T14:10:00.000+08:00", "sent_at": "2026-11-09T14:30:00+08:00",
+        "page_date": "2026-11-09", "last_edited": "2026-11-09T06:10:00.000Z", "sent_at": "2026-11-09T14:30:00+08:00",
         "lines": [{"line_id": 5, "text": "• Submission moved to Nov 28"}, {"line_id": 6, "text": "• Grade on Nov 24"}],
     }  # ids continue after the PM Notes lines; another project's lines are not here
 
@@ -167,22 +170,21 @@ def test_the_latest_minutes_page_on_or_before_today_is_the_one_read():
 def test_show_llm_input_prints_every_payload_and_calls_no_llm():
     llm, printed = Llm(), []
     conn = conn_one()
-    res = run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
+    res = run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SATURDAY, gateway=Gateway(), llm=llm,
                     dry_print=True, show_llm_input=True, out=printed.append, log=lambda _: None)
     assert llm.payloads == [] and res.sent == 0
     shown = "\n".join(printed)
-    assert "--- llm input: ONE ---" in shown and '"pm_notes"' in shown and "TLR piclock TBC" in shown
+    assert "--- llm input: ONE (names are masked by the API, not here) ---" in shown and '"pm_notes"' in shown and "TLR piclock TBC" in shown
 
 
 def test_cli_show_llm_input_needs_dry_print(tmp_path, monkeypatch, capsys):
-    from test_brief_job import AnyContacts, cfg_contacts, seeded_db, write_config
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_x")
+    from test_brief_job import AnyContacts, cfg_contacts, pages, seeded_db, write_config
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     now = datetime(2026, 11, 15, 8, tzinfo=timezone.utc)
-    assert main(["brief", "--show-llm-input", "--config", cfg], notion=AnyContacts([], cfg_contacts()), now=now) == 2
+    assert main(["brief", "--show-llm-input", "--config", cfg], notion=AnyContacts(pages("Online"), cfg_contacts()), now=now) == 2
     assert "--dry-print" in capsys.readouterr().err
     assert main(["brief", "--dry-print", "--show-llm-input", "--config", cfg],
-                notion=AnyContacts([], cfg_contacts()), now=now) == 0
+                notion=AnyContacts(pages("Online"), cfg_contacts()), now=now) == 0
     assert "--- llm input:" in capsys.readouterr().out
 
 
@@ -244,21 +246,26 @@ def test_health_vs_evidence_is_dropped_when_project_health_is_blank():
     assert "Waiting on client notes" in dm(run(one("AT RISK"), Llm(reply_with(concerns=concerns)))[0])
 
 
-def test_llm_concerns_age_through_the_concern_store():
+def test_llm_concerns_age_through_the_api_and_stay_until_a_person_closes_them():
+    from fake_api import FakeConcerns
     pending_notes = NOTES.replace("waiting for client notes", "pending client notes")
     concerns = lambda p: [{"kind": "open_item", "text": "Client notes are still pending", "source": "pm_notes",
                            "line_id": line_id(p, "pending client"), "quote": "• QC on Nov 20, pending client notes"}]
-    conn = conn_one(pending_notes)
-    run(conn, Llm(reply_with(concerns=concerns)))
-    later = datetime(2026, 11, 28, 4, tzinfo=timezone.utc)
-    gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, later, gateway=gw,
-              llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
-    assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(gw)
-    gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, datetime(2026, 12, 5, 4, tzinfo=timezone.utc),
-              gateway=gw, llm=Llm(), log=lambda _: None)
-    assert "Resolved last week: Client notes are still pending" in dm(gw)
+    conn, store = conn_one(pending_notes), FakeConcerns()
+
+    def brief_on(when, llm):
+        gw = Gateway()
+        run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, when, gateway=gw, llm=llm, log=lambda _: None)
+        return gw
+
+    brief_on(SATURDAY, Llm(reply_with(concerns=concerns)))
+    assert "pm_notes_read" == store.observed[-1].findings[0].source
+    later = brief_on(datetime(2026, 11, 28, 4, tzinfo=timezone.utc), Llm(reply_with(concerns=concerns)))
+    assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(later)
+    gone = dm(brief_on(datetime(2026, 12, 5, 4, tzinfo=timezone.utc), Llm()))  # the run no longer finds it
+    assert "Client notes are still pending · since Nov 14 (3 wks) · not seen this week" in gone
+    store.close("Client notes", "2026-12-08")
+    assert "Resolved last week: Client notes are still pending" in dm(brief_on(datetime(2026, 12, 12, 4, tzinfo=timezone.utc), Llm()))
 
 
 # ---- last update ----------------------------------------------------------------------------
@@ -347,23 +354,36 @@ def test_a_failing_call_marks_that_project_only_and_the_digest_names_it():
     assert not any("Show ONE" in l for l in logs)
 
 
+def test_projects_not_reached_within_the_budget_are_marked_unavailable_and_counted():
+    clock = iter([0, 0, 1200, 1300])  # the loop starts, the first project is reached in time, the second is not
+    llm = Llm(lambda p: {"changes": [snapshot_change(p, text="Online started")]})
+    gw, logs = run(two_projects(), llm, monotonic=lambda: next(clock))
+    assert len(llm.payloads) == 1  # the later project never got a call
+    assert "⚠️ LLM unavailable: TWO" in digest(gw) and "ONE" not in digest(gw).split("LLM unavailable:")[1]
+    assert "brief llm budget_exhausted=1" in logs
+
+
 def test_invalid_json_counts_as_a_failure():
     class BadJson:
-        def complete(self, system, user, schema):
-            raise LlmError("OpenRouter answer did not match the schema")
+        def complete(self, system, user, schema, **kw):
+            raise LlmError("answer did not match the schema")
 
     gw, _ = run(conn_one(), BadJson())
     assert "(LLM unavailable)" in dm(gw)
 
 
-def test_a_failed_call_does_not_resolve_the_projects_open_concerns():
+def test_a_failed_call_sends_the_notes_source_as_unavailable_and_the_open_concern_stays():
+    from fake_api import FakeConcerns
     concerns = lambda p: [{"kind": "open_item", "text": "Client notes are still pending", "source": "pm_notes",
                            "line_id": line_id(p, "waiting for client"), "quote": "• QC on Nov 20, waiting for client notes"}]
-    conn = conn_one()
-    run(conn, Llm(reply_with(concerns=concerns)))
+    conn, store = conn_one(), FakeConcerns()
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
+    run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, SATURDAY, gateway=gw,
+              llm=Llm(reply_with(concerns=concerns)), log=lambda _: None)
+    gw = Gateway()
+    run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(fail_for={"Show ONE"}), log=lambda _: None)
+    assert ("p1", "pm_notes_read") in {(u.project, u.source) for u in store.observed[-1].unavailable}
     text = dm(gw)
     assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved last week" not in text
 
@@ -442,62 +462,30 @@ def leaky_db():
     return make_db([one, two], [one, two], [one, two])
 
 
-def test_names_ids_and_other_projects_in_free_text_never_reach_the_llm():
+def test_the_real_text_goes_to_the_api_and_the_projects_own_name_and_code_are_allowed():
     llm = Llm()
     run(leaky_db(), llm, notion=minutes_notion("Oto confirmed with Ida, same as TWO"), meeting_notes_ds=MEETING)
-    payload = next(p for p in llm.payloads if p["project"]["name"] == "Show ONE")
-    blob = json.dumps(payload, ensure_ascii=False)
-    for private in ("Oto", "ida", "Ida", "notion.so", "0123456789abcdef", "@ida_h", "ida_h", "123456789",
-                    "Show TWO", "TWO", "c-oto", "c-ida", "p1", "p2"):
-        assert private not in blob, private
+    index = next(i for i, p in enumerate(llm.payloads) if p["project"]["name"] == "Show ONE")
+    payload = llm.payloads[index]
     texts = [r["text"] for r in payload["pm_notes"]]
-    oto, ida = ("[person 1]", "[person 2]") if texts[1].startswith("• [person 1]") else ("[person 2]", "[person 1]")
-    assert texts[1] == f"• {oto} to send the files to {ida}, see [id 1]"
-    assert texts[2] == "• Ping [id 2] or tg [id 3]"
-    assert texts[3] in ("• Same colorist as [project 1], [project 2] needs her first",
-                        "• Same colorist as [project 2], [project 1] needs her first")
-    two = texts[3].split(", ")[1].split(" needs")[0]
-    assert payload["minutes"]["lines"][0]["text"] == f"• {oto} confirmed with {ida}, same as {two}"  # one mapping
-    assert payload["project"]["name"] == "Show ONE"  # the project's own name stays
+    assert texts[1] == "• Oto to send the files to ida, see notion.so/0123456789abcdef0123456789abcdef"
+    assert payload["minutes"]["lines"][0]["text"] == "• Oto confirmed with Ida, same as TWO"
+    assert llm.allowed[index] == ("Show ONE", "ONE")
 
 
-def test_an_accepted_item_shows_the_real_names_and_an_invented_or_lowercase_name_is_dropped():
-    def row(p):
-        return next(r for r in p["pm_notes"] if "send the files" in r["text"])
-
-    def placeholders(p):  # (Oto's, Ida's), as this payload numbered them
-        text = row(p)["text"]
-        return text[2:12], text.split("files to ")[1][:10]
-
+def test_an_accepted_item_shows_the_real_names_and_an_invented_name_is_dropped():
     def reply(p):
         if p["project"]["name"] != "Show ONE":
             return {}
-        oto, ida = placeholders(p)
-        cite = {"source": "pm_notes", "line_id": row(p)["line_id"], "quote": row(p)["text"]}
-        return {"concerns": [{"kind": "open_item", "text": f"{oto} still has to send the files to {ida}", **cite}],
-                "changes": [{"text": "files go to ida", **cite}, {"text": "files sent by oto", **cite},
-                            {"text": "files to send", **cite}]}
+        row = next(r for r in p["pm_notes"] if "send the files" in r["text"])
+        cite = {"source": "pm_notes", "line_id": row["line_id"], "quote": row["text"]}
+        return {"concerns": [{"kind": "open_item", "text": "Oto still has to send the files to ida", **cite}],
+                "changes": [{"text": "files sent by zyxmarco", **cite}, {"text": "files to send", **cite}]}
     gw, _ = run(leaky_db(), Llm(reply))
     text = dm(gw)
     assert "Oto still has to send the files to ida" in text
     assert "• files to send" in text
-    assert "files go to ida" not in text and "files sent by oto" not in text
-
-
-def test_a_first_name_that_is_also_a_word_is_hidden_only_when_capitalised():
-    from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-will", "Will Varnel")]
-    notes = "As of Nov 9\n• Will sends the grade, we will wait"
-    one = page(notes=notes)
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(SCHEMA)
-    for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
-        run_snapshot(conn, FakeNotion([one], people), PROJECTS, CONTACTS, kind, at)
-    cite = lambda p: {"source": "pm_notes", "line_id": line_id(p, "grade"), "quote": "• [person 1] sends the grade, we will wait"}
-    llm = Llm(lambda p: {"changes": [{"text": "team will wait for the grade", **cite(p)}]})
-    gw, _ = run(conn, llm, notion=FakeNotion([], people))
-    assert llm.payloads[0]["pm_notes"][1]["text"] == "• [person 1] sends the grade, we will wait"
-    assert "• team will wait for the grade" in dm(gw)
+    assert "zyxmarco" not in text
 
 
 # ---- grounding of fluent prose (#62 item 3) ----------------------------------------------------
@@ -549,58 +537,6 @@ def test_a_name_that_starts_like_a_month_is_still_an_invented_name():
     concerns = lambda p: [_concern("QC waiting for dario", p), _concern("QC waiting for janice", p)]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
     assert "dario" not in dm(gw) and "janice" not in dm(gw)
-
-
-# ---- redaction contract: identity and id variants (#62 item 4) --------------------------------
-# Approved #94 boundary: partial name words and project codes that are not ordinary words match
-# in every case; ordinary partial words/codes match capitalised or in capitals. Full contact names
-# and aliases match in every casing, including ordinary words. See test_llm_privacy_boundary.py.
-# Known TelegramUserIDs are hidden as numbers, including next to punctuation.
-
-def variants_db(notes, extra_people=()):
-    from fake_notion import contact as page_of
-    people = contacts() + [page_of("c-dario", "Dario Pardo"), *extra_people]
-    done = proj("p3", "AB", "✅ Done", coordinator="c-ida")
-    one = page(notes=notes)
-    conn = sqlite3.connect(":memory:")
-    conn.executescript(SCHEMA)
-    for kind, at in (("monday", MONDAY), ("friday", FRIDAY)):
-        run_snapshot(conn, FakeNotion([one, done], people), PROJECTS, CONTACTS, kind, at)
-    return conn, people
-
-
-def outbound(notes, **kw):
-    conn, people = variants_db(notes)
-    llm = Llm()
-    run(conn, llm, notion=FakeNotion([], people), **kw)
-    return json.dumps(llm.payloads[0], ensure_ascii=False)
-
-
-def test_name_and_code_variants_never_reach_the_llm():
-    blob = outbound("As of Nov 9\n• dario will ask Pardo, and DARIO again\n• AB is wrapped, ab too")
-    for private in ("dario", "Dario", "DARIO", "Pardo", "pardo", "AB", "ab too"):
-        assert private not in blob, private
-    assert "will ask" in blob  # ordinary words stay
-
-
-def test_punctuated_ids_telegram_links_and_known_telegram_ids_never_reach_the_llm():
-    notes = ("As of Nov 9\n• Telegram 123456789.\n• Link tg://user?id=123456789.\n"
-             "• Oto is user 111 and Ida is 222, call 1234567.89 later")
-    blob = outbound(notes)
-    for private in ("123456789", "tg://", "111", "222"):
-        assert private not in blob, private
-    assert "1234567.89" in blob  # a decimal is not an id
-    assert "Telegram [id" in blob
-
-
-def test_an_ordinary_word_name_or_code_is_hidden_only_as_written_capitalised():
-    from fake_notion import contact as page_of
-    conn, people = variants_db("As of Nov 9\n• Will plans it, we will wait, Sunday two, then TWO", [page_of("c-will", "Will Dov")])
-    llm = Llm()
-    run(conn, llm, notion=FakeNotion([], people))
-    texts = [r["text"] for r in llm.payloads[0]["pm_notes"]]
-    assert texts[1].startswith("• [person 1] plans it, we will wait")
-    assert "Dov" not in json.dumps(llm.payloads[0])
 
 
 def test_a_block_whose_header_has_no_date_is_kept_only_among_the_latest_blocks():
@@ -665,16 +601,13 @@ def test_facts_from_another_line_cannot_support_a_citation(field, borrowed):
     assert borrowed not in text
 
 
-def test_a_restorable_name_token_from_another_line_is_not_evidence():
+def test_a_name_from_another_line_is_not_evidence():
     notes = "As of Nov 9\n• QC waiting for client notes\n• Oto confirmed delivery"
 
     def reply(p):
         qc = next(r for r in p["pm_notes"] if "QC waiting" in r["text"])
-        other = next(r for r in p["pm_notes"] if "confirmed delivery" in r["text"])
-        token = re.search(r"\[person \d+\]", other["text"])[0]
         cite = {"source": "pm_notes", "line_id": qc["line_id"], "quote": qc["text"]}
-        return {"changes": [{**cite, "text": f"QC waiting for {token}"},
-                            {**cite, "text": "QC waiting for client notes"}]}
+        return {"changes": [{**cite, "text": "QC waiting for Oto"}, {**cite, "text": "QC waiting for client notes"}]}
 
     gw, _ = run(conn_one(notes), Llm(reply))
     assert "QC waiting for client notes" in dm(gw)

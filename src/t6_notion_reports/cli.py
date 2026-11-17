@@ -8,20 +8,19 @@ import time
 from datetime import date, datetime, timezone
 
 from .config import ConfigError, load_config
-from .notion import NotionClient
-from .compare_api import run_compare
-from .t6_api import ApiNotion, client_from_env
+from .t6_api import ApiNotion, MaskedRead, client_from_env
 from .snapshot_job import run_snapshot
 from .jo_snapshot_job import run_jo_snapshot
 from . import jo_snapshots
-from .shift_job import NotionUnavailable, ShiftTarget, run_shift_report
+from .shift_job import SlotSkipped, ShiftTarget, run_shift_report
 from .shift_report import SLOTS as SHIFT_SLOTS
 from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
-from .llm import OpenRouterClient, UnavailableLlm
+from .llm_api import LLM_TIMEOUT, ApiLlm, UnavailableLlm
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
+from .concern_switch import BACKUP_SUFFIX, switch_concerns
 from .gateway import GatewayClient, GatewayError
 from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapshot_info
 
@@ -29,13 +28,11 @@ from .snapshots import KINDS, connect, default_diff_pair, load_snapshot, snapsho
 def main(argv=None, notion=None, now: datetime | None = None) -> int:
     parser = argparse.ArgumentParser(prog="t6_notion_reports")
     sub = parser.add_subparsers(dest="command", required=True)
-    snap = sub.add_parser("snapshot", help="snapshot the Notion Projects database")
+    snap = sub.add_parser("snapshot", help="snapshot the Projects, read through the t6 API")
     snap.add_argument("--kind", choices=KINDS, default="manual")
     snap.add_argument("--db", default=os.environ.get("PSR_DB"), help="default: database_path from --config, else data/psr.db")
     snap.add_argument("--config", help="config.yaml; used when the flags below are not given")
-    snap.add_argument("--projects-ds", default=os.environ.get("PROJECTS_DS"))
-    snap.add_argument("--contacts-ds", default=os.environ.get("CONTACTS_DS"))
-    jo = sub.add_parser("jo-snapshot", help="snapshot the Notion Job Orders database")
+    jo = sub.add_parser("jo-snapshot", help="snapshot the Job Orders, read through the t6 API")
     jo.add_argument("--kind", choices=jo_snapshots.KINDS, default="manual")
     jo.add_argument("--config", default="config.yaml")
     jo.add_argument("--db", help="default: database_path from --config")
@@ -60,14 +57,25 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     mom.add_argument("--config", default="config.yaml")
     mom.add_argument("--db", help="default: database_path from --config")
     mom.add_argument("--date", type=date.fromisoformat, help="meeting date YYYY-MM-DD; default: today (Manila)")
+    mom.add_argument("--dry-print", action="store_true", help="condense and print the bullets per project, write nothing to Notion")
+    switch = sub.add_parser("switch-concerns", help="once, before the first brief that uses the API: back up the database, drop the old Concern table")
+    switch.add_argument("--config", default="config.yaml")
+    switch.add_argument("--db", help="default: database_path from --config")
     send = sub.add_parser("send-ready-mom", help="send approved minutes (Ready to send ticked) to the group, once")
     send.add_argument("--config", default="config.yaml")
     send.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing, leave Sent at empty")
-    cmp = sub.add_parser("compare-api", help="build snapshots and the brief from Notion and from the t6 API, send nothing")
-    cmp.add_argument("--config", default="config.yaml")
-    cmp.add_argument("--out", required=True, help="folder for both outputs (they hold names; keep it on the host)")
     args = parser.parse_args(argv)
+    try:
+        return _run(args, parser, notion, now)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+    except MaskedRead as exc:
+        print(f"stopped: {exc}", file=sys.stderr)
+        return 1
 
+
+def _run(args, parser, notion, now) -> int:
     if args.command == "diff":
         return _diff(args)
 
@@ -80,14 +88,14 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     if args.command == "brief":
         return _brief(args, notion, now)
 
-    if args.command == "compare-api":
-        return _compare_api(args, notion, now)
-
     if args.command == "draft-mom":
         return _draft_mom(args, notion, now)
 
     if args.command == "send-ready-mom":
         return _send_ready_mom(args, notion, now)
+
+    if args.command == "switch-concerns":
+        return _switch_concerns(args)
 
     if args.command == "serve":
         cfg = _load(args.config)
@@ -97,7 +105,7 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-        notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+        notion = _reads(notion)
         _ensure_dir(cfg.database_path)
         conn = connect(cfg.database_path)
         gateway = GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret) if cfg.brief else None
@@ -114,66 +122,43 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
         ).run()
         return 0
 
-    projects_ds, contacts_ds, db = args.projects_ds, args.contacts_ds, args.db
+    db = args.db
     if args.config:
         cfg = _load(args.config)
         if cfg is None:
             return 2
-        projects_ds = projects_ds or cfg.projects_data_source
-        contacts_ds = contacts_ds or cfg.contacts_data_source
-        notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
         db = db or cfg.database_path
+        notion = _reads(notion)
     db = db or "data/psr.db"
-    if not (projects_ds and contacts_ds):
-        parser.error("--config, or --projects-ds and --contacts-ds (or PROJECTS_DS / CONTACTS_DS), is required")
-    notion = notion or NotionClient(os.environ["NOTION_TOKEN"])
+    notion = notion or _reads(None)
     _ensure_dir(db)
-    _snapshot(connect(db), notion, projects_ds, contacts_ds, args.kind, now or datetime.now(timezone.utc))
+    _snapshot(connect(db), notion, args.kind, now or datetime.now(timezone.utc))
     return 0
 
 
-def _reads(notion, cfg):
-    """Contacts, notices and Meeting Notes through the t6 API when T6_API_URL is set; unset keeps Notion."""
+def _reads(notion):
+    """What the jobs read from and the Minutes are written through: the t6 API.
+
+    A ``notion`` passed in (the tests' fake) is used as it is. ``T6_API_URL`` and ``T6_API_SECRET`` are required.
+    """
+    if notion is not None:
+        return notion
     client = client_from_env()
     if client is None:
-        return notion
-    return ApiNotion(notion, client, cfg.projects_data_source, cfg.meeting_notes_data_source)
-
-
-def _compare_api(args, notion, now) -> int:
-    cfg = _load(args.config)
-    if cfg is None:
-        return 2
-    client = client_from_env()
-    if client is None or cfg.brief is None or not cfg.jo_data_source:
-        print("config error: compare-api needs T6_API_URL, the briefing keys and jo_data_source", file=sys.stderr)
-        return 2
-    notion = notion or NotionClient(cfg.notion_token)
-    new = ApiNotion(notion, client, cfg.projects_data_source, cfg.meeting_notes_data_source, snapshots=True)
-    try:
-        results = run_compare(cfg, notion, new, args.out, now or datetime.now(timezone.utc))
-    except OSError as exc:
-        print(f"compare-api failed: {type(exc).__name__}", file=sys.stderr)
-        return 1
-    for r in results:
-        print(r.line())
-    return 0 if all(r.differing == 0 for r in results) else 1
+        raise ConfigError("missing environment variable: T6_API_URL")
+    return ApiNotion(client)
 
 
 def _jo_snapshot(args, notion, now) -> int:
     cfg = _load(args.config)
     if cfg is None:
         return 2
-    if not cfg.jo_data_source:
-        print("config error: missing config key: jo_data_source", file=sys.stderr)
-        return 2
-    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+    notion = _reads(notion)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
     try:
-        res = run_jo_snapshot(conn, notion, cfg.jo_data_source, cfg.contacts_data_source,
-                              cfg.projects_data_source, args.kind, now or datetime.now(timezone.utc))
+        res = run_jo_snapshot(conn, notion, args.kind, now or datetime.now(timezone.utc))
     finally:
         conn.close()
     # One line per run, counts only: never field values or secrets.
@@ -187,9 +172,6 @@ def _shift_report(args, notion, now) -> int:
     cfg = _load(args.config)
     if cfg is None:
         return 2
-    if not cfg.jo_data_source:
-        print("config error: missing config key: jo_data_source", file=sys.stderr)
-        return 2
     target = None
     if not args.dry_print:
         if cfg.shift is None:
@@ -200,16 +182,15 @@ def _shift_report(args, notion, now) -> int:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
         target = _shift_target(cfg)
-    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+    notion = _reads(notion)
     db = args.db or cfg.database_path
     _ensure_dir(db)
     conn = jo_snapshots.connect(db)
     try:
-        run_shift_report(conn, notion, cfg.jo_data_source, cfg.contacts_data_source, cfg.projects_data_source,
-                         args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
+        run_shift_report(conn, notion, args.slot, now or datetime.now(timezone.utc), banner=_shift_banner(cfg),
                          log=lambda text: print(text, file=sys.stderr, flush=True), target=target,
                          llm=_shift_llm(cfg))
-    except (GatewayError, NotionUnavailable) as exc:
+    except (GatewayError, SlotSkipped) as exc:
         print(f"shift-report failed: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -234,10 +215,18 @@ def _shift_target(cfg) -> ShiftTarget:
 
 
 def _shift_llm(cfg):
-    """``shift_llm_model`` for the task summaries when the OpenRouter key is set; None means the first three words."""
-    if cfg.shift is not None and cfg.shift.openrouter_api_key:
-        return OpenRouterClient(cfg.shift.openrouter_api_key, cfg.shift.llm_model)
+    """The shift report's task summaries through ``llm run`` with ``shift_llm_model``; None (the first three words) when LLM calls are off."""
+    if cfg.shift is not None:
+        return _api_llm(cfg, "shift_task_summary", cfg.shift.llm_model)
     return None
+
+
+def _api_llm(cfg, task: str, model: str):
+    """An ``ApiLlm`` for one task; None when ``llm_enabled`` is false or ``T6_API_URL`` is unset."""
+    client = client_from_env(timeout=LLM_TIMEOUT) if cfg.llm_enabled else None
+    if client is None:
+        return None
+    return ApiLlm(client, task, model, log=lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def _brief(args, notion, now) -> int:
@@ -259,20 +248,34 @@ def _brief(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+    notion = _reads(notion)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     conn = connect(db)
     try:
-        run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, now or datetime.now(timezone.utc),
-                  gateway=gateway, dry_print=args.dry_print, llm=_llm(cfg, args.dry_print),
+        run_brief(conn, notion, cfg.brief, now or datetime.now(timezone.utc),
+                  gateway=gateway, dry_print=args.dry_print, llm=_task_llm(cfg, "brief_consolidation", args.dry_print),
                   meeting_notes_ds=cfg.meeting_notes_data_source, show_llm_input=args.show_llm_input,
-                  projects_ds=cfg.projects_data_source, matching=cfg.matching,
+                  leaves_llm=_task_llm(cfg, "brief_leaves", args.dry_print),
                   log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
     except BriefFailed as exc:
         print(f"brief failed: {exc}", file=sys.stderr)
         return 1
     finally:
         conn.close()
+    return 0
+
+
+def _switch_concerns(args) -> int:
+    cfg = _load(args.config)
+    if cfg is None:
+        return 2
+    db = args.db or cfg.database_path
+    try:
+        rows = switch_concerns(db)
+    except OSError as exc:  # the backup could not be made, or is already there: nothing was dropped
+        print(f"switch-concerns stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"switch-concerns backup={db}{BACKUP_SUFFIX} rows_dropped={rows}", flush=True)  # counts only
     return 0
 
 
@@ -291,13 +294,11 @@ def _brief_secrets(cfg):
     return [("PSR_SECRET", cfg.brief.psr_secret)]
 
 
-def _llm(cfg, dry_print=False):
-    """No key: a dry print leaves the LLM out (raw changes); a real send marks every project "(LLM unavailable)"."""
+def _task_llm(cfg, task, dry_print=False):
+    """A brief or Minutes task through ``llm run`` with ``llm_model``. Off: a dry print leaves the LLM out (raw output); a real run marks it unavailable."""
     if cfg.brief is None:
         return None
-    if cfg.brief.openrouter_api_key:
-        return OpenRouterClient(cfg.brief.openrouter_api_key, cfg.brief.llm_model)
-    return None if dry_print else UnavailableLlm()
+    return _api_llm(cfg, task, cfg.brief.llm_model) or (None if dry_print else UnavailableLlm())
 
 
 def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
@@ -307,8 +308,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
         if kind.startswith("shift"):
             conn_jo = jo_snapshots.connect(cfg.database_path)
             try:
-                run_shift_report(conn_jo, notion, cfg.jo_data_source, cfg.contacts_data_source,
-                                 cfg.projects_data_source, kind[len("shift"):], moment,
+                run_shift_report(conn_jo, notion, kind[len("shift"):], moment,
                                  banner=cfg.shift.test_banner, log=lambda text: print(text, flush=True),
                                  target=_shift_target(cfg) if shift_target is None else shift_target,
                                  llm=_shift_llm(cfg))
@@ -316,20 +316,19 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                 conn_jo.close()
             return
         if kind == "send_mom":
-            run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+            run_send_ready_mom(notion, gateway, cfg.brief.group_chat_id,
                                cfg.brief.group_topic_id, moment, banner=cfg.brief.test_banner,
                                log=lambda text: print(text, flush=True))
             return
         if kind == "brief":
-            run_brief(conn, notion, cfg.contacts_data_source, cfg.brief, moment, gateway=gateway, llm=_llm(cfg),
-                      meeting_notes_ds=cfg.meeting_notes_data_source, projects_ds=cfg.projects_data_source,
-                      matching=cfg.matching, log=lambda text: print(text, flush=True))
+            run_brief(conn, notion, cfg.brief, moment, gateway=gateway, llm=_task_llm(cfg, "brief_consolidation"),
+                      meeting_notes_ds=cfg.meeting_notes_data_source, leaves_llm=_task_llm(cfg, "brief_leaves"),
+                      log=lambda text: print(text, flush=True))
             return
-        _snapshot(conn, notion, cfg.projects_data_source, cfg.contacts_data_source, kind, moment)
+        _snapshot(conn, notion, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source:
-            run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
-                          cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
-                          log=lambda text: print(text, flush=True), llm=_llm(cfg))
+            run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
+                          log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"))
     return job
 
 
@@ -344,13 +343,12 @@ def _draft_mom(args, notion, now) -> int:
     if not os.path.exists(db):
         print(f"no database at {db}", file=sys.stderr)
         return 2
-    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+    notion = _reads(notion)
     meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
     conn = connect(db)
     try:
-        result = run_draft_mom(conn, notion, cfg.projects_data_source, cfg.contacts_data_source,
-                               cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
-                               llm=_llm(cfg))
+        result = run_draft_mom(conn, notion, cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
+                               llm=_task_llm(cfg, "minutes_condense", args.dry_print), dry_print=args.dry_print)
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
         return 1
@@ -377,10 +375,10 @@ def _send_ready_mom(args, notion, now) -> int:
             if not value:
                 print(f"config error: missing environment variable: {name}", file=sys.stderr)
                 return 2
-    notion = _reads(notion or NotionClient(cfg.notion_token), cfg)
+    notion = _reads(notion)
     gateway = None if args.dry_print else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
     try:
-        run_send_ready_mom(notion, cfg.meeting_notes_data_source, gateway, cfg.brief.group_chat_id,
+        run_send_ready_mom(notion, gateway, cfg.brief.group_chat_id,
                            cfg.brief.group_topic_id, now or datetime.now(timezone.utc),
                            banner=cfg.brief.test_banner, dry_print=args.dry_print,
                            log=lambda text: print(text, file=sys.stderr if args.dry_print else sys.stdout, flush=True))
@@ -432,7 +430,10 @@ def _local_date(taken_at: str):
 
 def _load(path: str):
     try:
-        return load_config(path)
+        cfg = load_config(path)
+        for key in cfg.ignored_keys:
+            print(f"config key ignored: {key}", file=sys.stderr)
+        return cfg
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return None
@@ -442,8 +443,8 @@ def _ensure_dir(db: str) -> None:
     os.makedirs(os.path.dirname(db) or ".", exist_ok=True)
 
 
-def _snapshot(conn, notion, projects_ds, contacts_ds, kind, now) -> None:
-    res = run_snapshot(conn, notion, projects_ds, contacts_ds, kind, now)
+def _snapshot(conn, notion, kind, now) -> None:
+    res = run_snapshot(conn, notion, kind, now)
     # One line per run, counts only: never message text or secrets.
     print(f"snapshot id={res.snapshot_id} kind={kind} baseline={res.is_baseline} "
           f"changed={res.changed} unchanged={res.unchanged} removed={res.removed}", flush=True)

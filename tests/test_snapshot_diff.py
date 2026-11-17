@@ -79,3 +79,24 @@ def test_field_present_on_one_side_only_is_a_change_not_an_error():
     assert [(c.field, c.old, c.new) for c in out[0].changes] == [
         ("Playdate", None, {"start": "2026-11-20", "end": None})
     ]
+
+
+def test_a_snapshot_of_the_older_version_compares_cleanly_post_supe_ignored_prod_coor_supe_missing_is_no_change(tmp_path):
+    import json
+    import sqlite3
+    from t6_notion_reports.diff import diff_snapshots
+    from t6_notion_reports.snapshots import SCHEMA, load_snapshot
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT INTO snapshots (taken_at, kind) VALUES ('2026-11-09T03:00:00+00:00', 'monday')")
+    conn.execute("INSERT INTO project_state (snapshot_id, page_id, field, value_json) VALUES (1, 'p1', 'Name', ?)", (json.dumps("Show"),))
+    conn.execute("INSERT INTO project_state (snapshot_id, page_id, field, value_json) VALUES (1, 'p1', 'Post Supe', ?)",
+                 (json.dumps([{"id": "c-x", "name": "X"}]),))
+    conn.execute("INSERT INTO snapshot_projects (snapshot_id, page_id, state_snapshot_id, removed, content_hash) VALUES (1, 'p1', 1, 0, 'h')")
+    old = load_snapshot(conn, 1)
+    conn.close()
+    assert "Post Supe" not in old["p1"]
+    new = {"p1": {"Name": "Show", "Prod Coor/Supe": [{"id": "c-y", "name": "Y"}]}}
+    assert diff_snapshots(old, new) == []
+    later = {"p1": {"Name": "Show", "Prod Coor/Supe": []}}
+    assert [c.field for c in diff_snapshots(new, later)[0].changes] == ["Prod Coor/Supe"]

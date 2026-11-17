@@ -9,11 +9,9 @@ from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
 from .pm_notes import Block, last_updated, parse_pm_notes
 from .schedule import MANILA
 from .snapshots import LAST_EDITED, squash
-from .status_gate import gate
 
-# Project Health order inside a section; a blank one sorts last.
-HEALTH_ORDER = {"critical": 0, "at risk": 1, "on track": 2, "incoming": 3}
-HEALTH_BLANK = 9
+# Fields a snapshot of an older version lacks: missing on the old side is not a change (it shows from the next snapshot on).
+LEGACY_MISSING = ("Prod Coor/Supe",)
 
 
 @dataclass(frozen=True)
@@ -55,12 +53,14 @@ class ProjectChange:
     code: str | None = None
     title: str | None = None
     stage: str | None = None
-    group: str | None = None  # status gate: on_hold | in_progress | leads
+    health_rank: int = 0  # the API's sort key of Project Health inside a section (set by the brief job)
+    group: str | None = None  # status gate: on_hold | in_progress | leads (set by the brief job from the API's result)
     edited: date | None = None  # Notion last-edited day (Manila)
     dates: tuple[str, ...] = ()  # the date properties that are set, as of this state: "Playdate Dec 1, 2026"
     flags: tuple[str, ...] = ()  # deterministic flags, overdue first (flags.py)
     note_dates: tuple[str, ...] = ()  # blank dates the PM Notes state, with a "not in property" hint when precise
     concerns: tuple[str, ...] = ()  # open Concerns, each with its age (concerns.py)
+    concern_ids: tuple[str, ...] = ()  # the Concern ID of each line of ``concerns``
     resolved: tuple[str, ...] = ()  # Concerns that no longer appear, shown once
     consolidated: bool = False  # the LLM's changes (``summary``) replace the raw ``changes`` and ``notes``
     summary: tuple[str, ...] = ()  # consolidated change lines, validated
@@ -96,7 +96,8 @@ def diff_snapshots(
                 FieldChange(f, o.get(f), n.get(f))
                 for f in sorted(set(o) | set(n))
                 # A field on one side only is a change, even when the other side holds an explicit null.
-                if f not in ("PM Notes", LAST_EDITED) and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
+                if f not in ("PM Notes", LAST_EDITED) and not (f in LEGACY_MISSING and f not in o)
+                and ((f in o) != (f in n) or _cmp(o.get(f)) != _cmp(n.get(f)))
             ]
             notes = _diff_notes(o.get("PM Notes"), n.get("PM Notes"), old_date, new_date)
             if changes or notes:
@@ -161,7 +162,7 @@ def _project(page_id, names, kind, changes, state, notes, snap_date) -> ProjectC
         last_updated=last_updated(state.get("PM Notes"), snap_date),
         code=state.get("Project Code") or None, title=state.get("Name") or None,
         stage=squash(str(state["Stage"])) if state.get("Stage") else None,
-        group=gate(state.get("Status")), edited=_edited_day(state.get(LAST_EDITED)),
+        edited=_edited_day(state.get(LAST_EDITED)),
         dates=_dates(state),
     )
 
@@ -192,15 +193,7 @@ def sort_projects(items: list[ProjectChange]) -> list[ProjectChange]:
 
 
 def _sort_key(ch: ProjectChange):
-    return (health_rank(ch.health), ch.name.lower(), ch.page_id)
-
-
-def health_rank(health: str | None) -> int:
-    """CRITICAL, AT RISK, ON TRACK, INCOMING, then any other value, then blank."""
-    key = squash(health or "").casefold()
-    if not key:
-        return HEALTH_BLANK
-    return HEALTH_ORDER.get(key, HEALTH_BLANK - 1)
+    return (ch.name.lower(), ch.page_id)
 
 
 def _diff_notes(old_text, new_text, old_date: date, new_date: date) -> NotesChange | None:

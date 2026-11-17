@@ -1,12 +1,12 @@
 """Leave clash Concerns (spec #40, ticket #49).
 
-Once per brief run, one LLM call parses the "Upcoming Holidays and Leaves" lines of the Projects
+Once per brief run, one LLM call (through ``llm run``) parses the "Upcoming Holidays and Leaves" lines of the Projects
 database description into entries (who, kind, start, end, quote). The call sees those lines and
 today's date and nothing about projects. Code checks each entry: the quote must be an exact input
 line (a leading bullet mark aside) and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
 
-Each leave entry's name is resolved to a Contacts page with ``people_match`` (onboarded Contacts
-first). A leave clashes with a project when that page is in the project's team relations and the
+Each leave entry's name is resolved to a Contacts page by the t6 API (``person find``, one call for all the
+names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations and the
 leave comes within ``clash_days`` of the project's Playdate, Submission Deadline or Archival Deadline.
 A holiday or an office closure (kind holiday, or who ALL) never clashes. The Concern text comes from a
 code template; names that matched nobody are listed for Cyril's digest only.
@@ -21,11 +21,8 @@ from typing import Iterable
 
 from pydantic import BaseModel
 
-from .contacts import Contact
 from .flags import ARCHIVAL, PLAYDATE, SUBMISSION, stored_day
-from .llm import LlmClient, LlmError
-from .people_match import MatchSettings, match_person
-from .redact import Mapping, Redactor, unresolved
+from .llm_api import LlmClient, LlmError, same_text
 from .snapshots import RELATION_FIELDS, squash
 
 DEFAULT_CLASH_DAYS = 14
@@ -71,31 +68,25 @@ class LeaveResult:
     failed: bool = False
 
 
-def payload(lines: Iterable[str], today: date, redactor: Redactor = Redactor(), mapping: Mapping | None = None) -> dict:
-    """What leaves the machine: the leave lines and today's date, and nothing about projects."""
-    mapping = mapping if mapping is not None else Mapping()
-    return {"today": today.isoformat(), "lines": [redactor.redact(line, "", mapping) for line in lines]}
+def payload(lines: Iterable[str], today: date) -> dict:
+    """What goes to the API: the leave lines and today's date, and nothing about projects. The API masks the names."""
+    return {"today": today.isoformat(), "lines": list(lines)}
 
 
-def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Redactor = Redactor()) -> LeaveResult:
+def parse_leaves(llm: LlmClient, lines: list[str], today: date) -> LeaveResult:
     """One call. Never raises: a failed call is ``failed``; an entry that fails its checks is dropped."""
-    mapping = Mapping()
-    data = payload(lines, today, redactor, mapping)
+    data = payload(lines, today)
     try:
         reply = llm.complete(SYSTEM, json.dumps(data, ensure_ascii=False), LeaveParse)
     except LlmError:
         return LeaveResult(failed=True)
     # Exact lines: a leading bullet mark and the line's ends may differ, nothing inside it.
-    exact = {_BULLET.sub("", ln.strip()) for ln in data["lines"]}
+    exact = [_BULLET.sub("", ln.strip()) for ln in data["lines"]]
     kept: list[Leave] = []
-    dropped = False
-    for item in reply.entries:
-        who, quote = mapping.restore(item.who), mapping.restore(item.quote)
-        if unresolved(who) or unresolved(quote):
-            dropped = True
-            continue
+    for item in reply.value.entries:
+        who = item.who
         if (item.kind not in KINDS or not squash(who)
-                or _BULLET.sub("", mapping.canonicalize(item.quote).strip()) not in exact):
+                or not any(same_text(_BULLET.sub("", item.quote.strip()), line) for line in exact)):
             continue
         try:
             start, end = date.fromisoformat(item.start), date.fromisoformat(item.end)
@@ -103,7 +94,8 @@ def parse_leaves(llm: LlmClient, lines: list[str], today: date, *, redactor: Red
             continue
         if start <= end:
             kept.append(Leave(squash(who), item.kind, start, end))
-    return LeaveResult(tuple(dict.fromkeys(kept)), failed=dropped and not kept)
+    # An entry the API had to drop (a placeholder it could not restore) is only a failure when nothing else was kept.
+    return LeaveResult(tuple(dict.fromkeys(kept)), failed=bool(reply.dropped) and not kept)
 
 
 @dataclass(frozen=True)
@@ -114,26 +106,29 @@ class LeaveClashes:
 
 def leave_clashes(
     entries: Iterable[Leave],
-    contacts: Iterable[Contact],
+    notion,
     states: dict[str, dict[str, object]],
     today: date,
     clash_days: int = DEFAULT_CLASH_DAYS,
-    matching: MatchSettings = MatchSettings(),
 ) -> LeaveClashes:
-    """Clash Concerns by project, and the leave names nobody matched. Leaves already over are ignored."""
-    contacts = list(contacts)
+    """Clash Concerns by project, and the leave names nobody matched. Leaves already over are ignored.
+
+    ``notion.find_people`` answers for all the names at once; if it raises (the API is down) so does this.
+    """
+    current = [e for e in entries if e.kind == "leave" and e.who != ALL and e.end >= today]
+    names = list(dict.fromkeys(e.who for e in current))
+    people = dict(zip(names, notion.find_people(names))) if names else {}
     concerns: dict[str, list[str]] = {}
     unmatched: list[str] = []
-    for leave in entries:
-        if leave.kind != "leave" or leave.who == ALL or leave.end < today:
-            continue
-        person = match_person(leave.who, contacts, matching)
+    for leave in current:
+        person = people[leave.who]
         if person is None:
             if leave.who not in unmatched:
                 unmatched.append(leave.who)
             continue
         for page_id, state in states.items():
-            if not any(isinstance(r, dict) and str(r.get("id")) == person.page_id
+            ids = {person.page_id, person.t6_id}
+            if not any(isinstance(r, dict) and str(r.get("id")) in ids
                        for field in RELATION_FIELDS for r in state.get(field) or []):
                 continue
             near = _nearest_date(leave, state, clash_days)

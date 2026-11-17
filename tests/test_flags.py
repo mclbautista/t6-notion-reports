@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from fake_notion import CONTACTS, FakeNotion, date, relation
 from t6_notion_reports.brief_job import run_brief
-from t6_notion_reports.flags import ROLES
+from fake_api import ROLES
 from test_gated_briefs import (
     AIRING, ARCHIVING, BRIEF, IN_PROGRESS, LEADS, SATURDAY, STANDBY, TVC, Gateway, brief, contacts, digest, dm,
     make_db, proj,
@@ -122,7 +122,7 @@ def test_the_lead_warning_window_is_configurable():
     page = proj("p1", "ONE", LEADS, **staffed(Playdate=date("2026-12-04")))  # 20 days away
     conn = make_db([page], [page])
     gw = Gateway()
-    run_brief(conn, FakeNotion([], contacts()), CONTACTS, replace(BRIEF, lead_warning_days=10),
+    run_brief(conn, FakeNotion.live(conn, contacts()), replace(BRIEF, lead_warning_days=10),
               SATURDAY, gateway=gw, log=lambda _: None)
     assert "Playdate in" not in dm(gw)
     assert "Playdate in 20 days" in digest(brief(conn))
@@ -147,8 +147,8 @@ def test_assistant_editor_and_coordinator_are_listed_with_the_roles():
     assert "⚠️ Missing roles: Assistant Editor, T6 Post Coordinator" in text
 
 
-def test_post_supe_is_not_flagged():
-    assert "Post Supe" not in one(IN_PROGRESS, **staffed(**{"Post Supe": relation()}))
+def test_prod_coor_supe_is_not_flagged_as_a_missing_role():
+    assert "Prod Coor/Supe" not in one(IN_PROGRESS, **staffed(**{"Prod Coor/Supe": relation()}))
 
 
 def test_director_and_cinematographer_are_listed_on_the_one_roles_line():

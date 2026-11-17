@@ -1,14 +1,12 @@
 # Non-secret configuration. Copy to config.yaml (mounted read-only into the container).
-# The secret NOTION_TOKEN goes in .env, never here. Every key is validated at boot; a bad
+# Secrets go in .env, never here. Every key is validated at boot; a bad
 # value fails the boot with a message naming the key.
 # Quote the ids: an all-digit id is read by YAML as a number.
 
-projects_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Projects data source id
-contacts_data_source: "00000000-0000-0000-0000-000000000000"   # FILL IN: Contacts data source id
+# Projects, Contacts and Job Orders are read through the t6 API (T6_API_URL and T6_API_SECRET in .env), so
+# projects_data_source, contacts_data_source and jo_data_source are no longer used. An old config.yaml that
+# still has them boots; each is ignored and logged as "config key ignored: <key>".
 database_path: /app/data/psr.db
-
-# Job Orders (optional). Needed by `jo-snapshot`. Job Orders: collection://33333333-3333-3333-3333-333333333333
-# jo_data_source: "33333333-3333-3333-3333-333333333333"
 
 # Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
 # Meeting Notes, and `draft-mom` works. Meeting Notes: collection://22222222-2222-2222-2222-222222222222
@@ -29,14 +27,14 @@ database_path: /app/data/psr.db
 # Digest delivery is independent; when omitted it defaults to cyril_contact_id.
 # digest_recipients:
 #   - "00000000-0000-0000-0000-000000000000"   # FILL IN: a digest recipient's Contacts page id
-# llm_model: "anthropic/claude-haiku-4.5"   # OpenRouter model for the per-project consolidation (default shown)
+# llm_model: "anthropic/claude-haiku-4.5"   # model for the Minutes, leaves and per-project consolidation, named for the t6 API (default shown)
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
+# concern_scan: true                    # before a real brief, the API scans each gated project's PM Notes for Concerns; false turns it off
 # leave_clash_days: 14                   # a team member's leave within this many days of a project date is a Concern
-# concern_chronic_weeks: 4               # a Concern open longer than this many weeks gets a chronic marker
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 
-# JO shift reports (optional). Needs jo_data_source above. When true, the scheduler snapshots Job Orders
+# JO shift reports (optional). When true, the scheduler snapshots Job Orders
 # and sends the 05:00, 11:30 and 19:00 reports every day, Asia/Manila. The secret SHIFT_SECRET goes in .env
 # (never PSR_SECRET). gateway_url and test_banner are shared with the briefing keys above; gateway_url is
 # required here, and so is at least one destination in shift_destinations. Leave shift_reports_enabled false
@@ -50,9 +48,10 @@ database_path: /app/data/psr.db
 # The ids above are placeholders. Put the real ids only in the deployed config.yaml. A person must have
 # started the bot before a DM can reach them.
 # ops_chat_id: 100000001                   # optional; where the ops alert will go (later ticket)
-# shift_llm_model: "qwen/qwen3.8-27b"      # OpenRouter model for the three-word task summaries (default shown).
+# llm_enabled: true                       # false: no model is called (summaries show three words; a real brief says "LLM unavailable")
+# shift_llm_model: "qwen/qwen3.8-27b"      # model (named for the t6 API) for the three-word task summaries (default shown).
 #   It is separate from llm_model above, which only the Saturday briefing uses now. Every call requires
-#   zero data retention, so pick a model with a ZDR endpoint (https://openrouter.ai/api/v1/endpoints/zdr).
+#   zero data retention, so pick a model the t6 API lists with it.
 #   A model without one fails every call, and the report shows each Task's first three words instead.
 #
 #   NEXT DEPLOY (the image that adds shift_llm_model):
@@ -64,10 +63,6 @@ database_path: /app/data/psr.db
 #      jo_task_summaries table gets new rows (a changed model does not clear the cache, so tasks already
 #      summarised keep their Haiku summary until their Task text changes).
 
-# People matching (optional; names in free text, such as leave entries, are matched to Contacts by Aliases,
-# then a guarded fuzzy match). Defaults shown match the JO watchdog. A fuzzy match needs fuzzy_min_score or
-# more and a lead of fuzzy_min_lead over the runner-up (both 0 to 100). Contacts with a TelegramUserID are
-# searched first, the rest of Contacts only if none of them matches.
-# fuzzy_min_score: 90
-# fuzzy_min_lead: 8
-# honorifics: [ate, kuya, sir]             # dropped from names before matching
+# Names in free text (leave entries) are matched by the t6 API (person find). fuzzy_min_score, fuzzy_min_lead and
+# honorifics no longer do anything: an old config.yaml that has them boots, and each is logged as
+# "config key ignored: <key>".

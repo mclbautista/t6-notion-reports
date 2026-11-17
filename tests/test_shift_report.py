@@ -43,13 +43,13 @@ def world(*jos):
 
 def run(conn, fake, slot, when, banner=False):
     out, log = [], []
-    report = run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, banner, out.append, log.append)
+    report = run_shift_report(conn, fake, slot, when, banner, out.append, log.append)
     return report, "\n".join(out), log
 
 
 def prior(conn, fake=None, when=MID, kind="1130"):
     """An earlier snapshot, so the next one is not the baseline."""
-    run_jo_snapshot(conn, fake or world(), JOB_ORDERS, CONTACTS, PROJECTS, kind, when)
+    run_jo_snapshot(conn, fake or world(), kind, when)
 
 
 PERSON_NAMES = {"Oto", "Rex", "Unassigned"}
@@ -141,7 +141,7 @@ def test_line_format_health_emoji_link_and_escaping():
     )
     summarizer = FakeSummarizer({"Export <v2> & sons": "Export <v2> &"})
     out, log = [], []
-    run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, log.append,
+    run_shift_report(conn, fake, "1900", PM, False, out.append, log.append,
                      summarizer=summarizer)
     text = "\n".join(out)
     lines = [l for l in text.splitlines() if "notion.so" in l]
@@ -180,7 +180,7 @@ def test_task_comes_from_the_summarizer_with_fallbacks():
                                  "Subtitle QC pass for episode": "one two three four",
                                  "Master delivery check": None})
     out = []
-    run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, False, out.append, lambda _: None,
+    run_shift_report(conn, fake, "1900", PM, False, out.append, lambda _: None,
                      summarizer=summarizer)
     tasks = re.findall(r"</a> - (.+?) - Pending", "\n".join(out))
     assert tasks == ["Color grade", "Subtitle QC pass", "Master delivery check", "no task", "Short label"]
@@ -315,31 +315,20 @@ JO_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def cli_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'projects_data_source: "{"1" * 8}-1111-1111-1111-{"1" * 12}"\n'
-                   f'contacts_data_source: "{"2" * 8}-2222-2222-2222-{"2" * 12}"\n'
-                   f'jo_data_source: "{JO_ID}"\ndatabase_path: "{tmp_path / "psr.db"}"\n')
+    cfg.write_text(f'database_path: "{tmp_path / "psr.db"}"\n')
     return cfg
-
-
-class RoutedNotion(FakeNotion):
-    def query_data_source(self, data_source_id, filter=None):
-        route = {JO_ID: JOB_ORDERS, "1" * 8 + "-1111-1111-1111-" + "1" * 12: PROJECTS,
-                 "2" * 8 + "-2222-2222-2222-" + "2" * 12: CONTACTS}
-        return super().query_data_source(route[data_source_id], filter)
 
 
 def test_cli_dry_print_prints_and_sends_nothing(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
-    fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+    fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     # Nothing but Notion reads is possible here: no gateway client exists on this path.
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient", lambda *a, **k: pytest.fail("must not send"))
     assert cli.main(["shift-report", "--slot", "1900", "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     captured = capsys.readouterr()
     assert "For TOC (Night Shift)" in captured.out and "no project#48" in captured.out
     assert captured.err.startswith("shift slot=1900 ") and "baseline=True" in captured.err
-    assert not (fake.created or fake.appended or fake.trashed or fake.sent_marked)
 
 
 def test_cli_send_needs_shift_enabled_and_rejects_unknown_slots(tmp_path, monkeypatch, capsys):
@@ -395,7 +384,7 @@ def test_0500_report_compares_with_the_previous_1900_snapshot_without_a_note():
 def test_cli_accepts_the_new_slots_and_rejects_the_retired_ones(tmp_path, monkeypatch, capsys):
     cfg = cli_config(tmp_path, monkeypatch)
     for slot in ("0500", "1130", "1900"):
-        fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+        fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
         assert cli.main(["shift-report", "--slot", slot, "--dry-print", "--config", str(cfg)], notion=fake, now=PM) == 0
     capsys.readouterr()
     for slot in ("1200", "1800"):
@@ -406,7 +395,7 @@ def test_cli_accepts_the_new_slots_and_rejects_the_retired_ones(tmp_path, monkey
 def test_baseline_windows_open_at_1130_for_the_1900_report_and_1900_yesterday_for_0500():
     from t6_notion_reports.shift_job import nominal_window_start
     conn = connect()
-    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM)
+    run_jo_snapshot(conn, world(), "1900", PM)
     from t6_notion_reports.jo_snapshots import load_latest
     assert nominal_window_start("1900", load_latest(conn)) == MID
     assert nominal_window_start("0500", load_latest(conn)) == datetime(2026, 11, 2, 19, tzinfo=MNL)
@@ -495,7 +484,7 @@ def test_1130_baseline_window_start_is_0500_today():
     from t6_notion_reports.jo_snapshots import load_latest
     from t6_notion_reports.shift_job import nominal_window_start
     conn = connect()
-    run_jo_snapshot(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1130", MID)
+    run_jo_snapshot(conn, world(), "1130", MID)
     assert nominal_window_start("1130", load_latest(conn)) == AM
 
 
@@ -561,3 +550,65 @@ def test_turnover_format_requested_by_coordinators():
 def test_task_list_numbers_are_dropped_but_counts_and_case_are_kept(task, label):
     from t6_notion_reports.task_summary import FirstWordsSummarizer, task_label
     assert task_label(task, FirstWordsSummarizer()) == label
+
+
+# ---- the Job Order snapshot keeps the API's status results (#133) ----
+
+def _records_without_rule_results(fake):
+    """What an older snapshot held: the fields only, no ``status_group`` and no ``done``."""
+    from t6_notion_reports.t6_api import ApiNotion
+    records = ApiNotion(fake.api).job_order_records()
+    for record in records:
+        record.rules = None
+    return records
+
+
+def test_the_snapshot_stores_status_group_and_done_from_jo_list():
+    from t6_notion_reports.jo_snapshots import load_latest
+    conn = connect()
+    run_jo_snapshot(conn, world(jo("j1", st="Done"), jo("j2", st="Pending"), jo("j3", st="Cancelled")), "1130", MID)
+    pages = load_latest(conn).pages
+    assert [(pages[p]["status_group"], pages[p]["done"]) for p in ("j1", "j2", "j3")] == [
+        ("started", True), ("not_started", False), ("cancelled", False)]
+
+
+def test_an_older_entry_without_the_two_values_takes_them_from_the_present_jo_list_by_status_name():
+    from t6_notion_reports.jo_snapshots import take_snapshot
+    conn = connect()
+    older = world(
+        jo("j1", "1", "AE", st="Pending"),                 # was not started, is Done now: processed + accomplished
+        jo("j2", "2", "AE", st="In progress"),             # was started, is Done now: accomplished only
+        jo("j3", "3", "VFX", st="Needs Intake Review"),    # was not started, is In progress now: processed
+        jo("j5", "5", "AE", st="Done"),                    # was Done, is Done: nothing
+    )
+    take_snapshot(conn, _records_without_rule_results(older), MID, "1130")
+    fake = world(
+        jo("j1", "1", "AE", st="Done"), jo("j2", "2", "AE", st="Done"), jo("j3", "3", "VFX", st="In progress"),
+        jo("j5", "5", "AE", st="Done"),
+    )
+    report, text, _ = run(conn, fake, "1900", PM)
+    assert blocks_of(text, "✅ Since 11:30 report") == [
+        "AE: Received 0 · Processed 1 · Accomplished 2",
+        "VFX: Received 0 · Processed 1 · Accomplished 0",
+        "<b>Total</b>: Received 0 · Processed 2 · Accomplished 2",
+    ]
+
+
+def test_an_older_status_name_not_in_the_present_jo_list_counts_as_not_started_and_not_done():
+    from t6_notion_reports.jo_snapshots import take_snapshot
+    conn = connect()
+    older = world(jo("j1", "1", "AE", st="Pending"))
+    records = _records_without_rule_results(older)
+    records[0].fields["Status"] = "Retired option"  # no Job Order has this Status now
+    take_snapshot(conn, records, MID, "1130")
+    _, text, _ = run(conn, world(jo("j1", "1", "AE", st="Done")), "1900", PM)
+    assert "AE: Received 0 · Processed 1 · Accomplished 1" in text
+
+
+def test_window_counts_and_the_snapshot_code_name_no_status():
+    import inspect
+    from t6_notion_reports import jo_snapshots, shift_report
+    names = ("Done", "Cancelled", "Pending", "In progress", "Needs Intake Review", "Needs Completion Review")
+    source = inspect.getsource(shift_report.window_counts) + inspect.getsource(jo_snapshots)
+    assert [n for n in names if n in source] == []
+    assert not hasattr(shift_report, "NOT_STARTED") and not hasattr(shift_report, "STARTED")

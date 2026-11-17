@@ -22,7 +22,7 @@ def model(tmp_path, *files, key_file=True):
     for name in ("compose.yaml", OVERLAY):
         shutil.copy(ROOT / name, tmp_path / name)
     (tmp_path / "compose.override.yaml").write_text(EXISTING_OVERRIDE)
-    (tmp_path / ".env").write_text("NOTION_TOKEN=app-placeholder\n")
+    (tmp_path / ".env").write_text("PSR_SECRET=app-placeholder\n")
     if key_file:
         (tmp_path / ".env.tailscale").write_text("TS_AUTHKEY=test-only-placeholder\n")
     cmd = ["docker", "compose"]

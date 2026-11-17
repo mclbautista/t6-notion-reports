@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from .rules import JoRules
 from .snapshots import squash
 
 MANILA = ZoneInfo("Asia/Manila")
@@ -118,6 +119,7 @@ class JoRecord:
 
     page_id: str
     fields: dict[str, object] = field(default_factory=dict)
+    rules: JoRules | None = None  # the API's rule results; its status group and ``done`` are stored, the rest are not
 
     def normalized(self) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -133,6 +135,8 @@ class JoRecord:
             elif isinstance(value, str) and name not in DATE_FIELDS and name != "last_edited_time":
                 value = squash(value)
             out[name] = value
+        if self.rules is not None:  # the API's status results, kept so a later report can compare against them
+            out["status_group"], out["done"] = self.rules.status_group, self.rules.done
         return out
 
     def content_hash(self) -> str:
@@ -149,6 +153,7 @@ class JoSnapshotResult:
     unchanged: int
     removed: int
     pruned: int  # snapshots deleted by retention
+    rules: dict[str, JoRules] = field(default_factory=dict)  # the API's results for the pages of this run
 
 
 @dataclass(frozen=True)
@@ -227,7 +232,8 @@ def take_snapshot(
             conn.execute("INSERT INTO jo_snapshot_pages VALUES (?, ?, ?, ?, 1)",
                          (snapshot_id, page_id, h, state_id))
         pruned = prune(conn, taken_at)
-    return JoSnapshotResult(snapshot_id, prev is None, changed, unchanged, len(gone), pruned)
+    rules = {r.page_id: r.rules for r in records if r.rules is not None}
+    return JoSnapshotResult(snapshot_id, prev is None, changed, unchanged, len(gone), pruned, rules)
 
 
 def prune(conn: sqlite3.Connection, now: datetime) -> int:

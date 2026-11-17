@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import itertools
 
+from fake_api import FakeApi
+from t6_notion_reports.t6_api import ApiNotion
+
 _ids = itertools.count(1)
 
 PROJECTS = "projects-ds"
@@ -44,7 +47,7 @@ def project(page_id, name="Show", code="QAZ", **props):
         "Status": select("🚨 In-Progress"), "Project Health": select("On Track"), "PM Notes": rich(""),
         "Playdate": date(None), "Submission Deadline": date(None), "Archival Deadline": date(None),
         "T6 Post Coordinator": relation(), "Editors": relation(), "Online Editor": relation(),
-        "Colorist": relation(), "Sound Tech": relation(), "Post Supe": relation(),
+        "Colorist": relation(), "Sound Tech": relation(), "Prod Coor/Supe": relation(),
         "Assistant Editor": relation(), "Director": relation(), "Cinematographer": relation(),
     }
     for f in FORMULAS:
@@ -98,71 +101,84 @@ def block(kind, text="", children=(), **rich_kw):
             "_children": list(children), kind: {"rich_text": items}}
 
 
+def _page(page_id, state):
+    """A Projects page as the API reads it now, built from a snapshot state."""
+    page = project(page_id, state.get("Name") or "", state.get("Project Code"))
+    props = page["properties"]
+    props.update({"Stage": select(state.get("Stage")), "Status": select(state.get("Status")),
+                  "Project Health": select(state.get("Project Health")), "PM Notes": rich(state.get("PM Notes"))})
+    for name in ("Playdate", "Submission Deadline", "Archival Deadline"):
+        value = state.get(name)
+        props[name] = date(value["start"], value.get("end")) if value else date(None)
+    for name in ("T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Prod Coor/Supe",
+                 "Assistant Editor", "Director", "Cinematographer"):
+        props[name] = relation(*[r["id"] for r in state.get(name) or []])
+    page["last_edited_time"] = state.get("Last Edited")
+    return page
+
+
 class FakeNotion:
-    def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=()):
+    def __init__(self, projects=(), contacts=(), meetings=(), description="", job_orders=(), concerns=None):
+        self.concerns = concerns  # a FakeConcerns shared across runs; None: a new, empty store
         self.job_orders = list(job_orders)
         self.projects = list(projects)
         self.contacts = list(contacts)
         self.meetings = list(meetings)
         self.description = description
-        self.queried: list[str] = []
-        self.created: list[dict] = []  # raw create_page bodies: {"properties", "children"}
-        self.appended: list[tuple[str, list[dict]]] = []
-        self.trashed: list[str] = []
-        self.sent_marked: list[tuple[str, dict]] = []  # (page id, properties) from property updates
         self.page_blocks: dict[str, list[dict]] = {}  # page id -> top-level blocks (block() shapes)
 
-    def query_data_source(self, data_source_id, filter=None):
-        self.queried.append(data_source_id)
-        pages = {PROJECTS: self.projects, CONTACTS: self.contacts, MEETING: self.meetings,
-                 JOB_ORDERS: self.job_orders}[data_source_id]
-        return [p for p in pages if not p.get("in_trash")]
+    @classmethod
+    def live(cls, conn, contacts=(), **kw):
+        """A fake whose Projects are the latest snapshot of ``conn``: the API as it reads when a brief runs."""
+        from t6_notion_reports.snapshots import latest_snapshot_ids, load_snapshot
+        ids = latest_snapshot_ids(conn, 1)
+        state = load_snapshot(conn, ids[0]) if ids else {}
+        return cls([_page(p, s) for p, s in state.items()], contacts, **kw)
 
-    def retrieve_data_source(self, data_source_id):
-        # A string is one plain rich text item; a list is passed through as rich text items.
-        rich_items = self.description if isinstance(self.description, list) else [{"plain_text": self.description}]
-        return {"id": data_source_id, "description": rich_items}
+    # The reads: what the jobs call on ``ApiNotion``, served by ``FakeApi`` from the fixtures. Set ``down`` to
+    # true to make the API unreachable.
+    @property
+    def api(self):
+        if not hasattr(self, "_api"):
+            self._api = FakeApi(self)
+        return self._api
 
-    def create_page(self, data_source_id, properties, children):
-        assert data_source_id == MEETING and len(children) <= 100
-        page_id = f"new-{len(self.created) + 1}"
-        self.created.append({"id": page_id, "properties": properties, "children": children})
-        return {"id": page_id}
+    @property
+    def client(self):
+        return self.api
 
-    def update_page(self, page_id, body):
-        if "properties" in body:
-            self.sent_marked.append((page_id, body["properties"]))
-            for p in self.meetings:
-                if p["id"] == page_id:
-                    p["properties"].update(body["properties"])
-            return {"id": page_id}
-        self.trashed.append(page_id)
-        for p in self.meetings:
-            if p["id"] == page_id:
-                p["in_trash"] = True
-        return {"id": page_id}
+    def _reads(self):
+        return ApiNotion(self.api)
 
-    def list_block_children(self, block_id):
-        """Children of a page (from ``page_blocks``) or of a block built with block(children=...)."""
-        if block_id in self.page_blocks:
-            return list(self.page_blocks[block_id])
-        for blocks in self.page_blocks.values():
-            found = _find(blocks, block_id)
-            if found is not None:
-                return list(found["_children"])
-        raise KeyError(block_id)
+    def read_contacts(self):
+        return self._reads().read_contacts()
 
-    def append_children(self, block_id, children):
-        assert len(children) <= 100
-        self.appended.append((block_id, children))
-        return {}
+    def t6_person_ids(self):
+        return self._reads().t6_person_ids()
 
+    def contact_names(self):
+        return self._reads().contact_names()
 
-def _find(blocks, block_id):
-    for b in blocks:
-        if b["id"] == block_id:
-            return b
-        inner = _find(b["_children"], block_id)
-        if inner is not None:
-            return inner
-    return None
+    def find_people(self, names):
+        return self._reads().find_people(names)
+
+    def notices(self):
+        return self._reads().notices()
+
+    def meeting_notes(self, **filters):
+        return self._reads().meeting_notes(**filters)
+
+    def project_records(self):
+        return self._reads().project_records()
+
+    def job_order_records(self):
+        return self._reads().job_order_records()
+
+    def project_rules(self):
+        return self._reads().project_rules()
+
+    def project_rule(self, page_id):
+        return self._reads().project_rule(page_id)
+
+    def project_flags(self, *args):
+        return self._reads().project_flags(*args)

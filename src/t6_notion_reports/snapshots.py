@@ -15,11 +15,13 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
+from .rules import ProjectRules
+
 KINDS = ("monday", "friday", "manual")
 
 RELATION_FIELDS = (
-    "T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech", "Post Supe",
-    "Assistant Editor", "Director", "Cinematographer",
+    "T6 Post Coordinator", "Editors", "Online Editor", "Colorist", "Sound Tech",
+    "Assistant Editor", "Director", "Cinematographer", "Prod Coor/Supe",
 )
 
 # Notion's own last-edited time for the page. Stored for the briefing; never reported as a change.
@@ -53,16 +55,6 @@ CREATE TABLE IF NOT EXISTS project_state (
     value_json  TEXT NOT NULL,
     PRIMARY KEY (snapshot_id, page_id, field)
 );
-CREATE TABLE IF NOT EXISTS concerns (
-    page_id     TEXT NOT NULL,
-    key         TEXT NOT NULL,
-    text        TEXT NOT NULL,
-    first_on    TEXT NOT NULL,
-    last_on     TEXT NOT NULL,
-    resolved_on TEXT,
-    source      TEXT NOT NULL DEFAULT 'llm',  -- flags | llm | leave: what produced it (concerns.py)
-    PRIMARY KEY (page_id, key)
-);
 """
 
 
@@ -80,6 +72,7 @@ class ProjectRecord:
 
     page_id: str
     fields: dict[str, object] = field(default_factory=dict)
+    rules: ProjectRules | None = None  # the API's rule results; kept in memory, never stored
 
     def normalized(self) -> dict[str, object]:
         """What is stored. Status keeps its raw value for display (emoji, odd whitespace)."""
@@ -191,7 +184,8 @@ def load_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> dict[str, dict[
         "WHERE sp.snapshot_id = ? AND sp.removed = 0",
         (snapshot_id,),
     ):
-        state.setdefault(page_id, {})[name] = json.loads(value_json)
+        if name in TRACKED_FIELDS:  # a field an older version stored ("Post Supe") is not read
+            state.setdefault(page_id, {})[name] = json.loads(value_json)
     return state
 
 

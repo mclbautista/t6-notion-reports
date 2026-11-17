@@ -1,4 +1,4 @@
-"""Notion down at a shift slot (#27): retry ~30 minutes, one ops alert, skip the slot."""
+"""The T6 API down at a shift slot (#27): retry ~30 minutes, one ops alert, skip the slot."""
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
@@ -10,7 +10,7 @@ from test_shift_send import CHAT, TOPIC, FakeTransport
 from t6_notion_reports.config import Destination
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.jo_snapshots import connect
-from t6_notion_reports.shift_job import NotionUnavailable, ShiftTarget, run_shift_report
+from t6_notion_reports.shift_job import SlotSkipped, ShiftTarget, run_shift_report
 
 OPS = 4242
 MNL = timezone(timedelta(hours=8))
@@ -32,11 +32,11 @@ class Outage:
         self.error = error or urllib.error.URLError("secret notion text")
         self.reads = 0
 
-    def query_data_source(self, data_source_id, *args):
+    def job_order_records(self):
         self.reads += 1
         if self.recover_at is None or self.clock.now < self.recover_at:
             raise self.error
-        return self.inner.query_data_source(data_source_id, *args)
+        return self.inner.job_order_records()
 
 
 def tgt(transport, ops=OPS):
@@ -48,9 +48,9 @@ def tgt(transport, ops=OPS):
 def go(conn, notion, clock, transport, slot="1900", when=PM, ops=OPS):
     logs = []
     try:
-        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, log=logs.append,
+        run_shift_report(conn, notion, slot, when, log=logs.append,
                          target=tgt(transport, ops), clock=lambda: clock.now, sleep=clock.sleep)
-    except NotionUnavailable as exc:
+    except SlotSkipped as exc:
         return exc, logs
     return None, logs
 
@@ -65,7 +65,7 @@ def test_down_for_good_retries_about_30_minutes_then_one_alert_and_no_report():
     before = snapshot_count(conn)
     notion = Outage(world(jo("j1")), clock)
     skipped, _ = go(conn, notion, clock, transport)
-    assert isinstance(skipped, NotionUnavailable)
+    assert isinstance(skipped, SlotSkipped)
     assert timedelta(minutes=29) <= clock.now - PM <= timedelta(minutes=31)
     assert notion.reads > 5
     assert len(transport.calls) == 1
@@ -73,6 +73,7 @@ def test_down_for_good_retries_about_30_minutes_then_one_alert_and_no_report():
     assert (body["to"], body["idempotency_key"]) == (OPS, "shift-2026-11-03-1900-alert")
     assert "topic" not in body
     assert "1900" in body["text"] and "URLError" in body["text"]
+    assert "T6 API unreachable for" in body["text"] and "Notion" not in body["text"]
     assert "secret notion text" not in body["text"]
     assert snapshot_count(conn) == before
 
@@ -138,7 +139,7 @@ def test_dry_print_does_not_retry_or_alert():
     clock, conn = Clock(PM), connect()
     notion = Outage(world(), clock)
     with pytest.raises(urllib.error.URLError):
-        run_shift_report(conn, notion, JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, out=lambda _: None,
+        run_shift_report(conn, notion, "1900", PM, out=lambda _: None,
                          log=lambda _: None, clock=lambda: clock.now, sleep=clock.sleep)
     assert notion.reads == 1 and clock.now == PM
 
@@ -156,8 +157,8 @@ def alert_run(dests, ops=None):
     logs = []
     target = ShiftTarget(GatewayClient("http://gw:8780", "s", transport, sleep=lambda _: None),
                          {"1900": dests}, ops)
-    with pytest.raises(NotionUnavailable):
-        run_shift_report(conn, Outage(world(), clock), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=logs.append,
+    with pytest.raises(SlotSkipped):
+        run_shift_report(conn, Outage(world(), clock), "1900", PM, log=logs.append,
                          target=target, clock=lambda: clock.now, sleep=clock.sleep)
     return transport, logs
 
@@ -192,7 +193,7 @@ def test_gateway_failure_while_alerting_still_raises_notion_unavailable_and_logs
     clock, transport, conn = Clock(PM), FakeTransport(fail=True), connect()
     prior(conn)
     skipped, logs = go(conn, Outage(world(jo("j1")), clock), clock, transport)
-    assert isinstance(skipped, NotionUnavailable)
+    assert isinstance(skipped, SlotSkipped)
     assert any("alert not sent" in line for line in logs)
     for line in logs:
         assert str(OPS) not in line and "shift-2026" not in line and "secret notion text" not in line

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+from typing import NamedTuple, Sequence
 
 HEADING = "upcoming holidays and leaves"
 _MONTHS = ("january", "february", "march", "april", "may", "june", "july",
@@ -15,6 +16,13 @@ _RANGE = re.compile(
     r"(?:\s*(?:-|–|—|to|until)\s*(?:(?P<m2>[A-Za-z]{3,9})\.?\s+)?(?P<d2>\d{1,2})(?!\d))?",
     re.IGNORECASE,
 )
+
+
+class Run(NamedTuple):
+    """A run of the Projects description: its text and whether it is bold."""
+
+    text: str
+    bold: bool = False
 
 
 def upcoming_entries(description: str, today: date, days: int = 14) -> list[str]:
@@ -39,10 +47,10 @@ def upcoming_entries(description: str, today: date, days: int = 14) -> list[str]
     return kept
 
 
-def leave_lines(description: str | list[dict]) -> list[str] | None:
+def leave_lines(description: str | Sequence[Run]) -> list[str] | None:
     """The lines of the "Upcoming Holidays and Leaves" section, bullet marks dropped; None without that heading.
 
-    ``description`` is the Projects database description as text, or as its rich text items, which
+    ``description`` is the Projects database description as text, or as its runs, which
     also tell bold lines apart. Unlike ``upcoming_entries`` this keeps lines without a readable date:
     the leave parser reads them. The section ends at the next heading, so text under a later heading
     never reaches the leave call.
@@ -84,14 +92,14 @@ def leave_lines(description: str | list[dict]) -> list[str] | None:
     return out
 
 
-def _rich_lines(description: str | list[dict]) -> list[tuple[str, bool]]:
+def _rich_lines(description: str | Sequence[Run]) -> list[tuple[str, bool]]:
     """(text, every visible character is bold) for each line of the description."""
     if isinstance(description, str):
         return [(ln, False) for ln in description.splitlines()]
     lines: list[tuple[str, bool]] = [("", True)]
-    for item in description:
-        bold = bool((item.get("annotations") or {}).get("bold"))
-        for n, piece in enumerate(str(item.get("plain_text") or "").split("\n")):
+    for run in description:
+        bold = run.bold
+        for n, piece in enumerate(run.text.split("\n")):
             if n:
                 lines.append(("", True))
             text, all_bold = lines[-1]

@@ -3,34 +3,47 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
-from .briefing import AFTER_PSR, OutboundMessage, Settings, build_briefing, digest_missing
-from .concerns import FLAGS, FLAGS_NOTES, LEAVE, LLM, AgedConcerns, update_concerns
+from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
+from .concern_api import ConcernApiError, observe, open_concerns, record_message, scan
+from .concerns import AgedConcerns, QuietConcern, aged_from_reply, quiet_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
-from .contacts import Contact, load_contacts
+from .contacts import Contact
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
-from .flags import project_flags, stored_decides
+from .flags import ProjectFlags, project_flags
 from .gateway import GatewayError
 from .holidays import leave_lines
 from .leaves import NO_HEADING_NOTE, UNAVAILABLE_NOTE, UNMATCHED_NOTE, leave_clashes, parse_leaves, payload as leave_payload
-from .llm import LlmClient
+from .llm_api import LlmClient
 from .mom import entry_label
 from .mom_lines import Minutes, load_minutes
-from .people_match import MatchSettings
-from .redact import Redactor
+from .rules import ProjectRules
 from .schedule import MANILA
 from .snapshots import (
     RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
 )
 from .status_gate import gate, is_archiving, looks_like_in_progress
+from .t6_api import ApiUnavailable
 
 
 class BriefFailed(Exception):
     """At least one message could not be queued. Everything else was still attempted."""
+
+
+CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
+RECORD_TRIES = 6  # polls of the gateway for a message's Telegram id
+RECORD_WAIT = 10  # seconds between polls
+RECORD_CAP = 2 * 60  # seconds for the whole record-message step
+SCAN_BUDGET = 10 * 60  # seconds for the whole PM Notes scan step; a project not reached is skipped
+
+# The sources of a finding, as ``concern observe`` names them.
+FLAG_RULE, PM_NOTES_READ, LEAVE = "flag_rule", "pm_notes_read", "leave"
+HISTORY_UNAVAILABLE_NOTE = "⚠️ Concern history unavailable"
 
 
 @dataclass(frozen=True)
@@ -46,7 +59,6 @@ class BriefResult:
 def run_brief(
     conn: sqlite3.Connection,
     notion,
-    contacts_ds: str,
     brief: BriefSettings,
     now: datetime,
     gateway=None,
@@ -56,20 +68,25 @@ def run_brief(
     log: Callable[[str], None] = print,
     meeting_notes_ds: str | None = None,
     show_llm_input: bool = False,
-    projects_ds: str | None = None,
-    matching: MatchSettings = MatchSettings(),
+    leaves_llm: LlmClient | None = None,
+    budget: float = CONSOLIDATION_BUDGET,
+    scan_budget: float = SCAN_BUDGET,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> BriefResult:
     """Send the briefing now. With ``dry_print`` (or no ``gateway``), print and send nothing.
 
     With ``llm``, each gated project gets one consolidation call: its changes, Concerns and last update.
-    Without one the raw changes are shown and nothing is marked. ``show_llm_input`` prints each payload
-    in full and makes no call at all, so what would leave the machine can be read first.
+    Without one the raw changes are shown and nothing is marked. The calls share ``budget`` seconds; a project
+    not reached in time is marked "(LLM unavailable)". ``show_llm_input`` prints each payload as the app
+    builds it and makes no call at all (the API masks the names, so this is not what the model sees).
 
-    With ``llm`` and ``projects_ds``, one more call parses the Projects database's "Upcoming Holidays and
+    With ``leaves_llm`` (default: ``llm``), one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
     Names nobody matched, and a failed parse, are noted in Cyril's digest only.
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
+    leaves_llm = llm if leaves_llm is None else leaves_llm
     pair = default_diff_pair(conn)
     first = False
     if pair is None:
@@ -84,7 +101,8 @@ def run_brief(
     else:
         old_id, new_id = pair
     raw_old, raw_new = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
-    old_state, new_state = apply_gate(raw_old, raw_new, log)
+    rules = gate_rules(notion, raw_old, raw_new)
+    old_state, new_state = apply_gate(raw_old, raw_new, rules, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
     changes = [] if first else diff_snapshots(
@@ -97,37 +115,42 @@ def run_brief(
     new_day = datetime.fromisoformat(new_on).astimezone(MANILA).date()
     today = now.astimezone(MANILA).date()
     outcomes: dict[str, Outcome] = {}
-    contacts = load_contacts(notion, contacts_ds)  # read once: the redaction, the leaves and the messages
+    contacts = notion.read_contacts()  # read once: the messages
     if llm is not None or show_llm_input:
         windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
         minutes = None
         if meeting_notes_ds:
             try:
-                minutes = load_minutes(notion, meeting_notes_ds, today)
+                minutes = load_minutes(notion, today)
             except Exception as exc:  # type only: the page may hold text. The brief goes on without Minutes.
                 log(f"brief minutes unavailable error={type(exc).__name__}")
-        # Contacts people, other projects and ids are redacted from free text before it is sent.
-        redactor = Redactor.build(contacts.values(), (raw_old, raw_new))
         payloads = {
             p: build_payload(
                 s, today, new_day, windows.get(p, []), *minutes_for(minutes, names[p], s), brief.pm_notes_weeks,
-                redactor, p,
+                rules[p].relevant_dates,
             ) for p, s in new_state.items()
         }
+        started, skipped = monotonic(), 0
         for page_id in sorted(payloads, key=lambda p: (names[p].lower(), p)):
             if show_llm_input:
-                out(f"--- llm input: {names[page_id]} ---\n{payloads[page_id].json(indent=2)}\n")
+                out(f"--- llm input: {names[page_id]} (names are masked by the API, not here) ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
-                outcomes[page_id] = consolidate(llm, payloads[page_id], today)
-    leaves = Leaves(available=False)  # no leave call: nothing says a stored leave Concern went away
-    if (llm is not None or show_llm_input) and projects_ds:
+                if monotonic() - started >= budget:  # the brief goes out at 12:00: it does not wait without end
+                    outcomes[page_id] = Outcome(failed=True)
+                    skipped += 1
+                else:
+                    outcomes[page_id] = consolidate(llm, payloads[page_id], today)
+        if skipped:
+            log(f"brief llm budget_exhausted={skipped}")
+    leaves = Leaves(available=False)  # no leave call: nothing says an open leave Concern went away
+    if leaves_llm is not None or show_llm_input:
         leaves = leave_concerns(
-            notion, projects_ds, llm, today, new_state, contacts,
-            brief.leave_clash_days, matching, show_llm_input, out, log, redactor,
+            notion, leaves_llm, today, new_state,
+            brief.leave_clash_days, show_llm_input, out, log,
         )
     # Dates the notes state count as given, so they are known before the flags are worked out.
     stated = {p: {d.property: d.day for d in o.dates} for p, o in outcomes.items()}
-    flagged = {p: project_flags(s, today, brief.lead_warning_days, stated.get(p)) for p, s in new_state.items()}
+    flagged, flags_failed = read_flags(notion, new_state, rules, today, brief.lead_warning_days, stated, log)
     note_dates = {p: note_date_lines(o) for p, o in outcomes.items() if o.dates}
     failed_ids = sorted(p for p, o in outcomes.items() if o.failed)
     llm_failed = sorted(names[p] for p in failed_ids)
@@ -138,28 +161,25 @@ def run_brief(
     unavailable: set[tuple[str, str]] = set()
     for p, f in flagged.items():
         o = outcomes.get(p)
-        # Code-made Concerns are recomputed every run. A source that could not be read (a failed or
-        # skipped project call, unavailable leaves) neither re-lists nor resolves its open Concerns.
+        # A source that could not be read (a failed or skipped project call, a flags call, unavailable leaves) is
+        # sent as unavailable: the API keeps its open Concerns, nothing says they went away.
         if o is None or o.failed:
-            unavailable.add((p, LLM))
-            unavailable.add((p, FLAGS_NOTES))  # the dates from the notes are unknown, not gone
+            unavailable.add((p, PM_NOTES_READ))
+        if p in flags_failed:
+            unavailable.update({(p, FLAG_RULE), (p, PM_NOTES_READ)})
         if not leaves.available:
             unavailable.add((p, LEAVE))
         current[p] = (
-            *((t, FLAGS_NOTES if t in f.from_notes else FLAGS) for t in f.concerns),
-            *((t, LLM) for t in (o.concerns if o and not o.failed else ())),
+            *((t, PM_NOTES_READ if t in f.from_notes else FLAG_RULE) for t in f.concerns),
+            *((t, PM_NOTES_READ) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
-    # A notes-dependent Concern whose dates are all stored now needs no inference: it is in ``current`` or fixed.
-    aged = update_concerns(
-        conn, current, today, brief.concern_chronic_weeks, unavailable,
-        lambda p, text: p in new_state and stored_decides(new_state[p], text),
+    if brief.concern_scan and gateway is not None and not dry_print:  # the scan writes Concerns in the API: not on a dry run
+        scan_concerns(notion, new_state, rules, log, scan_budget, monotonic)
+    aged, history = observe_concerns(
+        notion, current, unavailable, today, dry_print or gateway is None, new_state, rules, log,
     )
-    # A dry run shows the ages and the resolved line but leaves the store as it was.
-    if dry_print or gateway is None:
-        conn.rollback()
-    else:
-        conn.commit()
+    quiet, quiet_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
@@ -173,10 +193,15 @@ def run_brief(
         cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner,
         digest_recipients=digest_contacts, coordinator_recipients=brief.coordinator_recipients,
     )
+    for ch in changes:
+        ch.group = gate(rules.get(ch.page_id))
+        if ch.page_id in rules:
+            ch.health_rank = rules[ch.page_id].health_rank
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
-        llm_failed, active_coordinators_in(new_state), first=first, notes=list(leaves.notes),
-        cyril_notes=list(leaves.cyril_notes),
+        llm_failed, active_coordinators_in(new_state, rules), first=first,
+        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if quiet_ok else (RAISE_UNAVAILABLE_NOTE,))],
+        cyril_notes=list(leaves.cyril_notes), raise_at_psr=quiet,
     )
     no_digest = digest_missing(settings)
 
@@ -189,19 +214,150 @@ def run_brief(
         return BriefResult(messages=tuple(messages), changed=changed, llm_failed=len(llm_failed))
 
     sent = failed = 0
+    refs: list[tuple[OutboundMessage, int]] = []
     for m in messages:
         try:
-            gateway.notify(m.to, m.text, m.key, m.topic)
+            refs.append((m, gateway.notify(m.to, m.text, m.key, m.topic)))
             sent += 1
         except GatewayError as exc:
             failed += 1
             log(f"brief send failed key={m.key} error={exc}")
     log(f"brief sent={sent} failed={failed} messages={len(messages)} changed={changed} llm_failed={len(llm_failed)}")
+    try:  # best effort, after the last message is queued: nothing in it changes what the brief returns
+        record_concerns(notion.client, gateway, refs, today.isoformat(), log, sleep, monotonic)
+    except Exception as exc:
+        log(f"brief record-message failed error={type(exc).__name__}")
     if no_digest:
         raise BriefFailed("No digest recipient has a TelegramUserID: DMs sent, digest not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
+
+
+def record_concerns(
+    client, gateway, sent, brief_date: str, log, sleep: Callable[[float], None], monotonic: Callable[[], float],
+    cap: float = RECORD_CAP,
+) -> None:
+    """Tell the API which sent message carried each Concern (``concern record-message``), so a reply to it can be kept.
+
+    ``sent`` holds each queued message with its gateway ``message_ref``. For a message that carried Concerns the Telegram
+    id is polled (``RECORD_TRIES`` times, ``RECORD_WAIT`` seconds apart, until the first id); then each Concern is
+    recorded once, with the key ``psr-brief-<date>-<message key>-<concern id>``. A message with no id in time, and
+    everything past the total ``cap``, counts as missing_id; a refused or failed call counts as refused, logged by rule
+    name or error type only. Nothing here raises, and no send is repeated.
+    """
+    started = monotonic()
+    over = lambda: monotonic() - started >= cap
+    ok = missing = refused = 0
+    for m, ref in sent:
+        if not m.concern_ids:
+            continue
+        mid = None
+        for attempt in range(RECORD_TRIES):
+            if attempt:
+                sleep(RECORD_WAIT)
+            if over():
+                break
+            mid = gateway.sent_message_id(ref)
+            if mid is not None:
+                break
+        if mid is None:
+            missing += len(m.concern_ids)
+            continue
+        for concern in m.concern_ids:
+            if over():
+                missing += 1
+                continue
+            try:
+                record_message(client, concern, m.to, mid, brief_date, f"psr-brief-{brief_date}-{m.key}-{concern}")
+                ok += 1
+            except OSError as exc:
+                refused += 1
+                log(f"brief record-message failed error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+    log(f"brief record-message ok={ok} missing_id={missing} refused={refused}")
+
+
+def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monotonic: Callable[[], float] = time.monotonic) -> None:
+    """``concern scan`` once for each gated project, so the API's Concerns are current when the brief reads them.
+
+    The owner is the project's one coordinator, as the API's person. A project with none or several coordinators (or one
+    the API does not know) is skipped. A refused or failed scan never stops the brief: its rule name is logged and the
+    brief goes on with the Concerns the API holds. The step has a total ``budget``; projects not reached are skipped.
+    """
+    people = {}
+    try:
+        people = notion.t6_person_ids()
+    except Exception as exc:  # any failure: the brief goes on
+        log(f"brief scan unavailable error={type(exc).__name__}")
+    ok = skipped = failed = 0
+    started = monotonic()
+    for page_id in sorted(state):
+        coordinators = [r["id"] for r in state[page_id].get("T6 Post Coordinator") or [] if isinstance(r, dict)]
+        if len(coordinators) != 1:
+            log(f"brief scan skipped reason=coordinators n={len(coordinators)}")
+            skipped += 1
+        elif coordinators[0] not in people:
+            log("brief scan skipped reason=owner")
+            skipped += 1
+        elif monotonic() - started >= budget:
+            skipped += 1
+        else:
+            try:
+                scan(notion.client, rules[page_id].t6_id or page_id, people[coordinators[0]])
+                ok += 1
+            except Exception as exc:  # the rule name of a refusal; for any other error its type only
+                log(f"brief scan failed error={exc if isinstance(exc, ConcernApiError) else type(exc).__name__}")
+                failed += 1
+    log(f"brief scan ok={ok} skipped={skipped} failed={failed}")
+
+
+def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[QuietConcern], bool]:
+    """The quiet Concerns of the gated projects, from ``concern list`` (read after the observe, so a Concern this run
+    found again is not quiet). If the API does not answer the section is left out: ``([], False)``."""
+    try:
+        listed = open_concerns(notion.client)
+        people = notion.t6_person_ids()
+        page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
+        page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
+        return quiet_concerns(
+            listed, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
+            {page: c.name for page, c in contacts.items()},
+        ), True
+    except Exception as exc:  # any failure, a malformed reply too: the section is left out and the brief goes on
+        log(f"brief raise at psr unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+        return [], False
+
+
+def observe_concerns(
+    notion, current, unavailable, today, dry_run, state, rules, log,
+) -> tuple[dict[str, AgedConcerns], bool]:
+    """Hand the run's findings to the API (``concern observe``) and render what it answers.
+
+    ``current`` maps a project page id to its (text, source) findings; ``unavailable`` holds the (page id, source) pairs
+    that could not be read. The owner of a finding is the project's one coordinator, when the API knows that person.
+    Returns each project's aged Concerns and whether the history was available. If the API does not answer the brief
+    is not held: each project shows this run's findings without age, and the second value is False. Only the rule
+    name is logged.
+    """
+    send = lambda p: rules[p].t6_id or p  # the API takes a T6 ID or a page id
+    try:
+        people = notion.t6_person_ids()
+        findings = []
+        for page_id, items in current.items():
+            coordinators = [r["id"] for r in state[page_id].get("T6 Post Coordinator") or [] if isinstance(r, dict)]
+            owner = people.get(coordinators[0]) if len(coordinators) == 1 else None
+            findings += [(send(page_id), text, source, owner) for text, source in items]
+        reply = observe(
+            notion.client, today.isoformat(), findings, {(send(p), s) for p, s in unavailable}, dry_run,
+        )
+        counts = reply["counts"]
+        line = "brief concerns " + " ".join(f"{name}={counts[name]}" for name in ("new", "known", "not_seen", "skipped"))
+        aged = aged_from_reply(reply, {send(p): p for p in current})
+    except Exception as exc:  # any failure, a malformed reply too: the brief goes on without the history  # the rule name of a refusal; for any other error its type only, messages may hold data
+        log(f"brief concerns unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
+        return {p: AgedConcerns(tuple(dict.fromkeys(t for t, _ in items))) for p, items in current.items() if items}, False
+    log(line)
+    return aged, True
 
 
 @dataclass(frozen=True)
@@ -216,17 +372,16 @@ class Leaves:
 
 
 def leave_concerns(
-    notion, projects_ds, llm, today, states, contacts, clash_days, matching, show_input, out, log,
-    redactor: Redactor = Redactor(),
+    notion, llm, today, states, clash_days, show_input, out, log,
 ) -> Leaves:
     """Leave clash Concerns by project, and the digest notes.
 
     No leave lines under the heading means no call and nothing to clash. A failed call, an unreadable
     description or a missing heading gives no clash Concerns this run, says leaves were unavailable,
-    and leaves the stored leave Concerns open.
+    and sends the leave source as unavailable, so the API keeps its open leave Concerns.
     """
     try:
-        description = notion.retrieve_data_source(projects_ds).get("description") or []
+        description = notion.notices().runs
     except Exception as exc:  # type only: never the response
         log(f"brief leaves unavailable error={type(exc).__name__}")
         return Leaves(notes=() if show_input else (UNAVAILABLE_NOTE,), available=False)
@@ -237,13 +392,17 @@ def leave_concerns(
     if not lines:
         return Leaves()
     if show_input:
-        out(f"--- llm input: leaves ---\n{json.dumps(leave_payload(lines, today, redactor), ensure_ascii=False, indent=2)}\n")
+        out(f"--- llm input: leaves (names are masked by the API, not here) ---\n{json.dumps(leave_payload(lines, today), ensure_ascii=False, indent=2)}\n")
         return Leaves(available=False)
-    result = parse_leaves(llm, lines, today, redactor=redactor)
+    result = parse_leaves(llm, lines, today)
     if result.failed:
         log("brief leaves unavailable")
         return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
-    found = leave_clashes(result.entries, contacts.values(), states, today, clash_days, matching)
+    try:
+        found = leave_clashes(result.entries, notion, states, today, clash_days)
+    except OSError as exc:  # the API did not answer: type only. No clash Concerns, and the leave source is sent as unavailable.
+        log(f"brief leaves unavailable error={type(exc).__name__}")
+        return Leaves(notes=(UNAVAILABLE_NOTE,), available=False)
     unmatched = (UNMATCHED_NOTE + ", ".join(found.unmatched),) if found.unmatched else ()
     return Leaves(found.concerns, cyril_notes=unmatched)
 
@@ -351,6 +510,7 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
         if ch.kind != "removed" and ch.page_id in flagged:
             a = aged.get(ch.page_id, AgedConcerns())
             ch.flags, ch.concerns, ch.resolved = flagged[ch.page_id].lines, a.open, a.resolved
+            ch.concern_ids = a.open_ids
             ch.note_dates = note_dates.get(ch.page_id, ())
         shown.add(ch.page_id)
     extra = []
@@ -360,12 +520,36 @@ def with_flags(changes, flagged, aged, names, state, snap_day, note_dates=None):
         if page_id not in shown and (f.lines or a.open or a.resolved or notes):
             ch = unchanged_project(page_id, names, state[page_id], snap_day)
             ch.flags, ch.concerns, ch.resolved, ch.note_dates = f.lines, a.open, a.resolved, notes
+            ch.concern_ids = a.open_ids
             extra.append(ch)
     return sort_projects(changes + extra) if extra else changes
 
 
-def apply_gate(old, new, log: Callable[[str], None] = print):
-    """Drop every project outside the status gate from both snapshots, judged by its latest state.
+def gate_rules(notion, old, new) -> dict[str, ProjectRules]:
+    """The API's rule results for every project of the two snapshots: one ``project list`` call, and one
+    ``project get`` for each project the list no longer holds (removed since)."""
+    rules = notion.project_rules()
+    for page_id in sorted({*old, *new} - rules.keys()):
+        if (rule := notion.project_rule(page_id)) is not None:
+            rules[page_id] = rule
+    return rules
+
+
+def read_flags(notion, state, rules, today, lead_warning_days, stated, log) -> tuple[dict[str, ProjectFlags], set[str]]:
+    """The flags of every gated project: one ``project flags`` call for all of them. A call the API did not answer
+    gives every project no flags this run, and is logged by error type only; a project the API does not know is
+    the same for that project alone."""
+    try:
+        results = notion.project_flags({p: stated.get(p) or {} for p in state}, today, lead_warning_days)
+    except OSError as exc:
+        log(f"brief flags unavailable error={type(exc).__name__}")
+        return {p: ProjectFlags() for p in state}, set(state)
+    failed = {p for p in state if results.get(p) is None}
+    return {p: ProjectFlags() if p in failed else project_flags(rules[p], results[p]) for p in state}, failed
+
+
+def apply_gate(old, new, rules: dict[str, ProjectRules], log: Callable[[str], None] = print):
+    """Drop every project outside the status gate from both snapshots, judged by the API's result.
 
     Runs before the LLM or any message. An excluded Status that looks like an In-Progress option is
     logged by project name, so the Notion data can be fixed.
@@ -374,18 +558,18 @@ def apply_gate(old, new, log: Callable[[str], None] = print):
     latest = {**old, **new}
     keep = set()
     for page_id, state in latest.items():
-        if gate(state.get("Status")) is not None:
+        if gate(rules.get(page_id)) is not None:
             keep.add(page_id)
         elif looks_like_in_progress(state.get("Status")):
             log(f"brief status excluded looks like In-Progress project={names[page_id]} status={state.get('Status')!r}")
     return ({p: s for p, s in old.items() if p in keep}, {p: s for p, s in new.items() if p in keep})
 
 
-def active_coordinators_in(state: dict[str, dict[str, object]]) -> set[str]:
+def active_coordinators_in(state: dict[str, dict[str, object]], rules: dict[str, ProjectRules]) -> set[str]:
     """Contact page ids of coordinators with an In-Progress (any kind) or Archiving project."""
     return {
         str(ref["id"])
-        for project in state.values()
-        if gate(project.get("Status")) == "in_progress" or is_archiving(project.get("Status"))
+        for page_id, project in state.items()
+        if gate(rules.get(page_id)) == "in_progress" or is_archiving(rules.get(page_id))
         for ref in project.get("T6 Post Coordinator") or [] if isinstance(ref, dict)
     }

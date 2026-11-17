@@ -71,14 +71,14 @@ def test_added_project_lists_its_blocks_and_removed_has_none():
     assert rem.kind == "removed" and rem.notes is None
 
 
-def test_sort_critical_at_risk_on_track_none_then_code():
+def test_changes_are_sorted_by_name_the_health_order_is_the_briefings_from_the_apis_rank():
     states = {
         "1": proj(code="ZZ", health=None), "2": proj(code="BB", health="On Track"),
         "3": proj(code="CC", health="Critical"), "4": proj(code="AA", health=None),
         "5": proj(code="DD", health="At Risk"), "6": proj(code="AB", health="Critical"),
     }
     changed = {k: {**v, "Stage": "Online"} for k, v in states.items()}
-    assert [c.name for c in run(states, changed)] == ["AB", "CC", "DD", "BB", "AA", "ZZ"]
+    assert [c.name for c in run(states, changed)] == ["AA", "AB", "BB", "CC", "DD", "ZZ"]
 
 
 def test_display_name_uses_code_then_name_and_disambiguates_shared_codes():

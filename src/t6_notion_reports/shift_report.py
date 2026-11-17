@@ -7,19 +7,16 @@ older snapshot that bounds the window, and returns the messages. Task text goes 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 from datetime import datetime
 
 from .briefing import BANNER, NOTION_PAGE
 from .jo_snapshots import MANILA, JoSnapshot
+from .rules import JoRules
 from .task_summary import FirstWordsSummarizer, TaskSummarizer, for_page, task_label
 from .telegram_html import Block, Line, bold, line, link, render_messages
 
 SEP = " · "
-
-DONE, CANCELLED = "Done", "Cancelled"
-NOT_STARTED = ("Needs Intake Review", "Pending")
-STARTED = ("In progress", "Needs Completion Review", DONE)
 
 # Section order after TOC and AE (COOR and ADMIN share one section); any other Department value follows
 # them under its own name, then "No Department". Counts in the tally are per department, in this order.
@@ -35,7 +32,8 @@ SECTIONS = (  # (heading, departments in it), after TOC and AE
     ("🟣 For COOR & ADMIN", ("COOR", "ADMIN")),
 )
 NO_DEPARTMENT_HEADING = "🔴 No Department"
-FLAGGED_HEALTH = ("🔴 Blocked", "⚠️ Delayed", "🔥 Urgent")
+# The emoji each Health flag the API returns shows with (layout).
+HEALTH_EMOJI = {"Blocked": "🔴", "Delayed": "⚠️", "Urgent": "🔥"}
 UNASSIGNED = "Unassigned"
 
 
@@ -59,10 +57,6 @@ Fields = dict[str, object]
 
 def parse_instant(value: object) -> datetime | None:
     return datetime.fromisoformat(value) if isinstance(value, str) and value else None
-
-
-def is_active(fields: Fields) -> bool:
-    return fields.get("Status") not in (DONE, CANCELLED)
 
 
 def page_url(page_id: str) -> str:
@@ -134,11 +128,12 @@ def assignee_names(fields: Fields) -> list[str]:
     return [str(r.get("name") or r["id"]) for r in fields.get("Assigned") or [] if isinstance(r, dict)]
 
 
-def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owner: str | None) -> Line:
+def turnover_line(
+    page_id: str, fields: Fields, rules: JoRules, summarizer: TaskSummarizer, owner: str | None,
+) -> Line:
     """``[health emoji]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
-    health = fields.get("Health")
     others = [n for n in assignee_names(fields) if n != owner]
-    parts: list = [str(health).split()[0] if health in FLAGGED_HEALTH else "",
+    parts: list = [next((HEALTH_EMOJI[f] for f in rules.health_flags if f in HEALTH_EMOJI), ""),
                    link(jo_id_text(fields), page_url(page_id)),
                    f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",
@@ -148,7 +143,7 @@ def turnover_line(page_id: str, fields: Fields, summarizer: TaskSummarizer, owne
     return line(*[p for p in parts if p != ""])
 
 
-def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer) -> list[Block]:
+def assignee_blocks(items: list[tuple[str, Fields]], rules: Mapping[str, JoRules], summarizer: TaskSummarizer) -> list[Block]:
     """One block per assignee, bold name, a blank line between blocks (alphabetical, Unassigned last); a JO
     with several assignees is in each."""
     by_person: dict[str | None, list[tuple[str, Fields]]] = {}
@@ -161,7 +156,7 @@ def assignee_blocks(items: list[tuple[str, Fields]], summarizer: TaskSummarizer)
         if blocks:
             blocks.append(Line())
         blocks.append(line(bold(person or UNASSIGNED)))
-        blocks += [turnover_line(p, f, summarizer, person) for p, f in sort_by_deadline(by_person[person])]
+        blocks += [turnover_line(p, f, rules[p], summarizer, person) for p, f in sort_by_deadline(by_person[person])]
     return blocks
 
 
@@ -199,28 +194,41 @@ class WindowCounts:
         return sum(self.by_department.values(), Counts())
 
 
+def _status_results(
+    fields: Fields, by_status: Mapping[object, tuple[str | None, bool]],
+) -> tuple[str | None, bool]:
+    """(``status_group``, ``done``) of a snapshot entry: as stored, or for an entry without them (a snapshot taken
+    before they were stored) from ``by_status``; a Status that is not in it is not started and not done."""
+    if "status_group" in fields and "done" in fields:
+        return fields["status_group"], bool(fields["done"])
+    return by_status.get(fields.get("Status"), ("not_started", False))
+
+
 def window_counts(
     newer: dict[str, Fields], older: dict[str, Fields] | None, start: datetime, end: datetime,
+    by_status: Mapping[object, tuple[str | None, bool]],
 ) -> WindowCounts:
     """Received, processed and accomplished between two snapshots, by Department.
 
     ``older`` None (the baseline) gives received only. Received is ``Date`` in ``(start, end]``.
-    Cancelled JOs, judged by their Status in the newer snapshot, are in no count.
+    The counts read each entry's stored ``status_group`` and ``done``; ``by_status`` maps a Status name to that
+    pair for entries that lack them (the present ``jo list`` answer). JOs in the cancelled group, judged by the newer
+    snapshot, are in no count.
     """
     totals: dict[str | None, Counts] = {}
     counted: set[str] = set()
     for page_id, f in newer.items():
-        status = f.get("Status")
-        if status == CANCELLED:
+        group, done = _status_results(f, by_status)
+        if group == "cancelled":
             continue
         posted = parse_instant(f.get("Date"))
         received = int(posted is not None and start < posted <= end)
         processed = accomplished = 0
         if older is not None:
-            before = older.get(page_id, {}).get("Status") if page_id in older else None
             absent = page_id not in older
-            processed = int(status in STARTED and (absent or before in NOT_STARTED))
-            accomplished = int(status == DONE and (absent or before != DONE))
+            before_group, before_done = (None, False) if absent else _status_results(older[page_id], by_status)
+            processed = int(group == "started" and (absent or before_group == "not_started"))
+            accomplished = int(done and (absent or not before_done))
         row = Counts(received, processed, accomplished)
         if row.zero:
             continue
@@ -247,11 +255,14 @@ def build_end_of_shift(
     banner: bool = False,
     window_start: datetime | None = None,
     summarizer: TaskSummarizer | None = None,
+    *,
+    rules: Mapping[str, JoRules],
 ) -> EndOfShiftReport:
     """``older`` None means the baseline: received only, with a note. ``compared_with`` is the
     "<slot> on <date>" text when ``older`` is a fallback rather than the expected bounding snapshot.
     ``window_start`` opens the received window when there is no ``older``. ``summarizer`` shortens the
-    Task text (default: the first three words)."""
+    Task text (default: the first three words). ``rules`` are the API's results for each page of ``current``: which
+    Job Orders are active and which Health flags they show."""
     summarizer = summarizer or FirstWordsSummarizer()
     report_slot = SLOTS[slot]
     moment = current.taken_at.astimezone(MANILA)
@@ -260,14 +271,14 @@ def build_end_of_shift(
         line(moment_text(moment)),
     ]
 
-    active = [(p, f) for p, f in current.pages.items() if is_active(f)]
+    active = [(p, f) for p, f in current.pages.items() if rules[p].active]
     groups = group_by_department(active)
 
     def section(heading: str, items: list[tuple[str, Fields]], always: bool = False) -> None:
         if not items and not always:
             return
         blocks.extend([Line(), line(bold(heading))])
-        blocks.extend(assignee_blocks(items, summarizer) or [line("none")])
+        blocks.extend(assignee_blocks(items, rules, summarizer) or [line("none")])
 
     section(report_slot.toc_heading, groups.get("TOC", []), always=True)
     section(AE_HEADING, groups.get("AE", []), always=True)
@@ -282,7 +293,8 @@ def build_end_of_shift(
     start = older.taken_at if older else window_start
     if start is None:
         raise ValueError("window_start is required when there is no older snapshot")
-    counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at)
+    by_status = {f.get("Status"): (rules[p].status_group, rules[p].done) for p, f in current.pages.items()}
+    counts = window_counts(current.pages, older.pages if older else None, start, current.taken_at, by_status)
     blocks += [Line(), line(bold(f"✅ Since {SLOT_LABEL[report_slot.opens_kind]} report"))]
     if older is None:
         blocks.append(line("First snapshot: processed and accomplished start next time."))

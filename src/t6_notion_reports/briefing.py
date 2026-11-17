@@ -5,12 +5,12 @@ coordinator, then Cyril's digest.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
-from .concerns import RESOLVED_LABEL
+from .concerns import QUIET_LABEL, RESOLVED_LABEL, QuietConcern
 from .contacts import Contact
-from .diff import ProjectChange, group_by_coordinator, health_rank, last_updated_text
+from .diff import ProjectChange, group_by_coordinator, last_updated_text
 from .telegram_html import (
     LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_line, render_messages, split_line,
 )
@@ -23,6 +23,8 @@ DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 LLM_UNAVAILABLE = "(LLM unavailable)"
 AFTER_PSR = "after PSR"
+RAISE_AT_PSR = "Raise at PSR"
+RAISE_UNAVAILABLE_NOTE = "⚠️ Raise at PSR unavailable"
 NO_CYRIL_NOTE = "⚠️ Some warnings are withheld: set cyril_contact_id so private notes reach the right person"
 
 
@@ -33,6 +35,7 @@ class OutboundMessage:
     text: str
     key: str
     recipient: str  # for logs: a name, never message text
+    concern_ids: tuple[str, ...] = ()  # the Concerns this message shows, for ``concern record-message``
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,7 @@ def build_briefing(
     limit: int = LIMIT,
     notes: list[str] | None = None,
     cyril_notes: list[str] | None = None,
+    raise_at_psr: list[QuietConcern] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
@@ -80,11 +84,16 @@ def build_briefing(
     ``notes`` are extra warning lines for every digest recipient (leaves unavailable); ``cyril_notes``
     go in Cyril's digest alone (unmatched leave names), so with several recipients the digests differ.
 
+    ``raise_at_psr`` are the quiet Concerns of the gated projects (no new evidence for 2 weeks): the digest lists them
+    all in a "Raise at PSR" section after the projects, and a coordinator's DM lists the ones that coordinator owns.
+    The section is left out when there are none.
+
     Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
     """
     changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
+    quiet_concerns = raise_at_psr or []
     stamp = f"{today:%a %b} {today.day}"
     notice = [line(FIRST_BRIEF)] if first else []
     messages: list[OutboundMessage] = []
@@ -110,8 +119,9 @@ def build_briefing(
         head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
         units = _units([(None, projects)], DM_SECTIONS, today)
+        raise_block = _raise_block([q for q in quiet_concerns if q.owner_page == contact_id])
         if chat is not None:
-            messages += _send(chat, None, _pack(head, units, [], banner, limit), key, name)
+            messages += _send(chat, None, _pack(head, units, raise_block, banner, limit), key, name)
         else:
             fallbacks.append(name)
             who = Span(name)
@@ -119,7 +129,7 @@ def build_briefing(
                 who = mention_handle(contact.handle)
             head = [line(who, ":"), *head]
             messages += _send(
-                settings.group_chat_id, settings.group_topic_id, _pack(head, units, [], banner, limit), key, name,
+                settings.group_chat_id, settings.group_topic_id, _pack(head, units, raise_block, banner, limit), key, name,
             )
 
     if digest_missing(settings):
@@ -131,7 +141,7 @@ def build_briefing(
     if groups.no_coordinator:
         people.append(("No coordinator", groups.no_coordinator))
     units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
-    tail: list[Block] = []
+    tail: list[Block] = _raise_block(quiet_concerns)
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:
@@ -151,6 +161,22 @@ def build_briefing(
             digest_tail = tail + private if is_cyril else tail
             messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages
+
+
+def _raise_block(items: list[QuietConcern]) -> list[Block]:
+    """The "Raise at PSR" heading and one line per quiet Concern, or nothing."""
+    if not items:
+        return []
+    return [line(bold(RAISE_AT_PSR)), *(replace(line(_raise_text(q)), concern=q.concern_id) for q in items), line()]
+
+
+def _raise_text(q: QuietConcern) -> str:
+    parts = [f"{q.project}: {q.text}", QUIET_LABEL]
+    if q.owner:
+        parts.append(f"owner {q.owner}")
+    if q.waiting_on:
+        parts.append(f"waiting on {q.waiting_on}")
+    return "• " + " · ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -189,7 +215,7 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
         first_in_coord = True
         for group in sections:
             members = sorted(
-                (ch for ch in projects if ch.group == group), key=lambda ch: (health_rank(ch.health), ch.name.lower(), ch.page_id),
+                (ch for ch in projects if ch.group == group), key=lambda ch: (ch.health_rank, ch.name.lower(), ch.page_id),
             )
             for n, ch in enumerate(members):
                 units.append(_Unit(
@@ -200,7 +226,7 @@ def _units(people, sections: tuple[str, ...], today: date) -> list[_Unit]:
     return units
 
 
-def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[str]:
+def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str, limit: int) -> list[tuple[str, tuple[str, ...]]]:
     """Render the head, the projects and the tail into messages, splitting between projects.
 
     Policy: README's "PSR message splitting policy" records the owner's #96 approval of oversized
@@ -209,6 +235,7 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
     a message of its own goes on in the next part under the section and its own name, both marked
     "(cont.)", so no part has lines without the project they belong to; nothing is dropped. A tail
     that no longer fits starts a part headed by the message title "(cont.)", never a bare warning.
+    Each text comes with the Concern IDs of the tagged lines that landed in it (a line cut in pieces counts in the first).
     """
     def fits(blocks: list[Block]) -> bool:
         return len(render_messages(blocks, prefix=banner, limit=limit)) <= 1
@@ -221,6 +248,8 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
         quoted = isinstance(atom, Quote)
         item = atom.lines[0] if isinstance(atom, Quote) else atom
         pieces = split_line(item, quoted, limit - used)
+        if pieces and isinstance(item, Line):
+            pieces[0] = replace(pieces[0], concern=item.concern)
         return [quote(p) if quoted else p for p in pieces]
 
     parts: list[list[Block]] = []
@@ -251,7 +280,10 @@ def _pack(head: list[Block], units: list[_Unit], tail: list[Block], banner: str,
                 current = list(restart)
             current = current + [atom]
     parts.append(current)
-    return [text for blocks in parts for text in render_messages(blocks, prefix=banner, limit=limit)]
+    return [
+        (text, tuple(dict.fromkeys(b.concern for b in blocks if isinstance(b, Line) and b.concern)) if n == 0 else ())
+        for blocks in parts for n, text in enumerate(render_messages(blocks, prefix=banner, limit=limit))
+    ]
 
 
 def _split_points(blocks: list[Block]) -> list[Block]:
@@ -269,11 +301,11 @@ def _join(blocks: list[Block], atom: Block) -> list[Block]:
     return [*blocks, atom]
 
 
-def _send(to, topic, texts: list[str], key: str, recipient: str) -> list[OutboundMessage]:
+def _send(to, topic, parts: list[tuple[str, tuple[str, ...]]], key: str, recipient: str) -> list[OutboundMessage]:
     # The first part keeps the spec's key, so a rerun is deduplicated by the gateway.
     return [
-        OutboundMessage(to, topic, text, key if n == 1 else f"{key}-{n}", recipient)
-        for n, text in enumerate(texts, 1)
+        OutboundMessage(to, topic, text, key if n == 1 else f"{key}-{n}", recipient, ids)
+        for n, (text, ids) in enumerate(parts, 1)
     ]
 
 
@@ -295,7 +327,8 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
     if ch.concerns:
         blocks.append(line(bold("Concerns")))
-        blocks += [line(f"• {text}") for text in ch.concerns]
+        ids = ch.concern_ids or (None,) * len(ch.concerns)
+        blocks += [replace(line(f"• {text}"), concern=cid) for text, cid in zip(ch.concerns, ids)]
     if ch.resolved:
         blocks.append(line(f"{RESOLVED_LABEL}: " + "; ".join(ch.resolved)))
     blocks += [line(f"• {text}") for text in ch.summary]

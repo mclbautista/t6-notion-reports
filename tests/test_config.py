@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from t6_notion_reports import cli
@@ -5,7 +7,7 @@ from t6_notion_reports.config import ConfigError, load_config
 
 ID_A = "11111111-1111-1111-1111-111111111111"
 ID_B = "22222222222222222222222222222222"
-ENV = {"NOTION_TOKEN": "ntn_supersecret"}
+ENV = {}
 
 
 def write(tmp_path, text):
@@ -15,19 +17,22 @@ def write(tmp_path, text):
 
 
 def good(**over):
-    cfg = {"projects_data_source": ID_A, "contacts_data_source": ID_B}
+    cfg = {"database_path": "data/psr.db"}
     cfg.update(over)
     return "\n".join(f'{k}: "{v}"' for k, v in cfg.items() if v is not None)
 
 
 def test_loads_valid_config_with_default_db(tmp_path):
     cfg = load_config(write(tmp_path, good()), ENV)
-    assert (cfg.projects_data_source, cfg.database_path, cfg.notion_token) == (ID_A, "data/psr.db", "ntn_supersecret")
+    assert (cfg.database_path, cfg.ignored_keys) == ("data/psr.db", ())
+
+
+def test_old_data_source_keys_are_accepted_ignored_and_reported(tmp_path):
+    cfg = load_config(write(tmp_path, good(projects_data_source="not-an-id", contacts_data_source=ID_B, jo_data_source=ID_A)), ENV)
+    assert cfg.ignored_keys == ("projects_data_source", "contacts_data_source", "jo_data_source")
 
 
 @pytest.mark.parametrize("over,key", [
-    ({"projects_data_source": None}, "projects_data_source"),
-    ({"contacts_data_source": "not-an-id-hunter2"}, "contacts_data_source"),
     ({"database_path": " "}, "database_path"),
     ({"surprise": "hunter2"}, "surprise"),
 ])
@@ -35,11 +40,6 @@ def test_bad_config_names_key_never_value(tmp_path, over, key):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, good(**over)), ENV)
     assert key in str(err.value) and "hunter2" not in str(err.value)
-
-
-def test_missing_secret_names_variable(tmp_path):
-    with pytest.raises(ConfigError, match="NOTION_TOKEN"):
-        load_config(write(tmp_path, good()), {})
 
 
 def test_bad_yaml_and_missing_file(tmp_path):
@@ -51,11 +51,10 @@ def test_bad_yaml_and_missing_file(tmp_path):
 
 
 def test_serve_fails_boot_with_key_name_on_stderr(tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
-    path = write(tmp_path, good(projects_data_source="hunter2"))
+    path = write(tmp_path, good(database_path=" "))
     assert cli.main(["serve", "--config", path]) == 2
     err = capsys.readouterr().err
-    assert "projects_data_source" in err and "hunter2" not in err
+    assert "database_path" in err
 
 
 BRIEF_YAML = """
@@ -131,33 +130,15 @@ def test_bad_briefing_value_names_key_never_value(tmp_path, bad, key):
     assert key in str(err.value) and "hunter2" not in str(err.value)
 
 
-def test_matching_defaults_match_the_watchdog(tmp_path):
-    m = load_config(write(tmp_path, good()), ENV).matching
-    assert (m.fuzzy_min_score, m.fuzzy_min_lead, m.honorifics) == (90, 8, ("ate", "kuya", "sir"))
+def test_old_matching_keys_are_accepted_and_ignored(tmp_path):
+    text = good() + "\nfuzzy_min_score: 95\nfuzzy_min_lead: 5.5\nhonorifics: [Ate]\n"
+    assert load_config(write(tmp_path, text), ENV).ignored_keys == ("fuzzy_min_score", "fuzzy_min_lead", "honorifics")
 
 
-def test_matching_keys_are_read_from_config(tmp_path):
-    text = good() + "\nfuzzy_min_score: 95\nfuzzy_min_lead: 5.5\nhonorifics: [Ate, ' boss ']\n"
-    m = load_config(write(tmp_path, text), ENV).matching
-    assert (m.fuzzy_min_score, m.fuzzy_min_lead, m.honorifics) == (95, 5.5, ("ate", "boss"))
-
-
-@pytest.mark.parametrize("line,key", [
-    ("fuzzy_min_score: 101", "fuzzy_min_score"),
-    ("fuzzy_min_score: -1", "fuzzy_min_score"),
-    ("fuzzy_min_score: hunter2", "fuzzy_min_score"),
-    ("fuzzy_min_score: true", "fuzzy_min_score"),
-    ("fuzzy_min_lead: 101", "fuzzy_min_lead"),
-    ("fuzzy_min_lead: hunter2", "fuzzy_min_lead"),
-    ("honorifics: hunter2", "honorifics"),
-    ("honorifics: []", "honorifics"),
-    ("honorifics: [ate, 5]", "honorifics"),
-    ("honorifics: [ate, ' ']", "honorifics"),
-])
-def test_bad_matching_value_fails_boot_naming_key(tmp_path, line, key):
-    with pytest.raises(ConfigError) as err:
-        load_config(write(tmp_path, good() + "\n" + line + "\n"), ENV)
-    assert key in str(err.value) and "hunter2" not in str(err.value)
+def test_boot_logs_one_line_for_each_ignored_key(tmp_path, capsys, monkeypatch):
+    from t6_notion_reports.cli import _load
+    assert _load(write(tmp_path, good() + "\nhonorifics: [Ate]\nfuzzy_min_score: 95\n")) is not None
+    assert capsys.readouterr().err.splitlines() == ["config key ignored: fuzzy_min_score", "config key ignored: honorifics"]
 
 
 def test_lead_warning_days_defaults_to_30_and_is_read_from_config(tmp_path):
@@ -172,9 +153,9 @@ def test_bad_lead_warning_days_fails_boot_naming_key_not_value(tmp_path, bad):
     assert "lead_warning_days" in str(err.value) and "hunter2" not in str(err.value)
 
 
-def test_concern_chronic_weeks_defaults_to_4_and_is_read_from_config(tmp_path):
-    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.concern_chronic_weeks == 4
-    assert load_config(write(tmp_path, BRIEF_YAML + "\nconcern_chronic_weeks: 6\n"), ENV).brief.concern_chronic_weeks == 6
+def test_concern_chronic_weeks_is_accepted_ignored_and_reported(tmp_path):
+    cfg = load_config(write(tmp_path, BRIEF_YAML + "\nconcern_chronic_weeks: 6\n"), ENV)
+    assert "concern_chronic_weeks" in cfg.ignored_keys and not hasattr(cfg.brief, "concern_chronic_weeks")
 
 
 def test_pm_notes_weeks_defaults_to_52_and_is_read_from_config(tmp_path):
@@ -192,3 +173,20 @@ def test_bad_leave_clash_days_fails_boot_naming_key_not_value(tmp_path, bad):
     with pytest.raises(ConfigError) as err:
         load_config(write(tmp_path, BRIEF_YAML + f"\nleave_clash_days: {bad}\n"), ENV)
     assert "leave_clash_days" in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_llm_enabled_defaults_to_true_and_must_be_a_boolean(tmp_path):
+    assert load_config(write(tmp_path, good()), ENV).llm_enabled is True
+    off = write(tmp_path, good() + "\nllm_enabled: false")
+    assert load_config(off, ENV).llm_enabled is False
+    with pytest.raises(ConfigError, match="llm_enabled"):
+        load_config(write(tmp_path, good(llm_enabled="hunter2")), ENV)
+
+
+def test_shift_llm_is_off_when_llm_calls_are_off_or_the_api_is_not_set(tmp_path, monkeypatch):
+    shift = good() + "\nllm_enabled: %s"
+    for flag, url, expected in (("true", "http://api.invalid", True), ("false", "http://api.invalid", False), ("true", "", False)):
+        monkeypatch.setenv("T6_API_URL", url)
+        cfg = load_config(write(tmp_path, shift % flag), ENV)
+        cfg = type(cfg)(**{**cfg.__dict__, "shift": SimpleNamespace(llm_model="m")})
+        assert (cli._shift_llm(cfg) is not None) is expected

@@ -2,12 +2,14 @@ from datetime import datetime, timezone
 
 import pytest
 
+from fake_api import FakeApi
 from fake_notion import (CONTACTS, PROJECTS, FakeNotion, contact, date, project, relation,
                          rich, select)
 from t6_notion_reports.diff import diff_snapshots
 from t6_notion_reports.snapshots import (TRACKED_FIELDS, connect, latest_snapshot_ids,
                                     load_snapshot, snapshot_info)
 from t6_notion_reports.snapshot_job import run_snapshot
+from t6_notion_reports.t6_api import ApiNotion
 
 T1 = datetime(2026, 11, 9, 11, tzinfo=timezone.utc)
 T2 = datetime(2026, 11, 13, 18, tzinfo=timezone.utc)
@@ -15,7 +17,7 @@ CONTACTS_LIST = [contact("c1", "Oto"), contact("c2", "Rex"), contact("c3", "Milo
 
 
 def snap(conn, notion, kind="manual", at=T1):
-    return run_snapshot(conn, notion, PROJECTS, CONTACTS, kind, at)
+    return run_snapshot(conn, notion, kind, at)
 
 
 def test_stores_exactly_tracked_fields_and_never_reads_formulas(tmp_path):
@@ -130,10 +132,23 @@ def test_rejects_unknown_kind():
         snap(connect(), FakeNotion([], CONTACTS_LIST), "tuesday")
 
 
+def test_every_tracked_field_is_a_property_the_projects_schema_has():
+    schema = project("p1")["properties"]
+    assert [f for f in TRACKED_FIELDS if f not in schema and f != "Last Edited"] == []
+
+
+def test_prod_coor_supe_is_stored_with_names():
+    notion = FakeNotion([project("p1", **{"Prod Coor/Supe": relation("c1")})], CONTACTS_LIST)
+    conn = connect()
+    snap(conn, notion)
+    state = load_snapshot(conn, latest_snapshot_ids(conn, 1)[0])["p1"]
+    assert state["Prod Coor/Supe"] == [{"id": "c1", "name": "Oto"}]
+
+
 def test_reads_only_projects_and_contacts():
-    notion = FakeNotion([project("p1")], CONTACTS_LIST)
-    snap(connect(), notion)
-    assert sorted(notion.queried) == [CONTACTS, PROJECTS]
+    api = FakeApi(FakeNotion([project("p1")], CONTACTS_LIST))
+    snap(connect(), ApiNotion(api))
+    assert sorted(api.calls) == ["person list", "project list"]
 
 
 def test_pm_notes_whitespace_only_edit_is_unchanged():

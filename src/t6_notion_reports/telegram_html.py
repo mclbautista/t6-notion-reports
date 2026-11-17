@@ -9,7 +9,7 @@ is split on word boundaries; an over-long link is split into several links to th
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 LIMIT = 4096
 _OPEN_QUOTE = "<blockquote expandable>"
@@ -27,6 +27,7 @@ class Span:
 @dataclass(frozen=True)
 class Line:
     spans: tuple[Span, ...] = ()
+    concern: str | None = field(default=None, compare=False)  # the Concern ID this line shows; never rendered
 
 
 @dataclass(frozen=True)

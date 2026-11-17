@@ -5,7 +5,7 @@ Snapshots the Notion **Projects** and **Job Orders** databases into SQLite, draf
 delivery goes through the Telegram gateway's `POST /notify`.
 
 Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
-briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed when `OPENROUTER_API_KEY` is set, and stay raw PM Notes otherwise. The briefing consolidates each project's week with an LLM when that key is set. Approved minutes are sent to the PSR group topic set in `config.yaml` when the minutes owner ticks **Ready to send**.
+briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed through the t6 API (`llm run`), and stay raw PM Notes when `llm_enabled` is false. The briefing consolidates each project's week the same way. Approved minutes are sent to the PSR group topic set in `config.yaml` when the minutes owner ticks **Ready to send**.
 
     pip install -e '.[dev]' && pytest
 
@@ -13,7 +13,7 @@ briefing sends through the gateway. The Monday run also drafts the minutes in No
 
 Anyone can read this repo and its whole history. Never commit:
 
-- secrets: `NOTION_TOKEN`, `OPENROUTER_API_KEY`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
+- secrets: `T6_API_SECRET`, `PSR_SECRET`, `SHIFT_SECRET`, `TS_AUTHKEY` or any other token or key. Application secrets go in `.env`; the enrollment key goes only in `.env.tailscale`.
 - real config: `config.yaml` (real Notion data source ids, Telegram chat, topic and user ids, gateway address). Keep `config.example.yaml` to placeholders.
 - data: `data/`, `*.db` and any other SQLite file, snapshots or exported Notion content.
 - real names: no client, show, coordinator or staff names anywhere, including test fixtures, docs and comments. Tests use made-up names (Oto, Ida, Juno, Nia, Show QAZ and so on).
@@ -39,7 +39,7 @@ Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secret
 - `jo-snapshot --kind 0500|1130|1900|manual`: one Job Orders snapshot.
 - `shift-report --slot 0500|1130|1900 [--dry-print]`: one shift report.
 - `brief [--dry-print] [--show-llm-input]`: the Saturday briefing now.
-- `draft-mom [--date YYYY-MM-DD]`: re-draft the minutes in Notion.
+- `draft-mom [--date YYYY-MM-DD] [--dry-print]`: re-draft the minutes in Notion (`--dry-print`: print the bullets, write nothing).
 - `send-ready-mom [--dry-print]`: send the approved minutes once.
 - `diff [--old ID --new ID]`: what changed between two snapshots (default: latest Monday against the latest Friday).
 
@@ -53,24 +53,25 @@ The scheduler fires on its own, so **do not start the container before Cyril's g
 first snapshot taken becomes the baseline. A bad config exits with code 2, and
 `restart: unless-stopped` then restarts it in a loop; read `docker compose logs notion-reports`.
 
-Config: non-secret values in `config.yaml` (see `config.example.yaml`), `NOTION_TOKEN` in `.env`
+Config: non-secret values in `config.yaml` (see `config.example.yaml`), the secrets in `.env`
 (see `.env.example`). A missing or invalid value fails boot with a message naming the key, never
 its value. The SQLite file lives in `./data`, which the non-root container user (uid 1001) owns.
 
-### Reads through the t6 API
+### Reads and writes through the t6 API
 
-With `T6_API_URL` and `T6_API_SECRET` in `.env`, Contacts, the Projects notices and Meeting Notes are read
-through the t6 API (the key needs the `unmasked` grant). Unset `T6_API_URL` to go back to Notion. Projects
-and Job Orders pages, and the Minutes writes, still use Notion.
+`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant and the `minutes`
+permission). Every read of Contacts, Projects, Job Orders, Meeting Notes and the Projects notices, and every Minutes
+write (draft and Sent at), goes through the t6 API; this app holds no Notion token. A Notion token left in an old
+`.env` is not read. `projects_data_source`, `contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
 
-Before a deploy, compare both paths on the live data. It sends nothing and writes both outputs to a folder on
-the host (they hold names; do not commit or share them):
+Every client the app makes (`client_from_env`) is made with `require_unmasked=True`: the API refuses every call, with
+rule `unmasked`, when the key would read masked names. If the key loses the `unmasked` grant, the run stops with
+`stopped: t6 API refused the read, rule=unmasked ...` (exit code 1) and sends no report. It is not retried as an outage.
+The shift report sends one ops alert for the slot (key `shift-<date>-<slot>-masked`), by the same destination rule as
+the outage alert.
 
-    docker compose run --rm notion-reports compare-api --config /app/config.yaml --out /app/data/compare
-
-It prints, for `projects`, `job_orders` and `brief`, whether the outputs are equal, the count of differing
-lines and the seconds each path took. Exit code 0 means all three are equal. Do not run it between a Friday
-snapshot and the Saturday brief. It works on copies of the database, never the live one.
+To compare two builds on the same data, run `shift-report --dry-print` and `brief --dry-print` with each image
+on a copy of the database and `diff` the texts.
 
 ### Tailnet and gateway networking
 
@@ -202,24 +203,20 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   banner, stays within Telegram's 4096-character limit.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
   and exits non-zero.
-- **LLM consolidation**: with `OPENROUTER_API_KEY` in `.env`, each project in the status gate gets one LLM call
-  (OpenRouter, `llm_model` in config, ZDR on every request, temperature 0, never retried). The payload is that
+- **LLM consolidation**: every LLM task (this one, the leaves, the Minutes condense and the shift report task
+  summaries) goes through `llm run` on the t6 API: this app calls no model provider and holds no model key. The API
+  masks the text, runs the model (`llm_model` in config, zero data retention on every request, temperature 0),
+  repairs quotes and restores names per field. Names of models are as the API knows them. A failed call is tried
+  again twice (after 2 and 5 seconds, or the API's `retry_after`); then the task falls back as described below.
+  `llm_enabled: false` turns every call off. Each project in the status gate gets one call, and the whole loop has
+  a 20 minute budget: a project not reached in time is marked "(LLM unavailable)" and counted in the log. The payload is that
   project alone: today's date, name, Stage, Status, Project Health, the three dates and which are blank and
   relevant, the numbered PM Notes lines of the last `pm_notes_weeks` (52) weeks plus older blocks with a future
   date, the property changes since the last brief and since the PSR, and the project's lines from the latest
-  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at).
-  **Free-text privacy policy (owner approved for #94):** redact known Contacts names, aliases and handles,
-  known contact/project page ids, Telegram identifiers/links, Notion identifiers/links, and known references
-  to other snapshot projects before sending free text, including bracketed and punctuated values.
-  Full contact names and aliases match in every casing even when they are ordinary words: a known
-  name or alias `Will` also hides the verb `will`. This sacrifices some useful language to protect known
-  identities. Partial name words and project codes that are ordinary words retain their existing
-  capitalized/all-capitals matching rule, so ambiguous lowercase ordinary language can remain.
-  The target project's own identity remains available. **Limitation:** unknown names absent from Contacts,
-  unknown other-project names absent from the snapshots, and ambiguous lowercase partial-name words
-  cannot reliably be identified and may remain; this is a known-values boundary, not universal name detection.
-  Local numbered placeholders protect outbound text; grounding checks the exact protected source quotes,
-  then accepted output restores names locally (identifiers stay hidden). The reply is structured: `last_update`, `changes` and
+  PSR minutes page (as it is in Notion now, with its date, last-edited time and Sent at). The text goes as it is:
+  the API hides known names and ids (the project's own name and code stay visible) and gives the names back in the
+  answer. A hidden id comes back as `[id]`. **Limitation:** unknown names the API does not know cannot be hidden.
+  Grounding checks run here on the real text. The reply is structured: `last_update`, `changes` and
   `concerns`. Code checks each item on its own: the quote must be the cited line (ignoring bullet marks and
   whitespace) and facts must be grounded in that cited line; a failing item is dropped.
   A `source_conflict` or `health_vs_evidence` Concern may include `supporting_citations` with exact source,
@@ -227,22 +224,47 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   cited lines may supply comparison facts; health comparisons may also use `project_health`. Other
   Concern kinds and changes remain scoped to their primary line. ISO dates may be paraphrased with month
   names while preserving their written year. These checks enforce evidence provenance, not the semantic
-  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go through
-  the Concern store. A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
+  correctness of a comparison; human-reviewed model evaluation remains necessary. The changes replace the raw changes list, `after_psr` ones say "(after PSR)", and Concerns go to the API
+  (`concern observe`, below). A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
   update; otherwise Notion's last-edited time does.
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",
-  the failure is logged (project id only) and the digest names it; its open Concerns carry over. Without the key
-  a real send marks every project "(LLM unavailable)"; `--dry-print` without it leaves the LLM out.
+  the failure is logged (project id only) and the digest names it; its open Concerns stay open in the API. With `llm_enabled: false`
+  (or no `T6_API_URL`) a real send marks every project "(LLM unavailable)"; `--dry-print` leaves the LLM out.
 - Leave clashes: once per run, one more LLM call parses the Projects database's "Upcoming Holidays and Leaves"
   lines (it gets those lines and today's date, nothing about projects) into entries with exact quotes; an entry
   with a quote that is not a line, or invalid dates, is dropped. Each leave's name is matched to Contacts
-  (Aliases, then guarded fuzzy; onboarded Contacts first). A leave by someone in the project's team relations
+  by the t6 API (`person find`, one call for all the names; a match that needs review counts as unmatched). A leave by someone in the project's team relations (including Prod Coor/Supe)
   within `leave_clash_days` (default 14) of its Playdate, Submission Deadline or Archival Deadline becomes one
-  Concern, aged through the Concern store. Holidays and office closures never clash. Names nobody matched are
-  listed in Cyril's digest only. If the call fails there are no clash Concerns that run, and the digest says
+  Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
+  listed in Cyril's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
-- `brief --dry-print --show-llm-input` prints every payload in full and calls no LLM, so you can read exactly
-  what would leave the machine first.
+- Concerns: reports keeps no Concern store. The brief hands the run's findings (the date flags and sanity problems,
+  the Concerns of each project's LLM call, the leave clashes) to the API with `concern observe` and shows what
+  comes back: every open Concern of each project, oldest first, with `since <Mon D> (<n> wks)`, the `🔁 chronic`
+  mark (the API decides, after 28 days) and "not seen this week" when this run's findings lack it, and "Resolved
+  last week" for what was closed since the previous brief. The weekly run closes nothing: a person, a settling
+  event or expiry does. A source that could not be read is sent as unavailable, so its open Concerns stay. If
+  the API does not answer, the lines show without age and the digest says "Concern history unavailable".
+  `concern_chronic_weeks` in an old `config.yaml` is ignored (logged at boot). Once, before the first brief that
+  uses the API, run `python -m t6_notion_reports switch-concerns --config config.yaml`: it copies the database
+  file to `<file>.pre-concerns-switch` and drops the old Concern table; the old Concerns are not moved. Rollback:
+  put the previous image tag back and copy that file over the database file.
+- Concern scan and "Raise at PSR": before a real brief (not `--dry-print`) the app calls `concern scan` once for each
+  gated project that has exactly one coordinator known to the API, so the API's Concerns are current (60 s for each
+  call, 10 minutes for the step; a refused or failed scan is logged by rule name and the brief goes on; the log line
+  `brief scan ok=<n> skipped=<n> failed=<n>` gives the counts). `concern_scan: false` turns it off. The brief then
+  reads `concern list` and shows the Concerns the API marks quiet (no news for 2 weeks) in a "Raise at PSR" section:
+  in the digest all of them, in a coordinator's DM the ones that coordinator owns, each with its owner and the party
+  it waits on. A quiet Concern is not repeated in its project's lines. If the list cannot be read the section is left out
+  and the digest says "Raise at PSR unavailable".
+- Recording the message that carried each Concern: after the last message is queued (never on `--dry-print`, never
+  before) the app asks the gateway (`GET /notify/{ref}`) for the Telegram id of each message that showed Concerns (6
+  tries, 10 s apart) and calls `concern record-message` for each Concern of that message (preview, then confirm, key
+  `psr-brief-<date>-<message key>-<concern id>`), so a reply to the message can be kept as a Concern note. The step
+  takes at most 2 minutes and is best effort: it changes no sent or failed count, raises nothing and repeats no send.
+  The log line is `brief record-message ok=<n> missing_id=<n> refused=<n>`; a refusal is logged by rule name only.
+- `brief --dry-print --show-llm-input` prints every payload as the app builds it and calls no LLM. The API masks the
+  names, so it is not the text the model sees.
 - `test_banner: true` adds "🧪 TEST" to every message (for the Nov 13 dry run).
 
     docker compose run --rm notion-reports brief --config /app/config.yaml --dry-print   # print, send nothing
@@ -257,7 +279,7 @@ With `meeting_notes_data_source` in `config.yaml`, the Monday 11:00 job takes it
 drafts a page named `PSR MOM <YYYY-MM-DD>` in Meeting Notes: `Meeting Date`, a `Project` relation to
 every project on the page, and `Team Attendees` copied from the previous `PSR MOM` page. The diff is
 that Monday's snapshot against the Friday one before it. Groups, order and rules are in
-`src/t6_notion_reports/mom.py` (spec section 8); bullets are the raw new PM Notes blocks, condensed by the LLM when `OPENROUTER_API_KEY` is set (`condense.py`, spec 8.3): code rejects any output whose date, number, episode or capitalised word (names) is not in the project's PM Notes, or with more than one date from an older block (which must still be upcoming); a rejected or failed project keeps the raw bullets and is marked `(raw)`. Every project with notes has a "Raw source" toggle. In-Progress and
+`src/t6_notion_reports/mom.py` (spec section 8); bullets are the raw new PM Notes blocks, condensed by the LLM through the t6 API (`condense.py`, spec 8.3): code rejects any output whose date, number, episode or capitalised word (names) is not in the project's PM Notes, or with more than one date from an older block (which must still be upcoming); a rejected or failed project keeps the raw bullets and is marked `(raw)`. Every project with notes has a "Raw source" toggle. In-Progress and
 Archiving projects always appear; everything else without changes goes under "Unchanged" at the
 bottom (Notion only). ⚫️ Others lists the lines of the Projects database description's "Upcoming
 Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.
@@ -290,14 +312,13 @@ Three Job Orders reports go to their configured destinations every day (weekends
 05:00 night end of shift, 11:30 day mid shift, 19:00 day end of shift. At each slot the scheduler takes a
 Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
-    jo_data_source: "…"
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true
     shift_destinations:              # at least one destination in total
       mid:   [{chat: -1000000000001, topic: 1}]   # a chat, with an optional topic
       day:   [100000001, 100000002]               # a bare positive number is a user id (a DM)
       night: [100000001, {chat: -1000000000001, topic: 2}]
-    ops_chat_id: 100000001           # optional; the Notion-outage alert goes here (else to the first chat entry of that report's list)
+    ops_chat_id: 100000001           # optional; the T6 API outage alert goes here (else to the first chat entry of that report's list)
     test_banner: true                # 🧪 TEST on every part
 
 `shift_destinations` lists where each report goes: `mid` (the midshift report), `day` (end of day shift) and
@@ -324,7 +345,7 @@ After the last send the job checks delivery: every 15 seconds, for up to 5 minut
 it asks the gateway about each queued message. A destination counts as undelivered if it was rejected at send,
 or any part `failed`, is still `queued` at the end, or whose status could not be read (`unknown`). If any
 destination is undelivered, one alert (key `shift-<date>-<slot>-undelivered`) is sent by the same rule as the
-Notion-outage alert, naming the slot and each such destination by id with its state; it holds no report text.
+T6 API outage alert, naming the slot and each such destination by id with its state; it holds no report text.
 No alert when everything was delivered. `undelivered=<n>` is in the run log line, without ids.
 
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing

@@ -4,15 +4,15 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 import yaml
 
-from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS
+from fake_notion import CONTACTS, JOB_ORDERS, PROJECTS, FakeNotion
 from html_check import assert_valid_html
 from test_schedule import FakeClock, manila
-from test_shift_report import JO_ID, PEOPLE, PROJS, RoutedNotion, at, jo, prior, world
+from test_shift_report import JO_ID, PEOPLE, PROJS, at, jo, prior, world
 from t6_notion_reports import cli
 from t6_notion_reports.config import ConfigError, Destination, load_config
 from t6_notion_reports.gateway import GatewayClient, GatewayError
 from t6_notion_reports.jo_snapshots import connect
-from t6_notion_reports.llm import DEFAULT_SHIFT_MODEL
+from t6_notion_reports.config import DEFAULT_SHIFT_MODEL
 from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS, Scheduler
 from t6_notion_reports.shift_job import ShiftTarget, run_shift_report
 
@@ -62,7 +62,7 @@ def send(slot, jos, tgt, banner=False, when=PM, conn=None, logs=None):
         prior(conn)
     logs = [] if logs is None else logs
     fake = world(*jos)
-    run_shift_report(conn, fake, JOB_ORDERS, CONTACTS, PROJECTS, slot, when, banner, log=logs.append, target=tgt)
+    run_shift_report(conn, fake, slot, when, banner, log=logs.append, target=tgt)
     return conn, logs
 
 
@@ -301,7 +301,7 @@ def checked(t, dests, ops=OPS, slot="1900", jos=(), clock=None):
     tgt = multi(t, dests, ops=ops)
     conn, logs = connect(), []
     prior(conn)
-    run_shift_report(conn, world(*jos), JOB_ORDERS, CONTACTS, PROJECTS, slot, PM, log=logs.append, target=tgt,
+    run_shift_report(conn, world(*jos), slot, PM, log=logs.append, target=tgt,
                      clock=clock, sleep=clock.sleep)
     return logs, clock
 
@@ -378,7 +378,7 @@ def test_every_destination_rejected_still_alerts_then_raises():
     conn, logs, clock = connect(), [], StepClock()
     prior(conn)
     with pytest.raises(GatewayError):
-        run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=logs.append, target=tgt,
+        run_shift_report(conn, world(), "1900", PM, log=logs.append, target=tgt,
                          clock=clock, sleep=clock.sleep)
     assert clock.sleeps == [] and any("undelivered=2" in line for line in logs)
     assert len([c for c in t.calls if c[2]["idempotency_key"].endswith("-undelivered")]) > 0  # an alert was tried
@@ -401,7 +401,7 @@ def test_rerun_resends_the_same_alert_key():
     prior(conn)
     tgt = multi(t, (DM1,), ops=OPS)
     for _ in range(2):
-        run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, target=tgt,
+        run_shift_report(conn, world(), "1900", PM, log=lambda _: None, target=tgt,
                          clock=clock, sleep=clock.sleep)
     assert [a["idempotency_key"] for a in t.alerts()] == ["shift-2026-11-03-1900-undelivered"] * 2
 
@@ -417,9 +417,9 @@ def test_skipped_slot_and_dry_print_do_no_polling():
     tgt = ShiftTarget(GatewayClient("http://gw:8780", "s", t, sleep=lambda _: None), {"1900": ()}, OPS)
     conn, clock = connect(), StepClock()
     prior(conn)
-    run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, target=tgt,
+    run_shift_report(conn, world(), "1900", PM, log=lambda _: None, target=tgt,
                      clock=clock, sleep=clock.sleep)
-    run_shift_report(conn, world(), JOB_ORDERS, CONTACTS, PROJECTS, "1900", PM, log=lambda _: None, out=lambda _: None,
+    run_shift_report(conn, world(), "1900", PM, log=lambda _: None, out=lambda _: None,
                      clock=clock, sleep=clock.sleep)
     assert t.calls == [] and t.polls == [] and clock.sleeps == []
 
@@ -459,7 +459,7 @@ BASE = {"projects_data_source": PROJECTS_ID, "contacts_data_source": CONTACTS_ID
 SHIFT = {"shift_reports_enabled": True, "gateway_url": "http://gw:8780",
          "shift_destinations": {"mid": [{"chat": CHAT, "topic": TOPIC}], "day": [{"chat": CHAT, "topic": TOPIC}],
                                 "night": [{"chat": CHAT, "topic": TOPIC}]}}
-ENV = {"NOTION_TOKEN": "tok", "SHIFT_SECRET": " shift-s3cret "}
+ENV = {"SHIFT_SECRET": " shift-s3cret "}
 
 
 def write(tmp_path, **cfg):
@@ -499,7 +499,6 @@ def test_shift_summaries_use_their_own_model_and_leave_the_briefing_on_llm_model
     ({"gateway_url": None}, "gateway_url"),
     ({"gateway_url": "ftp://x"}, "gateway_url"),
     ({"test_banner": "hunter2"}, "test_banner"),
-    ({"jo_data_source": None}, "jo_data_source"),
     ({"shift_llm_model": ""}, "shift_llm_model"),
 ])
 def test_missing_or_invalid_shift_keys_fail_boot_naming_the_key(tmp_path, over, key):
@@ -514,8 +513,7 @@ def test_missing_or_invalid_shift_keys_fail_boot_naming_the_key(tmp_path, over, 
 def test_disabled_shift_reports_change_nothing(tmp_path):
     cfg = load_config(write(tmp_path, shift_reports_enabled=False), ENV)
     assert cfg.shift is None and cfg.brief is None
-    assert cfg.jo_data_source == JO_ID
-    assert load_config(write(tmp_path), {"NOTION_TOKEN": "tok"}).shift is None  # no SHIFT_SECRET needed
+    assert load_config(write(tmp_path), {}).shift is None  # no SHIFT_SECRET needed
 
 
 def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tmp_path):
@@ -526,7 +524,6 @@ def test_disabled_shift_ignores_other_shift_keys_and_keeps_briefing_detection(tm
 
 
 def test_serve_needs_shift_secret_when_enabled(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)
     assert cli.main(["serve", "--config", write(tmp_path, **SHIFT)]) == 2
     assert "SHIFT_SECRET" in capsys.readouterr().err
@@ -557,7 +554,7 @@ def test_fake_clock_fires_all_three_every_day_and_friday_1900_fires_on_its_own()
 
 def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_the_loop(tmp_path, monkeypatch):
     cfg = load_config(write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db")), ENV)
-    fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+    fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     t, logs, now = FakeTransport(), [], [PM]
     job = cli.make_job(None, fake, cfg, None, lambda: now[0], shift_target=target(t))
     job("shift1900")
@@ -578,11 +575,10 @@ def test_scheduler_job_snapshots_and_sends_and_a_gateway_failure_does_not_stop_t
 
 
 def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
     monkeypatch.setenv("PSR_SECRET", "psr-s3cret")
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
-    fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
+    fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[jo("j1", "48", "TOC")])
     t = FakeTransport()
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, t, sleep=lambda _: None))
@@ -592,7 +588,6 @@ def test_cli_sends_one_slot_by_hand_with_shift_secret(tmp_path, monkeypatch, cap
 
 
 def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("NOTION_TOKEN", "tok")
     monkeypatch.delenv("SHIFT_SECRET", raising=False)
     assert cli.main(["shift-report", "--slot", "1900", "--config", write(tmp_path)]) == 2
     assert "shift_reports_enabled" in capsys.readouterr().err
@@ -601,7 +596,56 @@ def test_cli_send_needs_shift_enabled_and_secret_and_gateway_failure_exits_1(tmp
     monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
     monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
                         lambda url, secret, **k: GatewayClient(url, secret, FakeTransport(fail=True), sleep=lambda _: None))
-    fake = RoutedNotion(projects=PROJS, contacts=PEOPLE, job_orders=[])
+    fake = FakeNotion(projects=PROJS, contacts=PEOPLE, job_orders=[])
     path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
     assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=fake, now=PM) == 1
     assert "shift-s3cret" not in capsys.readouterr().err
+
+
+# ---- the masked-read guard (#133) ----
+
+class MaskedClient:
+    """A t6 client whose API refuses every call because the service key lost the ``unmasked`` grant."""
+
+    calls = 0
+
+    def __getattr__(self, name):
+        from t6.verbs import Refused
+
+        def refuse(inputs):
+            self.calls += 1
+            return Refused(rule="unmasked", reason="The caller asks for real names and has neither operator nor the unmasked grant")
+        return refuse
+
+
+def test_the_clients_are_made_to_refuse_masked_names():
+    from t6_notion_reports.t6_api import client_from_env
+    assert client_from_env({"T6_API_URL": "http://api:8081", "T6_API_SECRET": "x"}).require_unmasked is True
+
+
+def test_a_masked_read_stops_the_shift_report_with_a_clear_error_and_sends_nothing(tmp_path, monkeypatch, capsys):
+    from t6_notion_reports.t6_api import ApiNotion
+    monkeypatch.setenv("SHIFT_SECRET", "shift-s3cret")
+    t = FakeTransport()
+    monkeypatch.setattr("t6_notion_reports.cli.GatewayClient",
+                        lambda url, secret, **k: GatewayClient(url, secret, t, sleep=lambda _: None))
+    client = MaskedClient()
+    path = write(tmp_path, **SHIFT, database_path=str(tmp_path / "psr.db"))
+    assert cli.main(["shift-report", "--slot", "1900", "--config", path], notion=ApiNotion(client), now=PM) == 1
+    err = capsys.readouterr().err
+    assert "unmasked" in err and "grant" in err
+    assert client.calls == 1  # no retry
+    (alert,) = t.calls  # one ops alert, and no report
+    assert "masked names" in alert[2]["text"] and alert[2]["idempotency_key"].endswith("-1900-masked")
+
+
+def test_a_masked_read_is_never_an_outage_to_retry(tmp_path):
+    from t6_notion_reports.t6_api import ApiNotion, MaskedRead
+    notion = ApiNotion(MaskedClient())
+    t = FakeTransport()
+    with pytest.raises(MaskedRead):
+        run_shift_report(connect(), notion, "1900", PM, target=target(t), clock=lambda: PM, sleep=lambda _: None)
+    assert len(t.calls) == 1  # the ops alert only
+    for read in (notion.read_contacts, notion.project_records, notion.job_order_records, lambda: notion.project_rule("p1")):
+        with pytest.raises(MaskedRead):
+            read()

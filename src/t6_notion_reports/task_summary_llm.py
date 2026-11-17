@@ -1,26 +1,28 @@
 """Haiku task summaries behind the ``TaskSummarizer`` seam, with a cache (#73, #77).
 
-``LlmTaskSummarizer`` sends only the Task text, masked by ``redact`` and restored after. ``summarize_tasks``
+``LlmTaskSummarizer`` sends only the Task text; the API masks it and restores the reply. ``summarize_tasks``
 is the report job's step between the snapshot and the render: it fills the ``jo_task_summaries`` cache so
-a Task is never summarised twice, and hands the renderer a lookup. Moving onto the t6 adapter (#68) swaps
-``LlmTaskSummarizer`` and its wiring only.
+a Task is never summarised twice, and hands the renderer a lookup.
 """
 from __future__ import annotations
 
 import hashlib
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Callable
 
 from pydantic import BaseModel
 
-from .llm import LlmClient, LlmError
-from .redact import Mapping, Redactor, unresolved
+from .llm_api import LlmClient, LlmError, LlmUnavailable
 from .task_summary import MAX_WORDS, TaskSummarizer
+
+SUMMARY_BUDGET = 5 * 60  # seconds for all the summaries of one report; the rest fall back
 
 SYSTEM = (
     "You label a Job Order's task for a shift report. Reply with a summary of the task in at most "
-    f"{MAX_WORDS} words, as the JSON field \"summary\". Keep any placeholder such as [person 1] exactly as written."
+    f"{MAX_WORDS} words, as the JSON field \"summary\"."
 )
 
 
@@ -29,18 +31,17 @@ class SummaryReply(BaseModel):
 
 
 class LlmTaskSummarizer:
-    def __init__(self, client: LlmClient, redactor: Redactor | None = None):
-        self._client, self._redactor = client, redactor or Redactor()
+    def __init__(self, client: LlmClient):
+        self._client = client
 
     def summarize(self, task_text: str) -> str | None:
-        mapping = Mapping()
-        masked = self._redactor.redact(task_text, "", mapping)
         try:
-            reply = self._client.complete(SYSTEM, masked, SummaryReply)
+            reply = self._client.complete(SYSTEM, task_text, SummaryReply)
+        except LlmUnavailable:
+            raise  # summarize_tasks stops asking for the rest of the slot
         except LlmError:
             return None
-        restored = mapping.restore(reply.summary)
-        return None if unresolved(restored) else restored
+        return reply.value.summary
 
 
 @dataclass(frozen=True)
@@ -79,12 +80,16 @@ def valid(summary: object) -> str | None:
 
 def summarize_tasks(
     conn: sqlite3.Connection, summarizer: TaskSummarizer, tasks: dict[str, object], now: datetime,
+    budget: float = SUMMARY_BUDGET, monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[SummaryLookup, SummaryStats]:
     """``tasks``: page id -> Task text. A cached (page id, hash of Task) makes no call; a new valid
-    reply is stored (older Tasks' rows stay until retention removes them, so A, B, A makes two calls); an empty, too long or failed reply is a fallback and is not stored."""
+    reply is stored (older Tasks' rows stay until retention removes them, so A, B, A makes two calls); an empty, too long or failed reply is a fallback and is not stored.
+    Once one call failed on a timeout or provider failure (``LlmUnavailable``), or ``budget`` seconds have passed, no more
+    calls are made: the rest take the fallback, so the report is not held."""
     found: dict[str, tuple[str, str]] = {}
     new = cached = fallback = 0
     stamp = now.isoformat()
+    started, stopped = monotonic(), False
     with conn:
         for page_id, task in tasks.items():
             text = str(task or "").strip()
@@ -99,10 +104,16 @@ def summarize_tasks(
                 found[page_id] = (text, row[0])
                 cached += 1
                 continue
-            try:
-                summary = valid(summarizer.summarize(text))
-            except Exception:  # an LLM failure never stops a report
-                summary = None
+            summary = None
+            if not stopped and monotonic() - started >= budget:
+                stopped = True
+            if not stopped:
+                try:
+                    summary = valid(summarizer.summarize(text))
+                except LlmUnavailable:
+                    stopped = True
+                except Exception:  # an LLM failure never stops a report
+                    pass
             if summary is None:
                 fallback += 1
                 continue

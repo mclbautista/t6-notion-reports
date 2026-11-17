@@ -11,24 +11,24 @@ from typing import Mapping
 
 import yaml
 
-from .concerns import DEFAULT_CHRONIC_WEEKS
 from .consolidate import DEFAULT_PM_NOTES_WEEKS
 from .flags import DEFAULT_LEAD_WARNING_DAYS
 from .leaves import DEFAULT_CLASH_DAYS
-from .llm import DEFAULT_MODEL, DEFAULT_SHIFT_MODEL
-from .people_match import MatchSettings
 
-SECRET_ENV = "NOTION_TOKEN"
+DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+# JO shift report task summaries; the t6 API maps the name to a provider with zero data retention.
+DEFAULT_SHIFT_MODEL = "qwen/qwen3.8-27b"
 PSR_SECRET_ENV = "PSR_SECRET"
-OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_chronic_weeks", "pm_notes_weeks", "leave_clash_days"}
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_scan", "pm_notes_weeks", "leave_clash_days"}
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
-MATCH_KEYS = {"fuzzy_min_score", "fuzzy_min_lead", "honorifics"}
-KEYS = {"projects_data_source", "contacts_data_source", "database_path", "meeting_notes_data_source", "jo_data_source"} | BRIEF_KEYS | SHIFT_KEYS | MATCH_KEYS
+# Read, matched or decided by the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
+IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics",
+                "concern_chronic_weeks")
+KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -48,9 +48,8 @@ class BriefSettings:
     psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
     digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
-    openrouter_api_key: str | None = None  # None when OPENROUTER_API_KEY is unset; only ``--dry-print`` may go without
     lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
-    concern_chronic_weeks: int = DEFAULT_CHRONIC_WEEKS  # a Concern open longer than this many weeks gets a chronic marker
+    concern_scan: bool = True  # scan each gated project's PM Notes for Concerns (in the API) before a real brief
     leave_clash_days: int = DEFAULT_CLASH_DAYS  # a team member's leave within this many days of a project date is a Concern
     pm_notes_weeks: int = DEFAULT_PM_NOTES_WEEKS  # PM Notes blocks older than this go to the LLM only if they hold a future date
     coordinator_recipients: tuple[str, ...] | None = None  # None: all coordinators; (): no DMs or group fallbacks
@@ -71,24 +70,20 @@ class ShiftSettings:
 
     gateway_url: str
     destinations: Mapping[str, tuple[Destination, ...]]  # keyed by slot ("1130", "1900", "0500"); () skips that slot
-    ops_chat_id: int | None  # where the Notion-outage alert goes; unset: the first group entry of the slot's list
+    ops_chat_id: int | None  # where the T6 API outage alert goes; unset: the first group entry of the slot's list
     test_banner: bool
     shift_secret: str | None  # None when SHIFT_SECRET is unset; only ``shift-report --dry-print`` may go without
-    openrouter_api_key: str | None = None  # unset: task summaries are the first three words, no LLM call
     llm_model: str = DEFAULT_SHIFT_MODEL  # shift_llm_model; the briefing's llm_model is separate
 
 
 @dataclass(frozen=True)
 class Config:
-    projects_data_source: str
-    contacts_data_source: str
     database_path: str
-    notion_token: str
     brief: BriefSettings | None = None
-    jo_data_source: str | None = None  # Job Orders data source; needed by jo-snapshot
     meeting_notes_data_source: str | None = None  # set to draft the minutes (draft-mom, Monday job)
     shift: ShiftSettings | None = None  # None when shift reports are disabled
-    matching: MatchSettings = MatchSettings()  # people matching (leave names); defaults match the watchdog
+    ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
+    llm_enabled: bool = True  # false: no model is called; summaries fall back to three words, a real brief says "LLM unavailable"
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -108,42 +103,14 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         raise ConfigError(f"unknown config key: {key}")
 
     return Config(
-        projects_data_source=_notion_id(raw, "projects_data_source"),
-        contacts_data_source=_notion_id(raw, "contacts_data_source"),
         database_path=_string(raw, "database_path", default="data/psr.db"),
-        notion_token=_secret(env, SECRET_ENV),
         brief=_brief(raw, env),
-        jo_data_source=_notion_id(raw, "jo_data_source") if "jo_data_source" in raw else None,
         meeting_notes_data_source=(
             _notion_id(raw, "meeting_notes_data_source") if "meeting_notes_data_source" in raw else None),
         shift=_shift(raw, env),
-        matching=_matching(raw),
+        ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
+        llm_enabled=_flag(raw, "llm_enabled"),
     )
-
-
-def _matching(raw: dict) -> MatchSettings:
-    d = MatchSettings()
-    honorifics = d.honorifics
-    if "honorifics" in raw:
-        val = raw["honorifics"]
-        if (not isinstance(val, list) or not val
-                or any(not isinstance(h, str) or not h.strip() for h in val)):
-            raise ConfigError("invalid config key: honorifics (expected a non-empty list of words)")
-        honorifics = tuple(h.strip().casefold() for h in val)
-    return MatchSettings(
-        fuzzy_min_score=_percent(raw, "fuzzy_min_score", d.fuzzy_min_score),
-        fuzzy_min_lead=_percent(raw, "fuzzy_min_lead", d.fuzzy_min_lead),
-        honorifics=honorifics,
-    )
-
-
-def _percent(raw: dict, key: str, default: float) -> float:
-    if key not in raw:
-        return default
-    value = raw[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
-        raise ConfigError(f"invalid config key: {key} (expected a number from 0 to 100)")
-    return value
 
 
 def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
@@ -193,10 +160,9 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         digest_recipients=tuple(digest_recipients),
         coordinator_recipients=coordinator_recipients,
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
-        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
-        concern_chronic_weeks=_days(raw, "concern_chronic_weeks", DEFAULT_CHRONIC_WEEKS, "weeks"),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
+        concern_scan=_flag(raw, "concern_scan"),
         leave_clash_days=_days(raw, "leave_clash_days", DEFAULT_CLASH_DAYS),
     )
 
@@ -217,6 +183,13 @@ def _gateway_url(raw: dict) -> str:
     return url
 
 
+def _flag(raw: dict, key: str) -> bool:
+    value = raw.get(key, True)
+    if not isinstance(value, bool):
+        raise ConfigError(f"invalid config key: {key} (expected true or false)")
+    return value
+
+
 def _banner(raw: dict) -> bool:
     banner = raw.get("test_banner", False)
     if not isinstance(banner, bool):
@@ -234,8 +207,6 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         if old in raw:
             raise ConfigError(f"config key {old} was replaced by shift_destinations")
     ops = _integer(raw, "ops_chat_id") if "ops_chat_id" in raw else None
-    if "jo_data_source" not in raw:
-        raise ConfigError("missing config key: jo_data_source (needed when shift_reports_enabled is true)")
     destinations = _shift_destinations(raw)
     if not any(destinations.values()):
         raise ConfigError("invalid config key: shift_destinations (needs at least one destination when shift_reports_enabled is true)")
@@ -245,7 +216,6 @@ def _shift(raw: dict, env: Mapping[str, str]) -> ShiftSettings | None:
         ops_chat_id=ops,
         test_banner=_banner(raw),
         shift_secret=env.get(SHIFT_SECRET_ENV, "").strip() or None,
-        openrouter_api_key=env.get(OPENROUTER_KEY_ENV, "").strip() or None,
         llm_model=_string(raw, "shift_llm_model", default=DEFAULT_SHIFT_MODEL),
     )
 
@@ -321,11 +291,4 @@ def _notion_id(raw: dict, key: str) -> str:
     value = _string(raw, key)
     if not _NOTION_ID.match(value):
         raise ConfigError(f"invalid config key: {key} (expected a Notion data source id)")
-    return value
-
-
-def _secret(env: Mapping[str, str], name: str) -> str:
-    value = env.get(name, "").strip()
-    if not value:
-        raise ConfigError(f"missing environment variable: {name}")
     return value
