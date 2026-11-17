@@ -13,7 +13,7 @@ database_path: /app/data/psr.db
 # meeting_notes_data_source: "22222222-2222-2222-2222-222222222222"
 
 # Saturday briefing (optional; leave all of these out to run snapshots only).
-# When any is set, gateway_url, psr_group_chat_id and cyril_contact_id are required.
+# When any is set, gateway_url and psr_group_chat_id are required, and so is cyril_contact_id or digest_recipients.
 # The secret PSR_SECRET goes in .env. Briefings fire Saturday 12:00 Asia/Manila (Friday snapshot at 23:30).
 # The Minutes go to the same chat and topic: PSR group -1000000000001, topic 1.
 # gateway_url: "http://192.0.2.10:8780"
@@ -47,10 +47,10 @@ database_path: /app/data/psr.db
 #   night: [100000001, {chat: -1000000000001, topic: 2}]   # 05:00 report: DMs and chats can mix
 # The ids above are placeholders. Put the real ids only in the deployed config.yaml. A person must have
 # started the bot before a DM can reach them.
-# ops_chat_id: 100000001                   # optional; where the ops alert will go (later ticket)
+# ops_chat_id: 100000001                   # optional; where the ops alerts go (T6 API outage, masked read, undelivered); else the first chat entry of that report's list
 # llm_enabled: true                       # false: no model is called (summaries show three words; a real brief says "LLM unavailable")
 # shift_llm_model: "qwen/qwen3.8-27b"      # model (named for the t6 API) for the three-word task summaries (default shown).
-#   It is separate from llm_model above, which only the Saturday briefing uses now. Every call requires
+#   It is separate from llm_model above, which the Saturday briefing, the leaves and the Minutes use. Every call requires
 #   zero data retention, so pick a model the t6 API lists with it.
 #   A model without one fails every call, and the report shows each Task's first three words instead.
 #

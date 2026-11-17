@@ -3,8 +3,9 @@
 **Draft. Human review pending. Live model evaluation not run. Neither issue is accepted or complete.**
 
 All 21 cases use invented project content. The offline harness uses the production payload builder,
-current consolidation prompt/schema, and production validator. It does not import a model client,
-read credentials, contact a service, or send a brief. It produces no evidence of model quality.
+current consolidation prompt/schema, and production validator. It imports `t6.llm.evals` (one dated entry in
+`.t6-consumer-allowlist.json`; the app imports nothing else from t6 beyond `t6.client` and `t6.verbs`),
+makes no model call, reads no credentials, contacts no service, and sends no brief. It produces no evidence of model quality.
 
 ## Prepare locally
 
