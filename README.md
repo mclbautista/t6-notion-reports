@@ -41,6 +41,7 @@ Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secret
 - `brief [--dry-print] [--show-llm-input]`: the Saturday briefing now.
 - `draft-mom [--date YYYY-MM-DD] [--dry-print]`: re-draft the minutes in Notion (`--dry-print`: print the bullets, write nothing).
 - `send-ready-mom [--dry-print]`: send the approved minutes once.
+- `switch-concerns`: once, before the first brief that uses the API: back up the database and drop the old Concern table (see Concerns below).
 - `diff [--old ID --new ID]`: what changed between two snapshots (default: latest Monday against the latest Friday).
 
 ## Run on the Mac mini
@@ -59,8 +60,8 @@ its value. The SQLite file lives in `./data`, which the non-root container user 
 
 ### Reads and writes through the t6 API
 
-`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant and the `minutes`
-permission). Every read of Contacts, Projects, Job Orders, Meeting Notes and the Projects notices, and every Minutes
+`T6_API_URL` and `T6_API_SECRET` in `.env` are required (the key needs the `unmasked` grant and the
+`minutes`, `coordinator` and `llm` permissions). Every read of Contacts, Projects, Job Orders, Meeting Notes and the Projects notices, and every Minutes
 write (draft and Sent at), goes through the t6 API; this app holds no Notion token. A Notion token left in an old
 `.env` is not read. `projects_data_source`, `contacts_data_source` and `jo_data_source` in `config.yaml` are ignored and logged.
 
@@ -270,7 +271,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
     docker compose run --rm notion-reports brief --config /app/config.yaml --dry-print   # print, send nothing
     docker compose run --rm notion-reports brief --config /app/config.yaml               # send now
 
-`--dry-print` still reads Contacts from Notion but needs no `PSR_SECRET`. **Do not run `brief`
+`--dry-print` still reads Contacts through the t6 API but needs no `PSR_SECRET`. **Do not run `brief`
 without `--dry-print` before Cyril's go-ahead:** it messages the real coordinators.
 
 ## Minutes draft
@@ -351,8 +352,8 @@ No alert when everything was delivered. `undelivered=<n>` is in the run log line
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml --dry-print   # print, send nothing
     docker compose run --rm notion-reports shift-report --slot 1900 --config /app/config.yaml               # send one slot now
 
-If Notion cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
-alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from Notion) to `ops_chat_id`,
+If the t6 API cannot be read at a slot, the job retries every minute for 30 minutes. If it stays down it queues one
+alert (key `shift-<date>-<slot>-alert`, naming the slot and the error type, nothing from the data) to `ops_chat_id`,
 or to the first chat entry of that report's list, marked 🚨, when `ops_chat_id` is not set, and skips the slot: no report, no snapshot, no
 catch-up. The next slot compares with the latest earlier snapshot and says so.
 
