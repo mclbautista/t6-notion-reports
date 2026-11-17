@@ -23,9 +23,9 @@ LEAVES = [
 
 
 def contacts():
-    people = [contact("c-oto", "Oto"), contact("c-cyril", "Cyril"), contact("c-nia", "Nia Varnel"),
+    people = [contact("c-oto", "Oto"), contact("c-owner", "Owner"), contact("c-nia", "Nia Varnel"),
               contact("c-cal", "Cal Pardo"), contact("c-uma", "Uma Belk")]
-    for page, (h, i) in zip(people[:4], (("oto_h", 111), ("cyril_h", 999), ("nia_h", 333), ("cal_h", 444))):
+    for page, (h, i) in zip(people[:4], (("oto_h", 111), ("owner_h", 999), ("nia_h", 333), ("cal_h", 444))):
         page["properties"].update(tg(h, i))
     people[2]["properties"]["Aliases"] = rich("Nio")
     return people  # Uma has no TelegramUserID
@@ -386,7 +386,7 @@ def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipient
     people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
     notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
-    settings = replace(BRIEF, digest_recipients=("c-cyril", "c-kit"))
+    settings = replace(BRIEF, digest_recipients=("c-owner", "c-kit"))
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
     by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
     assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
@@ -442,7 +442,7 @@ def test_a_long_plain_heading_after_the_entries_ends_the_section():
     assert payload["lines"] == REAL_LEAVES
 
 
-# ---- private unmatched names need an explicitly identified Cyril (#62 item 8) ------------------
+# ---- private unmatched names need an explicitly identified owner (#62 item 8) ------------------
 
 def _unmatched_run(recipients, cyril_id):
     from fake_notion import contact as page_of
@@ -456,13 +456,13 @@ def _unmatched_run(recipients, cyril_id):
 
 
 def test_unmatched_names_reach_only_the_explicit_cyril_whatever_the_recipient_order():
-    for recipients in (("c-cyril", "c-kit"), ("c-kit", "c-cyril")):
-        by = _unmatched_run(recipients, "c-cyril")
+    for recipients in (("c-owner", "c-kit"), ("c-kit", "c-owner")):
+        by = _unmatched_run(recipients, "c-owner")
         assert "Zed" in by(999) and "Zed" not in by(777), recipients
 
 
 def test_without_an_explicit_cyril_unmatched_names_are_withheld_and_a_configuration_warning_is_shown():
-    for recipients in (("c-kit", "c-cyril"), ("c-cyril", "c-kit"), ("c-kit",)):
+    for recipients in (("c-kit", "c-owner"), ("c-owner", "c-kit"), ("c-kit",)):
         by = _unmatched_run(recipients, None)
         for who in (999, 777):
             assert "Zed" not in by(who), recipients
@@ -471,5 +471,5 @@ def test_without_an_explicit_cyril_unmatched_names_are_withheld_and_a_configurat
 
 
 def test_cyril_outside_the_recipient_list_never_gets_a_private_digest_and_names_stay_withheld():
-    by = _unmatched_run(("c-kit", "c-oto"), "c-cyril")
+    by = _unmatched_run(("c-kit", "c-oto"), "c-owner")
     assert "Zed" not in by(777) and "Zed" not in by(111) and "cyril_contact_id" in by(777)

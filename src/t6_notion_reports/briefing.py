@@ -1,7 +1,7 @@
 """Build the Saturday briefing messages from a diff (spec section 7).
 
 Pure: no network, no clock. ``build_briefing`` returns the messages to send, in order: one DM per
-coordinator, then Cyril's digest.
+coordinator, then the owner's digest.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def build_briefing(
 
     ``changes`` holds the changed projects plus any unchanged project with flags, Concerns or
     consolidated changes. A project outside the status gate (``group`` is None) is left out.
-    ``llm_failed`` names the projects whose LLM call failed, for Cyril's digest.
+    ``llm_failed`` names the projects whose LLM call failed, for the owner's digest.
 
     The DM has On-Hold then In-Progress sections. The digest groups by coordinator, alphabetically,
     each with On-Hold, In-Progress, then Leads. Empty sections are left out, and a section is sorted by
@@ -82,13 +82,13 @@ def build_briefing(
     means no filtering. ``first`` marks the first brief, which has no earlier snapshot to compare with.
 
     ``notes`` are extra warning lines for every digest recipient (leaves unavailable); ``cyril_notes``
-    go in Cyril's digest alone (unmatched leave names), so with several recipients the digests differ.
+    go in the owner's digest alone (unmatched leave names), so with several recipients the digests differ.
 
     ``raise_at_psr`` are the quiet Concerns of the gated projects (no new evidence for 2 weeks): the digest lists them
     all in a "Raise at PSR" section after the projects, and a coordinator's DM lists the ones that coordinator owns.
     The section is left out when there are none.
 
-    Without a Telegram id for Cyril the digest is left out (the DMs still go); see ``digest_missing``.
+    Without a Telegram id for the owner the digest is left out (the DMs still go); see ``digest_missing``.
     """
     changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)

@@ -50,7 +50,7 @@ notion-reports runs as its own container on the T6 Mac mini (Intel, Colima), nex
 own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 23:30
 Asia/Manila time. It does not catch up missed slots: if the container is down at 11:00, take one by hand.
 
-The scheduler fires on its own, so **do not start the container before Cyril's go-ahead**: the
+The scheduler fires on its own, so **do not start the container before the owner's go-ahead**: the
 first snapshot taken becomes the baseline. A bad config exits with code 2, and
 `restart: unless-stopped` then restarts it in a loop; read `docker compose logs notion-reports`.
 
@@ -178,7 +178,7 @@ baseline.
 ## Saturday briefing
 
 Every Saturday 12:00 Asia/Manila each T6 Post Coordinator gets a DM built from the latest Friday
-snapshot against the Monday before it, and Cyril gets one digest of every project. Everything goes
+snapshot against the Monday before it, and the owner gets one digest of every project. Everything goes
 through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when the
 briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
 
@@ -237,7 +237,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   by the t6 API (`person find`, one call for all the names; a match that needs review counts as unmatched). A leave by someone in the project's team relations (including Prod Coor/Supe)
   within `leave_clash_days` (default 14) of its Playdate, Submission Deadline or Archival Deadline becomes one
   Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
-  listed in Cyril's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
+  listed in the owner's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
 - Concerns: reports keeps no Concern store. The brief hands the run's findings (the date flags and sanity problems,
   the Concerns of each project's LLM call, the leave clashes) to the API with `concern observe` and shows what
@@ -272,7 +272,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
     docker compose run --rm notion-reports brief --config /app/config.yaml               # send now
 
 `--dry-print` still reads Contacts through the t6 API but needs no `PSR_SECRET`. **Do not run `brief`
-without `--dry-print` before Cyril's go-ahead:** it messages the real coordinators.
+without `--dry-print` before the owner's go-ahead:** it messages the real coordinators.
 
 ## Minutes draft
 

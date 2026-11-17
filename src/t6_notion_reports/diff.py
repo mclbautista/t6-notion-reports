@@ -71,7 +71,7 @@ class ProjectChange:
 @dataclass
 class CoordinatorGroups:
     by_coordinator: dict[str, tuple[str, list[ProjectChange]]]  # id -> (name, changes)
-    no_coordinator: list[ProjectChange]  # Cyril's digest only
+    no_coordinator: list[ProjectChange]  # the owner's digest only
 
 
 def diff_snapshots(

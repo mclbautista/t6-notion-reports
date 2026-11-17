@@ -6,7 +6,7 @@ from t6_notion_reports.diff import ProjectChange, FieldChange, Person
 SUNDAY = date(2026, 11, 15)
 
 def test_multiple_digest_recipients():
-    cyril = Contact("c-cyril", "Cyril", telegram_id=999)
+    cyril = Contact("c-owner", "Owner", telegram_id=999)
     kit = Contact("c-kit", "Kit", telegram_id=777)
     quilla = Contact("c-quil", "Quilla", telegram_id=888)
     oto = Contact("c-oto", "Oto", telegram_id=666)
@@ -24,7 +24,7 @@ def test_multiple_digest_recipients():
             code="RM",
             title="Project RM",
             name="RM",
-            coordinators=[Person("c-cyril", "Cyril")],
+            coordinators=[Person("c-owner", "Owner")],
             health="On Track",
             kind="changed",
             group="in_progress",
@@ -32,12 +32,12 @@ def test_multiple_digest_recipients():
             last_updated=SUNDAY,
         )
     ]
-    coordinators = {"c-cyril": "Cyril"}
-    contacts = {"c-cyril": cyril, "c-kit": kit, "c-quil": quilla, "c-oto": oto}
+    coordinators = {"c-owner": "Owner"}
+    contacts = {"c-owner": cyril, "c-kit": kit, "c-quil": quilla, "c-oto": oto}
 
     msgs = build_briefing(changes, coordinators, contacts, settings, SUNDAY)
 
-    # 1 coordinator DM (Cyril) + 4 digest DMs (Cyril, Kit, Quilla, Oto)
+    # 1 coordinator DM (Owner) + 4 digest DMs (Owner, Kit, Quilla, Oto)
     assert len(msgs) == 5
     recipients = {m.to for m in msgs}
     assert recipients == {999, 777, 888, 666}

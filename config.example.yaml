@@ -19,7 +19,7 @@ database_path: /app/data/psr.db
 # gateway_url: "http://192.0.2.10:8780"
 # psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 1                    # PSR topic: Minutes go here
-# cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: Cyril's page id in Contacts
+# cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: the owner's page id in Contacts
 # Coordinator delivery only; the digest and LLM still include every eligible project.
 # Omit coordinator_recipients for all coordinators; [] disables their DMs and group fallbacks.
 # coordinator_recipients:

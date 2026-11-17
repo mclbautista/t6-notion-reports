@@ -11,7 +11,7 @@ from t6_notion_reports.config import BriefSettings
 from t6_notion_reports.snapshot_job import run_snapshot
 from t6_notion_reports.snapshots import SCHEMA
 
-BRIEF = BriefSettings("http://gw:8780", -1003, 7, "c-cyril", False, "s3cret")
+BRIEF = BriefSettings("http://gw:8780", -1003, 7, "c-owner", False, "s3cret")
 SATURDAY = datetime(2026, 11, 14, 4, tzinfo=timezone.utc)  # 12:00 Manila
 MONDAY = datetime(2026, 11, 9, 3, tzinfo=timezone.utc)
 FRIDAY = datetime(2026, 11, 13, 15, 30, tzinfo=timezone.utc)
@@ -25,8 +25,8 @@ def tg(handle, user_id):
 
 
 def contacts():
-    out = [contact("c-oto", "Oto"), contact("c-ida", "Ida"), contact("c-cyril", "Cyril")]
-    for page, (h, i) in zip(out, (("oto_h", 111), ("ida_h", 222), ("cyril_h", 999))):
+    out = [contact("c-oto", "Oto"), contact("c-ida", "Ida"), contact("c-owner", "Owner")]
+    for page, (h, i) in zip(out, (("oto_h", 111), ("ida_h", 222), ("owner_h", 999))):
         page["properties"].update(tg(h, i))
     return out
 

@@ -83,7 +83,7 @@ def run_brief(
 
     With ``leaves_llm`` (default: ``llm``), one more call parses the Projects database's "Upcoming Holidays and
     Leaves" lines, and a team member's leave near a project date becomes a Concern on that project.
-    Names nobody matched, and a failed parse, are noted in Cyril's digest only.
+    Names nobody matched, and a failed parse, are noted in the owner's digest only.
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     leaves_llm = llm if leaves_llm is None else leaves_llm
@@ -182,7 +182,7 @@ def run_brief(
     quiet, quiet_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
-    # Private warnings go only to an explicitly identified Cyril, never to whoever is listed first.
+    # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
     cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
     digest_contacts = tuple(
@@ -367,7 +367,7 @@ class Leaves:
 
     concerns: dict[str, tuple[str, ...]] = field(default_factory=dict)  # project id -> clash Concerns
     notes: tuple[str, ...] = ()  # warnings for every digest recipient
-    cyril_notes: tuple[str, ...] = ()  # for Cyril's digest only: names nobody matched
+    cyril_notes: tuple[str, ...] = ()  # for the owner's digest only: names nobody matched
     available: bool = True
 
 
