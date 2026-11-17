@@ -14,7 +14,7 @@ from t6_notion_reports.config import BriefSettings
 from t6_notion_reports.gateway import GatewayClient
 from t6_notion_reports.snapshot_job import run_snapshot
 
-CYRIL_ID = "c-cyril"
+CYRIL_ID = "c-owner"
 BRIEF = BriefSettings("http://gw:8780", -1003, 7, CYRIL_ID, False, "s3cret")
 SUNDAY = datetime(2026, 11, 15, 8, tzinfo=timezone.utc)  # 16:00 Manila
 
@@ -24,9 +24,9 @@ def tg(handle, user_id):
 
 
 def contacts():
-    out = [contact("c-oto", "Oto"), contact(CYRIL_ID, "Cyril"), contact("c-juno", "Juno Vex")]
+    out = [contact("c-oto", "Oto"), contact(CYRIL_ID, "Owner"), contact("c-juno", "Juno Vex")]
     out[0]["properties"].update(tg("oto_h", 111))
-    out[1]["properties"].update(tg("cyril_h", 999))
+    out[1]["properties"].update(tg("owner_h", 999))
     out[2]["properties"].update({"TelegramHandle": rich("@heyjunebug"), "TelegramUserID": {"type": "number", "number": None}})
     return out
 

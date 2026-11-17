@@ -9,7 +9,7 @@ Each leave entry's name is resolved to a Contacts page by the t6 API (``person f
 names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations and the
 leave comes within ``clash_days`` of the project's Playdate, Submission Deadline or Archival Deadline.
 A holiday or an office closure (kind holiday, or who ALL) never clashes. The Concern text comes from a
-code template; names that matched nobody are listed for Cyril's digest only.
+code template; names that matched nobody are listed for the owner's digest only.
 """
 from __future__ import annotations
 

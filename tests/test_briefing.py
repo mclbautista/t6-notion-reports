@@ -12,12 +12,12 @@ from t6_notion_reports.snapshots import ProjectRecord, connect, load_snapshot, t
 from t6_notion_reports.status_gate import gate
 
 TODAY = date(2026, 11, 15)
-OTO, IDA, JUNO, CYRIL = "c-oto", "c-ida", "c-juno", "c-cyril"
+OTO, IDA, JUNO, CYRIL = "c-oto", "c-ida", "c-juno", "c-owner"
 CONTACTS = {
     OTO: Contact(OTO, "Oto", "oto_h", 111),
     IDA: Contact(IDA, "Ida", None, 222),
     JUNO: Contact(JUNO, "Juno Vex", "heyjunebug", None),
-    CYRIL: Contact(CYRIL, "Cyril", None, 999),
+    CYRIL: Contact(CYRIL, "Owner", None, 999),
 }
 SETTINGS = Settings(CONTACTS[CYRIL], -1003, 7)
 
@@ -103,16 +103,16 @@ def test_quiet_coordinator_without_telegram_id_triggers_no_group_fallback():
 
 
 def test_digest_no_changes_line_lists_only_active_coordinators():
-    before = BEFORE + [rec("p5", "SBY", ("c-juno",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
-    after = AFTER + [rec("p5", "SBY", ("c-juno",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-cyril",), Status="📦 Archiving")]
+    before = BEFORE + [rec("p5", "SBY", ("c-juno",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-owner",), Status="📦 Archiving")]
+    after = AFTER + [rec("p5", "SBY", ("c-juno",), Status="🏋️ Standby"), rec("p6", "ARC", ("c-owner",), Status="📦 Archiving")]
     msgs = run(before, after, filter_active=True)
-    [digest] = by_recipient(msgs)["Cyril"]
+    [digest] = by_recipient(msgs)["Owner"]
     quiet_line = next(l for l in digest.text.splitlines() if l.startswith("No changes:"))
-    assert quiet_line == "No changes: Cyril, Ida"  # Juno's only project is Standby
+    assert quiet_line == "No changes: Ida, Owner"  # Juno's only project is Standby
 
 
 def test_digest_covers_everything_grouped_including_no_coordinator():
-    [digest] = by_recipient(run(BEFORE, AFTER))["Cyril"]
+    [digest] = by_recipient(run(BEFORE, AFTER))["Owner"]
     assert (digest.to, digest.topic, digest.key) == (999, None, "psr-digest-2026-11-15")
     text = digest.text
     assert text.index("<b>Oto</b>") < text.index("No coordinator")
@@ -123,7 +123,7 @@ def test_digest_covers_everything_grouped_including_no_coordinator():
 
 def test_project_without_coordinator_only_reaches_the_digest():
     msgs = run(BEFORE, AFTER)
-    assert [m.recipient for m in msgs if "ORF" in m.text] == ["Cyril"]
+    assert [m.recipient for m in msgs if "ORF" in m.text] == ["Owner"]
 
 
 def test_no_telegram_id_falls_back_to_group_topic_with_mention_and_digest_notes_it():
@@ -131,7 +131,7 @@ def test_no_telegram_id_falls_back_to_group_topic_with_mention_and_digest_notes_
     [juno] = msgs["Juno Vex"]
     assert (juno.to, juno.topic, juno.key) == (-1003, 7, "notion-reports-2026-11-15-c-juno")
     assert juno.text.startswith("@heyjunebug:\n") and "DW" in juno.text
-    assert "Juno Vex has no Telegram id" in msgs["Cyril"][0].text
+    assert "Juno Vex has no Telegram id" in msgs["Owner"][0].text
 
 
 def test_fallback_without_handle_uses_the_name():
@@ -170,7 +170,7 @@ def test_long_briefing_splits_with_unique_keys_and_valid_parts():
 
 
 def test_without_cyrils_telegram_id_the_dms_still_go_and_the_digest_is_left_out():
-    msgs = run(BEFORE, AFTER, settings=Settings(Contact(CYRIL, "Cyril"), -1003, 7))
+    msgs = run(BEFORE, AFTER, settings=Settings(Contact(CYRIL, "Owner"), -1003, 7))
     assert {m.recipient for m in msgs} == {"Oto", "Juno Vex"}
 
 
@@ -213,7 +213,7 @@ def test_a_digest_tail_that_does_not_fit_starts_a_part_with_the_digest_title():
     notes = [f"⚠️ warning {i} " + "y" * 80 for i in range(60)]
     conn_changes = []
     msgs = build(conn_changes, {}, CONTACTS, SETTINGS, TODAY, notes=notes)
-    digest = [m for m in msgs if m.recipient == "Cyril"]
+    digest = [m for m in msgs if m.recipient == "Owner"]
     assert len(digest) > 1
     for m in digest[1:]:
         assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
@@ -263,7 +263,7 @@ def test_a_single_oversized_summary_line_keeps_project_context():
 
 def test_a_single_oversized_digest_warning_keeps_the_digest_title():
     msgs = build_briefing([], {}, CONTACTS, SETTINGS, TODAY, notes=["⚠️ " + _words(2500, "z")])
-    digest = [m for m in msgs if m.recipient == "Cyril"]
+    digest = [m for m in msgs if m.recipient == "Owner"]
     assert len(digest) >= 3
     for m in digest:
         assert_valid_html(m.text)
@@ -273,7 +273,7 @@ def test_a_single_oversized_digest_warning_keeps_the_digest_title():
     assert _all_words([m.text for m in digest], "z") >= {f"z{i}" for i in range(2500)}
 
 
-@pytest.mark.parametrize("recipient", ["Oto", "Cyril"])
+@pytest.mark.parametrize("recipient", ["Oto", "Owner"])
 def test_normal_project_boundaries_preserve_whole_projects_and_section_context(recipient):
     before = [rec(f"p{i}", f"C{i:03d}") for i in range(20)]
     after = [rec(f"p{i}", f"C{i:03d}",
@@ -286,7 +286,7 @@ def test_normal_project_boundaries_preserve_whole_projects_and_section_context(r
         assert len(message.text) <= 4096
         assert any(f"C{i:03d} · Show C{i:03d}" in _plain(message.text) for i in range(20))
     for message in messages[1:]:
-        expected = ["Oto", "In-Progress (cont.)"] if recipient == "Cyril" else ["In-Progress (cont.)"]
+        expected = ["Oto", "In-Progress (cont.)"] if recipient == "Owner" else ["In-Progress (cont.)"]
         assert _plain(message.text).splitlines()[:len(expected)] == expected
     for i in range(20):
         title = f"C{i:03d} · Show C{i:03d}"
@@ -306,7 +306,7 @@ def test_oversized_digest_project_repeats_coordinator_section_and_identity(singl
         body = "\n  • ".join(f"atom{i} " + "x" * 100 for i in range(120))
     messages = [m for m in run([rec("p1", "BIG")],
                 [rec("p1", "BIG", **{"PM Notes": "As of Nov 12,\n  • " + body})])
-                if m.recipient == "Cyril"]
+                if m.recipient == "Owner"]
     assert len(messages) > 2
     for i, message in enumerate(messages):
         assert_valid_html(message.text)
@@ -331,7 +331,7 @@ def test_oversized_tail_after_projects_keeps_title_banner_and_every_warning_atom
                       load_snapshot(conn, b))
     warnings = ["⚠️ " + _words(2500, "warning"), "⚠️ final warning"]
     messages = [m for m in build_briefing(changes, {OTO: "Oto"}, CONTACTS, settings, TODAY, notes=warnings)
-                if m.recipient == "Cyril"]
+                if m.recipient == "Owner"]
     assert len(messages) >= 3
     assert "ONE · Show ONE" in messages[0].text
     for i, message in enumerate(messages):
