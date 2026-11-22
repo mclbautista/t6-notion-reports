@@ -154,11 +154,12 @@ def test_when_every_entry_is_dropped_for_a_placeholder_the_parse_failed():
     assert result.entries == () and result.failed
 
 
-def test_a_leave_by_someone_in_prod_coor_supe_is_a_clash_like_one_in_editors():
+def test_a_leave_by_the_productions_post_supervisor_is_no_clash():
+    # Prod Coor/Supe is the production's post supervisor, a client, not T6's team.
     conn, notion = build([team_project(Editors=relation(), **{"Prod Coor/Supe": relation("c-nia")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
-    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # no owner: it goes to its project's coordinator, once
+    assert "Nia Varnel is on leave" not in digest(gw)
+    assert "Nia Varnel is on leave" not in dm(gw)
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
