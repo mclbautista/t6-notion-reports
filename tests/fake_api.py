@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from t6.client import Unavailable
 from t6.verbs import Done, Preview, Refused
@@ -103,9 +104,10 @@ class FakeConcerns:
         for item in self.open(text_part):
             item["state"], item["closed_on"] = "closed", on
 
-    def go_quiet(self, text_part):
+    def snooze(self, text_part):
+        """A human operator snoozes the open Concern whose text holds ``text_part``."""
         for item in self.open(text_part):
-            item["state"] = "quiet"
+            item["state"] = "snoozed"
 
     def open(self, text_part=""):
         return [i for i in self.items if i["state"] != "closed" and text_part in i["text"]]
@@ -130,8 +132,9 @@ class FakeConcerns:
                 items.append(found)
                 counts["new"] += 1
             else:
-                found["state"] = "open"
+                found["state"] = "snoozed" if found["state"] == "snoozed" else "open"
                 counts["known"] += 1
+            found["evidence_at"] = datetime.fromisoformat(inputs.run_date).replace(tzinfo=ZoneInfo("Asia/Manila")).timestamp()
             seen.add(found["id"])
         missing = {(ref(u.project), u.source) for u in inputs.unavailable}
         for i in items:
@@ -436,6 +439,11 @@ class FakeApi:
             return Unavailable("connection refused")
         if "concern list" in self.fail:
             return self.fail["concern list"]
+        if inputs.raise_at_psr:  # every open, unsnoozed Concern, oldest evidence first; no text, no label
+            return Done(result={"concerns": [
+                {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
+                 "age_seconds": 0, "evidence_at": i.get("evidence_at", 0.0)}
+                for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]})
         return Done(result={"concerns": [
             {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
              "text": i["text"], "source": i["source"], "state": i["state"], "age_seconds": 0, "chronic": False}

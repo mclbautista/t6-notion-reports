@@ -1,7 +1,8 @@
-"""``concern scan`` before the brief and "Raise at PSR" from the quiet Concerns (#120)."""
+"""``concern scan`` before the brief and "Raise at PSR" from the open, unsnoozed Concerns (#120, #138)."""
 import re
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -30,9 +31,11 @@ def go(conn, notion, brief=BRIEF, now=SATURDAY, **kw):
     return gw, logs
 
 
-def quiet(store, project="p1", text="Vendor quote still missing", owner="t6p_oto", waiting_on=None, opened="2026-10-20"):
-    store.items.append({"id": f"t6c_{text[:6]}", "project": project, "key": text, "text": text, "source": "pm_notes_scan",
-                        "opened_on": opened, "state": "quiet", "closed_on": None, "owner": owner, "waiting_on": waiting_on})
+def stale(store, project="p1", text="Vendor quote still missing", owner="t6p_oto", waiting_on=None, opened="2026-10-20", evidence="2026-11-03"):
+    """An open Concern that was last heard of on ``evidence`` (an ISO date)."""
+    store.items.append({"id": f"t6c_{text[:6]}", "project": project, "key": " ".join(text.split()).casefold(), "text": text, "source": "pm_notes_scan",
+                        "opened_on": opened, "state": "open", "closed_on": None, "owner": owner, "waiting_on": waiting_on,
+                        "evidence_at": datetime.fromisoformat(evidence).replace(tzinfo=ZoneInfo("Asia/Manila")).timestamp()})
 
 
 def raise_lines(text):
@@ -97,7 +100,7 @@ def test_the_scan_runs_before_the_findings_are_handed_over_and_the_list_is_read_
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     go(conn, notion)
     assert [c for c in notion.api.calls if c in ("concern scan", "concern observe", "concern list")] == [
-        "concern scan", "concern observe", "concern list"]
+        "concern scan", "concern observe", "concern list", "concern list"]  # the Raise at PSR list, then the open list for its text
 
 
 def test_each_call_gets_its_own_limit_and_the_shared_client_keeps_its_own():
@@ -137,43 +140,67 @@ def test_the_scan_key_is_read_from_config_and_defaults_to_true(tmp_path):
 
 # ---- B: Raise at PSR ----
 
-def test_a_quiet_concern_is_in_the_digest_and_its_owners_dm_with_the_label_the_owner_and_the_party_and_not_in_the_project_lines():
+def test_an_open_concern_is_in_the_digest_and_its_owners_dm_with_the_evidence_date_the_owner_and_the_party():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
-    quiet(notion.api.concerns, waiting_on="the vendor")
+    stale(notion.api.concerns, waiting_on="the vendor")
     gw, _ = go(conn, notion)
-    expected = "• ONE: Vendor quote still missing · no news for 2 weeks · owner Oto · waiting on the vendor"
+    expected = "• ONE: Vendor quote still missing · last evidence Nov 3 · owner Oto · waiting on the vendor"
     assert raise_lines(digest(gw)) == [expected]
     assert raise_lines(dm(gw)) == [expected]
-    for text in (dm(gw), digest(gw)):
-        assert "Concerns" not in lines_of(text) or "Vendor quote" not in "".join(lines_of(text)[lines_of(text).index("Concerns"):])
-        assert text.count("Vendor quote") == 1  # once: in the section, not also in the project's lines
+    assert "no news" not in digest(gw) and "no news" not in dm(gw)
 
 
 def test_the_dm_of_another_coordinator_does_not_list_it_but_the_digest_does():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS), proj("p2", "TWO", IN_PROGRESS, coordinator="c-ida"))
-    quiet(notion.api.concerns, owner="t6p_oto")
+    stale(notion.api.concerns, owner="t6p_oto")
     gw, _ = go(conn, notion)
     assert raise_lines(dm(gw, 222)) == [] and len(raise_lines(dm(gw, 111))) == 1 and len(raise_lines(digest(gw))) == 1
 
 
-def test_a_concern_with_recent_evidence_is_not_listed_however_old_it_is():
+def test_an_old_concern_with_recent_evidence_is_listed_and_still_one_of_its_projects_lines():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
-    quiet(notion.api.concerns, opened="2026-10-03")
-    notion.api.concerns.items[0]["state"] = "open"  # six weeks old, evidence last week: open, not quiet
+    stale(notion.api.concerns, opened="2026-10-03", evidence="2026-11-12")
     gw, _ = go(conn, notion)
-    assert raise_lines(digest(gw)) == [] and "Raise at PSR" not in digest(gw)
-    assert "Vendor quote still missing · since Oct 3 (6 wks)" in dm(gw)  # still one of its project's lines
+    assert len(raise_lines(digest(gw))) == 1  # age never hides it, however recent the evidence
+    assert "Vendor quote still missing · since Oct 3 (6 wks)" in dm(gw)
 
 
-def test_no_quiet_concerns_means_no_heading():
+def test_the_section_lists_the_oldest_evidence_first_as_the_api_orders_it():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    stale(notion.api.concerns, text="Newer news", evidence="2026-11-10")
+    stale(notion.api.concerns, text="Older news", evidence="2026-10-01")
+    gw, _ = go(conn, notion)
+    assert [ln.split(" · ")[0] for ln in raise_lines(digest(gw))] == ["• ONE: Older news", "• ONE: Newer news"]
+
+
+def test_a_snoozed_concern_is_in_no_line_of_the_brief_until_it_is_woken():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    stale(notion.api.concerns)
+    notion.api.concerns.snooze("Vendor quote")
+    gw, _ = go(conn, notion)
+    assert all("Vendor quote" not in t and "Raise at PSR" not in t for *_, t in gw.sent)
+    notion.api.concerns.items[0]["state"] = "open"  # a person wakes it
+    gw, _ = go(conn, notion)
+    assert len(raise_lines(digest(gw))) == 1 and "Vendor quote" in dm(gw)
+
+
+def test_a_closed_concern_is_not_listed():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    stale(notion.api.concerns)
+    notion.api.concerns.close("Vendor quote", "2026-11-10")
+    gw, _ = go(conn, notion)
+    assert "Raise at PSR" not in digest(gw)
+
+
+def test_no_concerns_means_no_heading():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     gw, _ = go(conn, notion)
     assert all("Raise at PSR" not in t for *_, t in gw.sent)
 
 
-def test_a_quiet_concern_of_a_project_outside_the_gate_is_left_out():
+def test_a_concern_of_a_project_outside_the_gate_is_left_out():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS), proj("p2", "OUT", "✅ Done"))
-    quiet(notion.api.concerns, project="p2")
+    stale(notion.api.concerns, project="p2")
     gw, _ = go(conn, notion)
     assert all("Raise at PSR" not in t for *_, t in gw.sent)
 
@@ -181,7 +208,7 @@ def test_a_quiet_concern_of_a_project_outside_the_gate_is_left_out():
 @pytest.mark.parametrize("outcome", [down(), refused("concern")])
 def test_when_the_list_cannot_be_read_the_section_is_left_out_and_the_digest_says_so(outcome):
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
-    quiet(notion.api.concerns)
+    stale(notion.api.concerns)
     notion.api.fail["concern list"] = outcome
     gw, logs = go(conn, notion)
     assert "Raise at PSR" not in dm(gw) and RAISE_UNAVAILABLE_NOTE in digest(gw)
@@ -191,7 +218,7 @@ def test_when_the_list_cannot_be_read_the_section_is_left_out_and_the_digest_say
 
 def test_a_dry_run_prints_the_section():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
-    quiet(notion.api.concerns)
+    stale(notion.api.concerns)
     out = []
     run_brief(conn, notion, BRIEF, SATURDAY, dry_print=True, out=out.append, log=lambda _: None)
     assert "Raise at PSR" in "\n".join(out) and "Vendor quote still missing" in "\n".join(out)
@@ -201,7 +228,7 @@ def test_a_long_section_splits_between_lines_and_every_part_is_valid_html():
     from html_check import assert_valid_html
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     for n in range(80):
-        quiet(notion.api.concerns, text=f"Item {n:02d} " + "words " * 25)
+        stale(notion.api.concerns, text=f"Item {n:02d} " + "words " * 25)
         notion.api.concerns.items[-1]["id"] = f"t6c_{n:02d}"
     gw, _ = go(conn, notion)
     parts = [t for to, _, _, t in gw.sent if to == 999]

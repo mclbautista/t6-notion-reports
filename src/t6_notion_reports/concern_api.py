@@ -73,8 +73,14 @@ def scan(client, project: str, owner: str) -> None:
 
 def open_concerns(client) -> list[dict[str, Any]]:
     """Every Concern that is not closed (``concern list`` with ``open``), oldest first: id, project_id, owner_id,
-    waiting_on, text, state ("open" or "quiet") and more."""
+    waiting_on, text, state ("open" or "snoozed") and more."""
     return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(open=True))["concerns"]
+
+
+def raise_at_psr_concerns(client) -> list[dict[str, Any]]:
+    """The Concerns to raise at PSR (``concern list`` with ``raise_at_psr``): every open, unsnoozed Concern, oldest evidence
+    first: id, project_id, owner_id, waiting_on, age_seconds and evidence_at. The reply has no text."""
+    return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(raise_at_psr=True))["concerns"]
 
 
 def record_message(client, concern: str, chat: int, message_id: int, brief_date: str, key: str) -> None:

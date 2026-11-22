@@ -9,8 +9,8 @@ from datetime import datetime
 from typing import Callable
 
 from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
-from .concern_api import ConcernApiError, observe, open_concerns, record_message, scan
-from .concerns import AgedConcerns, QuietConcern, aged_from_reply, quiet_concerns
+from .concern_api import ConcernApiError, observe, open_concerns, raise_at_psr_concerns, record_message, scan
+from .concerns import AgedConcerns, RaiseConcern, aged_from_reply, raise_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
 from .contacts import Contact
@@ -179,7 +179,7 @@ def run_brief(
     aged, history = observe_concerns(
         notion, current, unavailable, today, dry_print or gateway is None, new_state, rules, log,
     )
-    quiet, quiet_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
+    raised, raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
@@ -200,8 +200,8 @@ def run_brief(
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state, rules), first=first,
-        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if quiet_ok else (RAISE_UNAVAILABLE_NOTE,))],
-        cyril_notes=list(leaves.cyril_notes), raise_at_psr=quiet,
+        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if raised_ok else (RAISE_UNAVAILABLE_NOTE,))],
+        cyril_notes=list(leaves.cyril_notes), raise_at_psr=raised,
     )
     no_digest = digest_missing(settings)
 
@@ -311,16 +311,18 @@ def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monoto
     log(f"brief scan ok={ok} skipped={skipped} failed={failed}")
 
 
-def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[QuietConcern], bool]:
-    """The quiet Concerns of the gated projects, from ``concern list`` (read after the observe, so a Concern this run
-    found again is not quiet). If the API does not answer the section is left out: ``([], False)``."""
+def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[RaiseConcern], bool]:
+    """The open, unsnoozed Concerns of the gated projects, from ``concern list --raise-at-psr`` (read after the observe, so
+    a Concern this run found again is current), with their text from ``concern list --open``. If the API does not answer
+    the section is left out: ``([], False)``."""
     try:
-        listed = open_concerns(notion.client)
+        raised = raise_at_psr_concerns(notion.client)
+        texts = {c["id"]: c["text"] for c in open_concerns(notion.client)}
         people = notion.t6_person_ids()
         page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
         page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
-        return quiet_concerns(
-            listed, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
+        return raise_concerns(
+            raised, texts, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
             {page: c.name for page, c in contacts.items()},
         ), True
     except Exception as exc:  # any failure, a malformed reply too: the section is left out and the brief goes on

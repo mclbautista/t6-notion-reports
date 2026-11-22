@@ -254,9 +254,11 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   gated project that has exactly one coordinator known to the API, so the API's Concerns are current (60 s for each
   call, 10 minutes for the step; a refused or failed scan is logged by rule name and the brief goes on; the log line
   `brief scan ok=<n> skipped=<n> failed=<n>` gives the counts). `concern_scan: false` turns it off. The brief then
-  reads `concern list` and shows the Concerns the API marks quiet (no news for 2 weeks) in a "Raise at PSR" section:
-  in the digest all of them, in a coordinator's DM the ones that coordinator owns, each with its owner and the party
-  it waits on. A quiet Concern is not repeated in its project's lines. If the list cannot be read the section is left out
+  reads `concern list --raise-at-psr` (with `concern list --open` for the text) and shows every open, unsnoozed
+  Concern in a "Raise at PSR" section, oldest evidence first, however old it is: in the digest all of them, in a
+  coordinator's DM the ones that coordinator owns, each with the date of its last evidence, its owner and the party
+  it waits on. A Concern a human operator snoozed (`concern snooze`) is in no line of the brief. Other open Concerns
+  stay in their project's lines too. If the list cannot be read the section is left out
   and the digest says "Raise at PSR unavailable".
 - Recording the message that carried each Concern: after the last message is queued (never on `--dry-print`, never
   before) the app asks the gateway (`GET /notify/{ref}`) for the Telegram id of each message that showed Concerns (6
