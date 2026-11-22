@@ -7,7 +7,8 @@ line (a leading bullet mark aside) and the dates must be valid, with start no la
 
 Each leave entry's name is resolved to a Contacts page by the t6 API (``person find``, one call for all the
 names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations and the
-leave comes within ``clash_days`` of the project's Playdate, Submission Deadline or Archival Deadline.
+leave starts on or before the project's Playdate, Submission Deadline or Archival Deadline and ends no more
+than ``clash_days`` days before it. A leave that starts after the date never clashes.
 A holiday or an office closure (kind holiday, or who ALL) never clashes. The Concern text comes from a
 code template; names that matched nobody are listed for the owner's digest only.
 """
