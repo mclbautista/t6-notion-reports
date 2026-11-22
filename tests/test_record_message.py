@@ -10,7 +10,7 @@ from t6_notion_reports.gateway import GatewayClient, GatewayError
 from test_flags import staffed
 from test_gated_briefs import BRIEF, IN_PROGRESS, SATURDAY, Gateway, contacts, make_db, proj
 from test_gateway import FakeTransport, client
-from test_scan_and_raise import T6, quiet, world
+from test_scan_and_raise import T6, stale, world
 
 
 class IdGateway(Gateway):
@@ -116,7 +116,7 @@ def test_a_message_with_concerns_of_two_projects_records_each_concern_once():
 def test_a_raise_at_psr_concern_is_recorded_with_the_message_that_shows_it():
     store = FakeConcerns()
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS), store=store)
-    quiet(store)
+    stale(store)
     gw = IdGateway()
     go(conn, notion, gw)
     concern = store.items[0]["id"]

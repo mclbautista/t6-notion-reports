@@ -96,8 +96,9 @@ def brief(conn, notion, llm, brief_settings=BRIEF, **kw):
 def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm_and_the_digest():
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
+    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1
+    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 2  # one Concern: its project's line and Raise at PSR (every open Concern)
     for text in (dm(gw), digest(gw)):
-        assert text.count("Nia Varnel is on leave Nov 20–22") == 1
         assert "Playdate (Nov 28, 2026)" in text and "since Nov 14" in text  # the nearest of the dates
 
 
@@ -157,8 +158,8 @@ def test_when_every_entry_is_dropped_for_a_placeholder_the_parse_failed():
 def test_a_leave_by_someone_in_prod_coor_supe_is_a_clash_like_one_in_editors():
     conn, notion = build([team_project(Editors=relation(), **{"Prod Coor/Supe": relation("c-nia")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    for text in (dm(gw), digest(gw)):
-        assert text.count("Nia Varnel is on leave Nov 20–22") == 1
+    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1
+    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 2  # one Concern: its project's line and Raise at PSR (every open Concern)
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():

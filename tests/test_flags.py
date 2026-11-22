@@ -218,4 +218,4 @@ def test_date_sanity_concerns_also_apply_to_standby_and_leads():
     backwards = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01")}
     for status in (STANDBY, LEADS):
         text = one(status, **staffed(**backwards))
-        assert len([ln for ln in lines_of(text) if "before" in ln]) == 1
+        assert len([ln for ln in lines_of(text) if "before" in ln and "last evidence" not in ln]) == 1  # its project's line (Raise at PSR lists it too)
