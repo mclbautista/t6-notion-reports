@@ -214,7 +214,10 @@ def test_a_project_with_only_an_open_concern_is_no_activity_its_concern_is_in_ra
     noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ida", **staffed(**SLIP))
     conn = make_db([quiet, noisy], [quiet, noisy])
     gw = run(conn, FakeConcerns())
-    assert dm(gw, 111) == "" and dm(gw, 222) == ""  # nothing changed, and the Concern is shown once, in Raise at PSR
+    # nothing changed, so the DM holds only the header and Raise at PSR: the ownerless Concern goes to its project's coordinator
+    assert dm(gw, 111) == ""
+    assert dm(gw, 222).startswith("<b>PSR briefing") and raised(dm(gw, 222)) and "last evidence Nov 14" in dm(gw, 222)
+    assert digest(gw).count("Submission Deadline") == 1 and dm(gw, 222).count("Submission Deadline") == 1
     assert raised(digest(gw)) and "last evidence Nov 14" in digest(gw)
     assert "No changes on any project this week" in digest(gw)
 

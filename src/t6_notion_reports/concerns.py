@@ -40,6 +40,7 @@ class RaiseConcern:
     owner: str | None = None
     waiting_on: str | None = None
     evidence_on: date | None = None
+    coordinators: tuple[str, ...] = ()  # Contacts page ids of the project's coordinators: an ownerless Concern goes to their DMs
 
 
 def age_text(opened_on: date, weeks: int, chronic: bool) -> str:
@@ -65,13 +66,14 @@ def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dic
 
 
 def raise_concerns(raised: list[Mapping[str, Any]], texts: Mapping[str, str], labels: Mapping[str, str], page_of: Mapping[str, str],
-                   contact_of: Mapping[str, str], names: Mapping[str, str]) -> list[RaiseConcern]:
+                   contact_of: Mapping[str, str], names: Mapping[str, str],
+                   coordinators_of: Mapping[str, tuple[str, ...]] = {}) -> list[RaiseConcern]:
     """The Concerns of ``concern list --raise-at-psr`` that belong to a project of this brief, in the API's order.
 
     The API decides which Concerns are listed (every open, unsnoozed one, oldest evidence first); its reply carries no
     text, so ``texts`` gives the text of each Concern ID from ``concern list --open``. ``labels`` is the label of each
     project page id, ``page_of`` maps a T6 project id to its page id, ``contact_of`` a T6 Person ID to a Contacts page
-    id and ``names`` a Contacts page id to the name shown."""
+    id, ``names`` a Contacts page id to the name shown and ``coordinators_of`` a project page id to its coordinators' Contacts page ids."""
     out = []
     for c in raised:
         page = page_of.get(c["project_id"])
@@ -79,5 +81,5 @@ def raise_concerns(raised: list[Mapping[str, Any]], texts: Mapping[str, str], la
             continue
         owner = contact_of.get(c.get("owner_id") or "")
         evidence = datetime.fromtimestamp(c["evidence_at"], MANILA).date() if c.get("evidence_at") is not None else None
-        out.append(RaiseConcern(c["id"], page, labels[page], texts[c["id"]], owner, names.get(owner) if owner else None, c.get("waiting_on") or None, evidence))
+        out.append(RaiseConcern(c["id"], page, labels[page], texts[c["id"]], owner, names.get(owner) if owner else None, c.get("waiting_on") or None, evidence, coordinators_of.get(page, ())))
     return out

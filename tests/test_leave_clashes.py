@@ -97,7 +97,7 @@ def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
-    assert "Nia Varnel is on leave" not in dm(gw)  # the Concern has no owner here, so it is in no DM
+    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # no owner: it goes to its project's coordinator, once
     assert "Playdate (Nov 28, 2026)" in digest(gw) and "last evidence Nov 14" in digest(gw)  # the nearest of the dates
 
 
@@ -158,7 +158,7 @@ def test_a_leave_by_someone_in_prod_coor_supe_is_a_clash_like_one_in_editors():
     conn, notion = build([team_project(Editors=relation(), **{"Prod Coor/Supe": relation("c-nia")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
-    assert "Nia Varnel is on leave" not in dm(gw)  # the Concern has no owner here, so it is in no DM
+    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # no owner: it goes to its project's coordinator, once
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():

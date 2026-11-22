@@ -107,19 +107,19 @@ def build_briefing(
     for contact_id, name in sorted(coordinators.items(), key=lambda kv: (kv[1].lower(), kv[0])):
         if allowed is not None and contact_id.replace("-", "").lower() not in allowed:
             continue
-        projects = [
-            ch for ch in groups.by_coordinator.get(contact_id, (name, []))[1] if ch.group in DM_SECTIONS
-        ]
+        coordinated = groups.by_coordinator.get(contact_id, (name, []))[1]
+        projects = [ch for ch in coordinated if ch.group in DM_SECTIONS]
+        # Raise at PSR for a DM: the Concerns this person owns, and the ownerless ones of the projects they coordinate
+        raise_block = _raise_block([q for q in raised if q.owner_page == contact_id or (q.owner_page is None and contact_id in q.coordinators)])
         contact = contacts.get(contact_id)
         chat = contact.telegram_id if contact else None
-        if not projects:
+        if not projects and not raise_block:
             if active is None or contact_id in active:
                 quiet.append(name)
             continue
         head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
         units = _units([(None, projects)], DM_SECTIONS, today)
-        raise_block = _raise_block([q for q in raised if q.owner_page == contact_id])
         if chat is not None:
             messages += _send(chat, None, _pack(head, units, raise_block, banner, limit), key, name)
         else:
