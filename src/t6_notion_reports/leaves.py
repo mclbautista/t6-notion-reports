@@ -141,13 +141,13 @@ def leave_clashes(
 
 
 def _nearest_date(leave: Leave, state: dict[str, object], clash_days: int) -> tuple[str, date] | None:
-    """The project date closest to the leave, if any is within ``clash_days`` of it (inclusive)."""
+    """The project date closest on or after ``leave.start`` within ``clash_days`` after ``leave.end``."""
     best: tuple[int, str, date] | None = None
     for name in (PLAYDATE, SUBMISSION, ARCHIVAL):
         day = stored_day(state.get(name))
-        if day is None:
+        if day is None or day < leave.start:
             continue
-        gap = max((leave.start - day).days, (day - leave.end).days, 0)
+        gap = max((day - leave.end).days, 0)
         if gap <= clash_days and (best is None or gap < best[0]):
             best = (gap, name, day)
     return None if best is None else best[1:]

@@ -168,13 +168,39 @@ def test_a_leave_by_someone_not_on_the_project_produces_nothing():
 
 
 def test_a_leave_outside_the_window_of_every_project_date_produces_nothing():
-    late = {"Playdate": date("2026-12-01"), "Submission Deadline": date("2026-12-05")}
-    conn, notion = build([team_project(Editors=relation("c-cal"), **late)])  # Cal's leave is Dec 20: 15 days after Dec 5
+    late = {"Playdate": date("2027-01-05"), "Submission Deadline": date("2027-01-04")}
+    conn, notion = build([team_project(Editors=relation("c-cal"), **late)])  # Cal's leave is Dec 20: 15 days before Jan 4
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
     assert "Cal" not in dm(gw)
-    conn, notion = build([team_project(Editors=relation("c-cal"), **{**late, "Submission Deadline": date("2026-12-06")})])
+    conn, notion = build([team_project(Editors=relation("c-cal"), **{**late, "Submission Deadline": date("2027-01-03")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Cal Pardo is on leave Dec 20" in dm(gw)  # 14 days: inside
+    assert "Cal Pardo is on leave Dec 20" in dm(gw)  # 14 days after leave.end: inside
+
+
+def test_a_leave_starting_after_every_project_date_produces_nothing():
+    people = contacts() + [contact("c-ana", "Ana Cruz")]
+    people[-1]["properties"].update(tg("ana_h", 888))
+    show_a = proj(
+        "p-show-a",
+        "Show A",
+        IN_PROGRESS,
+        **{
+            "Playdate": date("2026-11-28"),
+            "Submission Deadline": date("2026-11-30"),
+            "Editors": relation("c-ana"),
+        },
+    )
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    run_snapshot(conn, FakeNotion([show_a], people), "monday", MONDAY)
+    run_snapshot(conn, FakeNotion([show_a], people), "friday", FRIDAY)
+    leaves = [
+        entry("Ana Cruz", "2026-12-01", "2026-12-02", "Ana Cruz - leave Dec 1-2"),
+    ]
+    notion = FakeNotion.live(conn, people, description=f"{HEADING}\n• Ana Cruz - leave Dec 1-2")
+    gw, _ = brief(conn, notion, LeaveLlm(leaves))
+    assert "Ana Cruz" not in dm(gw) + digest(gw)
+    assert "on leave" not in dm(gw) + digest(gw)
 
 
 def test_the_window_comes_from_config():
