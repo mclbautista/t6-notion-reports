@@ -6,7 +6,7 @@ today's date and nothing about projects. Code checks each entry: the quote must 
 line (a leading bullet mark aside) and the dates must be valid, with start no later than end; an entry that fails is dropped alone.
 
 Each leave entry's name is resolved to a Contacts page by the t6 API (``person find``, one call for all the
-names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations and the
+names of the run; a match that needs review is unmatched). A leave clashes with a project when that page is in the project's team relations (not Prod Coor/Supe, a client) and the
 leave starts on or before the project's Playdate, Submission Deadline or Archival Deadline and ends no more
 than ``clash_days`` days before it. A leave that starts after the date never clashes.
 A holiday or an office closure (kind holiday, or who ALL) never clashes. The Concern text comes from a
@@ -27,6 +27,8 @@ from .llm_api import LlmClient, LlmError, same_text
 from .snapshots import RELATION_FIELDS, squash
 
 DEFAULT_CLASH_DAYS = 14
+# The team relations a leave can clash through. Prod Coor/Supe is the production's post supervisor, a client.
+TEAM_FIELDS = tuple(field for field in RELATION_FIELDS if field != "Prod Coor/Supe")
 ALL = "ALL"
 KINDS = ("leave", "holiday")
 UNAVAILABLE_NOTE = "⚠️ Leaves unavailable: no leave clash Concerns this run"
@@ -130,7 +132,7 @@ def leave_clashes(
         for page_id, state in states.items():
             ids = {person.page_id, person.t6_id}
             if not any(isinstance(r, dict) and str(r.get("id")) in ids
-                       for field in RELATION_FIELDS for r in state.get(field) or []):
+                       for field in TEAM_FIELDS for r in state.get(field) or []):
                 continue
             near = _nearest_date(leave, state, clash_days)
             if near is not None:
