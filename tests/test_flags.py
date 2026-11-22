@@ -29,6 +29,12 @@ def one(status, **props):
     return digest(gw) if status == LEADS else dm(gw)
 
 
+def one_digest(status, **props):
+    """The digest for a single unchanged project: an open Concern is shown there once, in Raise at PSR, not in the project's lines."""
+    page = proj("p1", "ONE", status, **props)
+    return digest(brief(make_db([page], [page])))
+
+
 def lines_of(text):
     return [re.sub(r"<[^>]+>", "", ln) for ln in text.splitlines()]
 
@@ -170,12 +176,12 @@ def test_a_fully_staffed_project_has_no_roles_line():
 
 
 def test_date_sanity_problems_are_listed_as_one_concern_each():
-    text = one(IN_PROGRESS, **staffed(Playdate=date("2026-12-10"), **{"Submission Deadline": date("2026-12-01")}))
+    text = one_digest(IN_PROGRESS, **staffed(Playdate=date("2026-12-10"), **{"Submission Deadline": date("2026-12-01")}))
     concerns = [ln for ln in lines_of(text) if "before" in ln]
     assert len(concerns) == 1 and "Submission Deadline" in concerns[0] and "Playdate" in concerns[0]
-    assert "Concerns" in text
+    assert "Raise at PSR" in text and "Concerns" not in lines_of(text)
 
-    arch = one(ARCHIVING, **staffed(**{"Submission Deadline": date("2026-12-01"), "Archival Deadline": date("2026-11-20")}))
+    arch = one_digest(ARCHIVING, **staffed(**{"Submission Deadline": date("2026-12-01"), "Archival Deadline": date("2026-11-20")}))
     concerns = [ln for ln in lines_of(arch) if "before" in ln]
     assert len(concerns) == 1 and "Archival Deadline" in concerns[0]
 
@@ -217,5 +223,5 @@ def test_archiving_ignores_playdate_and_submission_dates():
 def test_date_sanity_concerns_also_apply_to_standby_and_leads():
     backwards = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01")}
     for status in (STANDBY, LEADS):
-        text = one(status, **staffed(**backwards))
-        assert len([ln for ln in lines_of(text) if "before" in ln and "last evidence" not in ln]) == 1  # its project's line (Raise at PSR lists it too)
+        text = one_digest(status, **staffed(**backwards))
+        assert len([ln for ln in lines_of(text) if "before" in ln]) == 1  # shown once, in Raise at PSR

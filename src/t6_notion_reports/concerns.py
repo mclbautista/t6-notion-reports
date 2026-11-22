@@ -56,13 +56,10 @@ def line_text(concern: Mapping[str, Any]) -> str:
 
 def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dict[str, AgedConcerns]:
     """The reply of ``concern observe`` by project page id. ``page_of`` maps a T6 project id to its page id; a project
-    of the reply that is not in it is not in this brief. The API's order (oldest first) is kept. A snoozed Concern is
-    not a line of its project; any other open Concern is, however old it is."""
+    of the reply that is not in it is not in this brief. Only the Concerns closed since the last run are lines of a
+    project: an open Concern is shown once, in "Raise at PSR", and a snoozed one nowhere."""
     return {
-        page_of[p["project_id"]]: AgedConcerns(
-            tuple(line_text(c) for c in p["open"] if c["state"] != SNOOZED), tuple(c["text"] for c in p["closed_since_last_run"]),
-            tuple(c["id"] for c in p["open"] if c["state"] != SNOOZED),
-        )
+        page_of[p["project_id"]]: AgedConcerns(resolved=tuple(c["text"] for c in p["closed_since_last_run"]))
         for p in reply["projects"] if p["project_id"] in page_of
     }
 

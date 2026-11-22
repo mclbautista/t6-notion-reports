@@ -96,10 +96,9 @@ def brief(conn, notion, llm, brief_settings=BRIEF, **kw):
 def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm_and_the_digest():
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1
-    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 2  # one Concern: its project's line and Raise at PSR (every open Concern)
-    for text in (dm(gw), digest(gw)):
-        assert "Playdate (Nov 28, 2026)" in text and "since Nov 14" in text  # the nearest of the dates
+    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
+    assert "Nia Varnel is on leave" not in dm(gw)  # the Concern has no owner here, so it is in no DM
+    assert "Playdate (Nov 28, 2026)" in digest(gw) and "last evidence Nov 14" in digest(gw)  # the nearest of the dates
 
 
 def test_the_app_sends_the_real_lines_and_matches_the_restored_name_against_contacts():
@@ -110,7 +109,7 @@ def test_the_app_sends_the_real_lines_and_matches_the_restored_name_against_cont
         return [entry("Nia", "2026-11-20", "2026-11-22", line)]
     api = LeaveLlm(answer)
     gw, _ = brief(conn, notion, api)
-    assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
+    assert "Nia Varnel is on leave Nov 20–22" in digest(gw)
     sent = api.inputs[0]
     assert sent.task_name == "brief_leaves" and sent.require_zdr and sent.restore == "per_field" and sent.allow_projects == []
 
@@ -158,8 +157,8 @@ def test_when_every_entry_is_dropped_for_a_placeholder_the_parse_failed():
 def test_a_leave_by_someone_in_prod_coor_supe_is_a_clash_like_one_in_editors():
     conn, notion = build([team_project(Editors=relation(), **{"Prod Coor/Supe": relation("c-nia")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1
-    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 2  # one Concern: its project's line and Raise at PSR (every open Concern)
+    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
+    assert "Nia Varnel is on leave" not in dm(gw)  # the Concern has no owner here, so it is in no DM
 
 
 def test_a_leave_by_someone_not_on_the_project_produces_nothing():
@@ -175,7 +174,7 @@ def test_a_leave_outside_the_window_of_every_project_date_produces_nothing():
     assert "Cal" not in dm(gw)
     conn, notion = build([team_project(Editors=relation("c-cal"), **{**late, "Submission Deadline": date("2027-01-03")})])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Cal Pardo is on leave Dec 20" in dm(gw)  # 14 days after leave.end: inside
+    assert "Cal Pardo is on leave Dec 20" in digest(gw)  # 14 days after leave.end: inside
 
 
 def test_a_leave_starting_after_every_project_date_produces_nothing():
@@ -232,13 +231,13 @@ def test_an_entry_whose_quote_is_not_an_exact_line_or_whose_dates_are_invalid_is
     good = entry("Nia", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm(bad + [good]))
-    assert dm(gw).count("on leave") == 1  # one bad entry does not void the rest
+    assert digest(gw).count("on leave") == 1  # one bad entry does not void the rest
 
 
 def test_a_quote_may_carry_the_bullet_mark_but_not_altered_spacing_inside_the_line():
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm([entry("Nia", "2026-11-20", "2026-11-22", "•  Nia - leave Nov 20-22 ")]))
-    assert "Nia Varnel is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" in digest(gw)
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm([entry("Nia", "2026-11-20", "2026-11-22", "Nia -  leave Nov 20-22")]))
     assert "on leave" not in dm(gw)
@@ -247,7 +246,7 @@ def test_a_quote_may_carry_the_bullet_mark_but_not_altered_spacing_inside_the_li
 def test_a_nickname_is_matched_through_the_contacts_alias():
     conn, notion = build([team_project()])
     gw, _ = brief(conn, notion, LeaveLlm([entry("Nio", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")]))
-    assert "Nia Varnel is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" in digest(gw)
 
 
 def test_all_the_leave_names_of_a_run_go_to_person_find_in_one_call_with_telegram_first():
@@ -279,7 +278,7 @@ def test_a_match_the_api_marks_for_review_is_unmatched():
 def test_a_name_with_no_onboarded_match_falls_through_to_the_rest_of_contacts():
     conn, notion = build([team_project(Editors=relation("c-uma"))])
     gw, _ = brief(conn, notion, LeaveLlm([entry("Uma Belk", "2026-11-20", "2026-11-22", "Nia - leave Nov 20-22")]))
-    assert "Uma Belk is on leave" in dm(gw)
+    assert "Uma Belk is on leave" in digest(gw)
 
 
 def test_a_team_relation_that_holds_the_t6_id_of_the_person_is_a_clash_too():
@@ -288,7 +287,7 @@ def test_a_team_relation_that_holds_the_t6_id_of_the_person_is_a_clash_too():
     notion.find_overrides = {"Nia Varnel": {"match": nia, "needs_review": False, "method": "exact", "score": 1.0,
                                             "reason": None, "candidates": []}}
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Nia Varnel is on leave Nov 20–22" in dm(gw)
+    assert "Nia Varnel is on leave Nov 20–22" in digest(gw)
 
 
 def test_an_unavailable_api_gives_no_clash_notes_leaves_unavailable_and_still_sends():
@@ -371,10 +370,10 @@ def test_a_clash_concern_is_a_leave_finding_that_ages_through_the_api_and_stays_
     brief(conn, notion, LeaveLlm(STANDARD))
     assert {f.source for f in notion.api.concerns.observed[-1].findings} == {"leave"}
     first = brief(conn, notion, LeaveLlm(STANDARD))  # same day: no change
-    assert dm(first[0]).count("since Nov 14") == 1
+    assert digest(first[0]).count("last evidence Nov 14") == 1
     notion.description = HEADING
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "within 14 days of the Playdate (Nov 28, 2026) · since Nov 14 (0 wks) · not seen this week" in dm(gw)
+    assert "within 14 days of the Playdate (Nov 28, 2026) · last evidence Nov 14" in digest(gw)  # not found this run, so it stays
     notion.api.concerns.close("on leave", "2026-11-16")  # a person closes it
     next_week, logs = Gateway(), []
     run_brief(conn, notion, BRIEF, SATURDAY + timedelta(weeks=1), gateway=next_week, llm=None,
@@ -385,7 +384,7 @@ def test_a_clash_concern_is_a_leave_finding_that_ages_through_the_api_and_stays_
 def test_a_standby_project_is_still_checked_for_its_dates():
     conn, notion = build([team_project(status=STANDBY)])
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert "Nia Varnel is on leave" in dm(gw)
+    assert "Nia Varnel is on leave" in digest(gw)
 
 
 def test_show_llm_input_prints_the_leave_payload_and_makes_no_call():
@@ -402,7 +401,7 @@ def test_a_failed_leave_parse_sends_the_leave_source_as_unavailable_and_the_open
     brief(conn, notion, LeaveLlm(STANDARD))
     gw, _ = brief(conn, notion, LeaveLlm(fail=True))
     assert ("p1", "leave") in {(u.project, u.source) for u in notion.api.concerns.observed[-1].unavailable}
-    text = dm(gw)
+    text = digest(gw)
     assert "Nia Varnel is on leave Nov 20–22" in text and "Resolved last week" not in text
     assert "Leaves unavailable" in digest(gw)
 

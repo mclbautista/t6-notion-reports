@@ -3,7 +3,7 @@ id, and a step that never changes what the brief does."""
 import pytest
 
 from fake_api import FakeConcerns, down, refused
-from fake_notion import FakeNotion, date
+from fake_notion import FakeNotion, date, relation
 from t6_notion_reports.brief_job import RECORD_CAP, RECORD_TRIES, RECORD_WAIT, run_brief
 from t6_notion_reports.config import load_config
 from t6_notion_reports.gateway import GatewayClient, GatewayError
@@ -46,8 +46,9 @@ SLIP = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01"
 
 
 def unstaffed(*codes):
-    """Projects with a Concern each (a submission before the playdate). Two coordinators, so a DM each."""
-    pages = [proj(f"p{n}", code, IN_PROGRESS, coordinator="c-oto" if n == 1 else "c-ida", **staffed(**SLIP))
+    """Projects with a Concern each (a submission before the playdate) and a missing Colorist, so each is listed. Two
+    coordinators, so a DM each; the Concern is shown once, in Raise at PSR, in the digest and in its owner's DM (#142)."""
+    pages = [proj(f"p{n}", code, IN_PROGRESS, coordinator="c-oto" if n == 1 else "c-ida", **staffed(Colorist=relation(), **SLIP))
              for n, code in enumerate(codes, 1)]
     return world(*pages)
 
@@ -104,7 +105,7 @@ def test_each_concern_is_recorded_once_with_the_chat_the_telegram_id_the_date_an
 
 
 def test_a_message_with_concerns_of_two_projects_records_each_concern_once():
-    conn, notion = world(proj("p1", "ONE", IN_PROGRESS, **staffed(**SLIP)), proj("p2", "TWO", IN_PROGRESS, **staffed(**SLIP)))  # one coordinator, two projects
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS, **staffed(Colorist=relation(), **SLIP)), proj("p2", "TWO", IN_PROGRESS, **staffed(Colorist=relation(), **SLIP)))  # one coordinator, two projects
     gw = IdGateway()
     go(conn, notion, gw)
     owned = [r for r in recorded(notion) if r[4].startswith("psr-brief-2026-11-14-notion-reports-2026-11-14-c-oto")]

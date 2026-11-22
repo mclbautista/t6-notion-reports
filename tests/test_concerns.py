@@ -44,7 +44,14 @@ def friday(conn, concern):
 
 
 def concern_lines(text):
-    return [ln for ln in lines_of(text) if "before" in ln and not ln.startswith("Resolved")]
+    """The lines of a project that carry a date-sanity Concern. An open Concern is not one of them when the API answers:
+    it is in "Raise at PSR" (#142), which is where ``raised`` looks."""
+    return [ln for ln in lines_of(text) if "before" in ln and not ln.startswith(("Resolved", "• ONE:"))]
+
+
+def raised(text):
+    from test_scan_and_raise import raise_lines
+    return raise_lines(text)
 
 
 def resolved_lines(text):
@@ -53,38 +60,28 @@ def resolved_lines(text):
 
 # ---- the lines come from the reply ----
 
-def test_a_concern_shows_its_first_listed_date_and_age_over_three_weekly_runs():
+def test_an_open_concern_is_in_raise_at_psr_once_with_its_last_evidence_and_in_no_project_line():
     conn, store = setup()
-    ages = []
+    seen = []
     for week in range(3):
-        (line,) = concern_lines(dm(run(conn, store, week)))
-        ages.append(re.search(r"since (\w+ \d+) \((\d+) wks?\)", line).groups())
-    assert ages == [("Nov 14", "0"), ("Nov 14", "1"), ("Nov 14", "2")]
-    assert "(1 wk)" in concern_lines(dm(run(conn, store, 1)))[0]
+        gw = run(conn, store, week)
+        for text in (dm(gw), digest(gw)):
+            assert not concern_lines(text)  # not a line of its project, so no age and no chronic mark either
+        (line,) = raised(digest(gw))
+        seen.append(re.search(r"last evidence (\w+ \d+)", line).group(1))
+        assert "since" not in line and "chronic" not in line
+    assert seen == ["Nov 14", "Nov 21", "Nov 28"]  # found again each week, so the evidence moves
 
 
-def test_a_concern_open_more_than_28_days_gets_the_marker_the_api_decides_and_not_before():
-    conn, store = setup()
-    run(conn, store, 0)
-    assert "chronic" not in dm(run(conn, store, 4))
-    assert "chronic" in dm(run(conn, store, 5))
-
-
-def test_a_line_the_run_no_longer_finds_stays_as_not_seen_this_week_until_a_person_closes_it():
+def test_a_line_the_run_no_longer_finds_stays_in_raise_at_psr_until_a_person_closes_it():
     conn, store = setup()
     run(conn, store, 0)
     friday(conn, concern=False)
     for week in (1, 2):
-        text = dm(run(conn, store, week))
-        (line,) = concern_lines(text)
-        assert line.endswith(f"since Nov 14 ({week} wk{'s' if week > 1 else ''}) · not seen this week")
+        text = digest(run(conn, store, week))
+        (line,) = raised(text)
+        assert line.endswith("last evidence Nov 14") and "not seen" not in text
         assert not resolved_lines(text)
-
-
-def test_a_line_found_in_this_run_does_not_say_not_seen():
-    conn, store = setup()
-    assert "not seen" not in dm(run(conn, store, 0))
-    assert "not seen" not in dm(run(conn, store, 1))
 
 
 def test_resolved_last_week_lists_what_any_path_closed_since_the_previous_brief_once():
@@ -93,7 +90,7 @@ def test_resolved_last_week_lists_what_any_path_closed_since_the_previous_brief_
     store.close("is before", "2026-11-18")  # a person, a settling event or expiry: the API closed it
     friday(conn, concern=False)
     second = dm(run(conn, store, 1))
-    assert not concern_lines(second)
+    assert not concern_lines(second) and not raised(second)
     (resolved,) = resolved_lines(second)
     assert "is before" in resolved and "Submission Deadline" in resolved
     assert not resolved_lines(dm(run(conn, store, 2)))
@@ -116,14 +113,13 @@ def test_rerunning_the_same_brief_on_the_same_day_shows_the_same_lines():
     assert len(store.open()) == 1
 
 
-def test_the_lines_include_every_open_concern_of_the_project_also_those_others_raised():
+def test_raise_at_psr_lists_every_open_concern_of_the_project_also_those_others_raised():
     conn, store = setup()
     run(conn, store, 0)
     store.items.append({"id": "t6c_person", "project": "p1", "key": "k", "text": "Vendor quote still missing", "source": "person",
-                        "opened_on": "2026-11-01", "state": "open", "closed_on": None, "owner": None})
-    text = dm(run(conn, store, 1))
-    assert "Vendor quote still missing · since Nov 1 (2 wks) · not seen this week" in text
-    assert text.index("Vendor quote") < text.index("is before")  # the API's order: oldest first
+                        "opened_on": "2026-11-01", "state": "open", "closed_on": None, "owner": None, "evidence_at": 0.0})
+    text = digest(run(conn, store, 1))
+    assert [ln.split(" · ")[0] for ln in raised(text)] == ["• ONE: Vendor quote still missing", "• ONE: " + SANITY]  # oldest evidence first
 
 
 # ---- what is handed over ----
@@ -161,9 +157,9 @@ def test_a_project_with_a_t6_id_is_sent_by_it_and_its_lines_come_back_to_it():
     conn, store = setup()
     notion = FakeNotion.live(conn, contacts(), concerns=store)
     notion.t6_ids = {"p1": "t6_project_one"}
-    text = dm(run(conn, store, notion=notion))
+    text = digest(run(conn, store, notion=notion))
     assert observed(store).findings[0].project == "t6_project_one"
-    assert concern_lines(text)
+    assert raised(text)
 
 
 class FailingLlm:
@@ -180,13 +176,13 @@ def test_a_source_that_could_not_be_read_is_sent_as_unavailable_so_the_api_keeps
     assert {(u.project, u.source) for u in observed(store).unavailable} == {("p1", "pm_notes_read"), ("p1", "leave")}
 
 
-def test_a_dry_run_sends_dry_run_shows_the_ages_and_stores_nothing():
+def test_a_dry_run_sends_dry_run_shows_the_section_and_stores_nothing():
     conn, store = setup()
     run(conn, store, 0)
     out = []
     run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, SATURDAY + timedelta(weeks=1), dry_print=True, out=out.append)
     assert observed(store).dry_run is True
-    assert "since Nov 14 (1 wk)" in "\n".join(out)
+    assert "last evidence Nov 14" in "\n".join(out)
     assert len(store.runs) == 1  # the dry run left no run behind
 
 
@@ -213,14 +209,14 @@ def test_with_a_working_api_the_digest_has_no_history_warning():
     assert "Concern history" not in digest(run(conn, store, 0))
 
 
-def test_a_project_with_only_a_concern_counts_as_activity_for_the_quiet_coordinator_rule():
+def test_a_project_with_only_an_open_concern_is_no_activity_its_concern_is_in_raise_at_psr():
     quiet = proj("p0", "QUIET", IN_PROGRESS, **staffed(**LATER))
     noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ida", **staffed(**SLIP))
     conn = make_db([quiet, noisy], [quiet, noisy])
     gw = run(conn, FakeConcerns())
-    assert dm(gw, 111) == ""  # Oto has nothing to show
-    assert "since Nov 14" in dm(gw, 222)
-    assert "No changes: Oto" in digest(gw)
+    assert dm(gw, 111) == "" and dm(gw, 222) == ""  # nothing changed, and the Concern is shown once, in Raise at PSR
+    assert raised(digest(gw)) and "last evidence Nov 14" in digest(gw)
+    assert "No changes on any project this week" in digest(gw)
 
 
 def test_a_closed_concern_lists_its_project_once_even_with_nothing_else_to_show():
@@ -253,18 +249,18 @@ def note_date_llm():
     return Llm(reply_with(dates_from_notes=dates))
 
 
-def test_a_notes_dependent_ordering_concern_is_pm_notes_read_and_keeps_its_age_when_extraction_fails():
+def test_a_notes_dependent_ordering_concern_is_pm_notes_read_and_stays_listed_when_extraction_fails():
     conn, store = note_date_setup()
-    first = dm(run(conn, store, 0, llm=note_date_llm()))
-    assert len(concern_lines(first)) == 1
+    first = digest(run(conn, store, 0, llm=note_date_llm()))
+    assert len(raised(first)) == 1
     assert [(f.source) for f in observed(store).findings] == ["pm_notes_read"]
     for week in (1, 2):
-        text = dm(run(conn, store, week, llm=FailingLlm()))
-        (line,) = concern_lines(text)
-        assert f"since Nov 14 ({week} wk" in line and "Resolved" not in text
+        text = digest(run(conn, store, week, llm=FailingLlm()))
+        (line,) = raised(text)
+        assert "last evidence Nov 14" in line and "Resolved" not in text  # not found this week, so the evidence stays
         assert ("p1", "pm_notes_read") in {(u.project, u.source) for u in observed(store).unavailable}
-    recovered = dm(run(conn, store, 3, llm=note_date_llm()))
-    assert "since Nov 14 (3 wks)" in concern_lines(recovered)[0] and "not seen" not in recovered
+    recovered = digest(run(conn, store, 3, llm=note_date_llm()))
+    assert "last evidence Dec 5" in raised(recovered)[0] and "not seen" not in recovered
 
 
 def test_a_stored_date_problem_is_a_flag_rule_finding_with_or_without_an_llm():
@@ -281,5 +277,5 @@ def test_a_rerun_the_same_day_with_other_findings_is_a_new_request_not_a_refused
     logs = []
     again = dm(run(conn, store, 0, logs=logs))
     assert "unavailable" not in "".join(logs)
-    assert concern_lines(again)  # still open: the API closes nothing
+    assert raised(digest(run(conn, store, 0))) and not concern_lines(again)  # still open: the API closes nothing
     assert len(store.requests) == 2 and first

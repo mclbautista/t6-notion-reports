@@ -257,8 +257,9 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   reads `concern list --raise-at-psr` (with `concern list --open` for the text) and shows every open, unsnoozed
   Concern in a "Raise at PSR" section, oldest evidence first, however old it is: in the digest all of them, in a
   coordinator's DM the ones that coordinator owns, each with the date of its last evidence, its owner and the party
-  it waits on. A Concern a human operator snoozed (`concern snooze`) is in no line of the brief. Other open Concerns
-  stay in their project's lines too. If the list cannot be read the section is left out
+  it waits on. A Concern a human operator snoozed (`concern snooze`) is in no line of the brief. An open Concern is
+  shown only there, never also on its project's lines (those keep "Resolved last week"). A coordinator with no
+  listed project gets no DM, so their Concerns appear only in the digest. If the list cannot be read the section is left out
   and the digest says "Raise at PSR unavailable".
 - Recording the message that carried each Concern: after the last message is queued (never on `--dry-print`, never
   before) the app asks the gateway (`GET /notify/{ref}`) for the Telegram id of each message that showed Concerns (6
