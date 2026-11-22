@@ -324,6 +324,7 @@ def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[Raise
         return raise_concerns(
             raised, texts, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
             {page: c.name for page, c in contacts.items()},
+            {p: tuple(r["id"] for r in state[p].get("T6 Post Coordinator") or [] if isinstance(r, dict)) for p in state},
         ), True
     except Exception as exc:  # any failure, a malformed reply too: the section is left out and the brief goes on
         log(f"brief raise at psr unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")

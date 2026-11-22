@@ -232,8 +232,8 @@ def test_a_hallucinated_name_in_a_concern_drops_only_that_concern():
          "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
     ]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
-    text = dm(gw)
-    assert "QC on Nov 20 still waits for client notes · since Nov 14 (0 wks)" in text
+    text = digest(gw)  # an open Concern is shown once, in Raise at PSR (#142)
+    assert "QC on Nov 20 still waits for client notes · last evidence Nov 14" in text
     assert "Dario" not in text and "is odd" not in text
 
 
@@ -242,8 +242,8 @@ def test_health_vs_evidence_is_dropped_when_project_health_is_blank():
                            "source": "pm_notes", "line_id": line_id(p, "waiting for client"),
                            "quote": "• QC on Nov 20, waiting for client notes"}]
     one = lambda health: make_db(*[[page(health=health)]] * 3)
-    assert "Waiting on client notes" not in dm(run(one(None), Llm(reply_with(concerns=concerns)))[0])
-    assert "Waiting on client notes" in dm(run(one("AT RISK"), Llm(reply_with(concerns=concerns)))[0])
+    assert "Waiting on client notes" not in digest(run(one(None), Llm(reply_with(concerns=concerns)))[0])
+    assert "Waiting on client notes" in digest(run(one("AT RISK"), Llm(reply_with(concerns=concerns)))[0])
 
 
 def test_llm_concerns_age_through_the_api_and_stay_until_a_person_closes_them():
@@ -261,9 +261,9 @@ def test_llm_concerns_age_through_the_api_and_stay_until_a_person_closes_them():
     brief_on(SATURDAY, Llm(reply_with(concerns=concerns)))
     assert "pm_notes_read" == store.observed[-1].findings[0].source
     later = brief_on(datetime(2026, 11, 28, 4, tzinfo=timezone.utc), Llm(reply_with(concerns=concerns)))
-    assert "Client notes are still pending · since Nov 14 (2 wks)" in dm(later)
-    gone = dm(brief_on(datetime(2026, 12, 5, 4, tzinfo=timezone.utc), Llm()))  # the run no longer finds it
-    assert "Client notes are still pending · since Nov 14 (3 wks) · not seen this week" in gone
+    assert "Client notes are still pending · last evidence Nov 28" in digest(later)
+    gone = digest(brief_on(datetime(2026, 12, 5, 4, tzinfo=timezone.utc), Llm()))  # the run no longer finds it
+    assert "Client notes are still pending · last evidence Nov 28" in gone
     store.close("Client notes", "2026-12-08")
     assert "Resolved last week: Client notes are still pending" in dm(brief_on(datetime(2026, 12, 12, 4, tzinfo=timezone.utc), Llm()))
 
@@ -384,8 +384,8 @@ def test_a_failed_call_sends_the_notes_source_as_unavailable_and_the_open_concer
     run_brief(conn, FakeNotion.live(conn, contacts(), concerns=store), BRIEF, datetime(2026, 11, 21, 4, tzinfo=timezone.utc),
               gateway=gw, llm=Llm(fail_for={"Show ONE"}), log=lambda _: None)
     assert ("p1", "pm_notes_read") in {(u.project, u.source) for u in store.observed[-1].unavailable}
-    text = dm(gw)
-    assert "Client notes are still pending · since Nov 14 (1 wk)" in text and "Resolved last week" not in text
+    text = digest(gw)
+    assert "Client notes are still pending · last evidence Nov 14" in text and "Resolved last week" not in text
 
 
 def test_the_owed_items_section_is_gone():
@@ -446,7 +446,7 @@ def test_a_malformed_item_is_dropped_without_losing_its_valid_siblings():
         last_update={"line_id": "not a number"},
     )
     gw, _ = run(conn_one(), Llm(reply))
-    text = dm(gw)
+    text = digest(gw)
     assert "• QC on Nov 20" in text and "QC still waits for client notes" in text
     assert "LLM unavailable" not in text and "LLM unavailable" not in digest(gw)
 
@@ -482,7 +482,7 @@ def test_an_accepted_item_shows_the_real_names_and_an_invented_name_is_dropped()
         return {"concerns": [{"kind": "open_item", "text": "Oto still has to send the files to ida", **cite}],
                 "changes": [{"text": "files sent by zyxmarco", **cite}, {"text": "files to send", **cite}]}
     gw, _ = run(leaky_db(), Llm(reply))
-    text = dm(gw)
+    text = digest(gw)
     assert "Oto still has to send the files to ida" in text
     assert "• files to send" in text
     assert "zyxmarco" not in text
@@ -505,7 +505,7 @@ def test_an_invented_lowercase_name_drops_only_that_item():
     concerns = lambda p: [_concern("QC on Nov 20 waiting for client notes", p),
                           _concern("QC waiting for zyxmarco", p)]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
-    text = dm(gw)
+    text = digest(gw)
     assert "QC on Nov 20 waiting for client notes" in text and "zyxmarco" not in text
 
 
@@ -596,7 +596,7 @@ def test_facts_from_another_line_cannot_support_a_citation(field, borrowed):
                         {**cite, **extra, "text": "QC waiting for client notes"}]}
 
     gw, _ = run(conn_one(notes), Llm(reply))
-    text = dm(gw)
+    text = digest(gw)
     assert "QC waiting for client notes" in text
     assert borrowed not in text
 

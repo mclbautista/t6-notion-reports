@@ -157,12 +157,12 @@ def test_the_dm_of_another_coordinator_does_not_list_it_but_the_digest_does():
     assert raise_lines(dm(gw, 222)) == [] and len(raise_lines(dm(gw, 111))) == 1 and len(raise_lines(digest(gw))) == 1
 
 
-def test_an_old_concern_with_recent_evidence_is_listed_and_still_one_of_its_projects_lines():
+def test_an_old_concern_with_recent_evidence_is_listed_once_and_not_a_line_of_its_project():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     stale(notion.api.concerns, opened="2026-10-03", evidence="2026-11-12")
     gw, _ = go(conn, notion)
     assert len(raise_lines(digest(gw))) == 1  # age never hides it, however recent the evidence
-    assert "Vendor quote still missing · since Oct 3 (6 wks)" in dm(gw)
+    assert digest(gw).count("Vendor quote still missing") == 1 and "since Oct 3" not in digest(gw)
 
 
 def test_the_section_lists_the_oldest_evidence_first_as_the_api_orders_it():
