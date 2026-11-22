@@ -235,8 +235,8 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   lines (it gets those lines and today's date, nothing about projects) into entries with exact quotes; an entry
   with a quote that is not a line, or invalid dates, is dropped. Each leave's name is matched to Contacts
   by the t6 API (`person find`, one call for all the names; a match that needs review counts as unmatched). A leave by someone in the project's team relations (including Prod Coor/Supe)
-  within `leave_clash_days` (default 14) of its Playdate, Submission Deadline or Archival Deadline becomes one
-  Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
+  that starts on or before its Playdate, Submission Deadline or Archival Deadline and ends no more than
+  `leave_clash_days` (default 14) days before that date becomes one Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
   listed in the owner's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
   leaves were unavailable.
 - Concerns: reports keeps no Concern store. The brief hands the run's findings (the date flags and sanity problems,
