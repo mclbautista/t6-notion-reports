@@ -1,4 +1,4 @@
-"""The Concern verbs, through the t6 API (``concern observe``, ``scan``, ``list``, ``record-message``).
+"""The Concern verbs, through the t6 API (``concern observe``, ``list``, ``record-message``).
 
 Concerns are shared information: the API keeps them, reports keeps none. A call that is not answered, or is
 refused, raises ``ConcernApiError``, an ``OSError``; its message names the verb and the rule, never a Concern
@@ -12,12 +12,11 @@ from typing import Any
 
 from t6.client import APIError, Unavailable
 from t6.verbs import (
-    ConcernFinding, ConcernListInput, ConcernObserveInput, ConcernRecordMessageInput, ConcernScanInput, ConcernUnavailable,
+    ConcernFinding, ConcernListInput, ConcernObserveInput, ConcernRecordMessageInput, ConcernUnavailable,
     Done, Preview, Refused,
 )
 
 OBSERVE_TIMEOUT = 30
-SCAN_TIMEOUT = 60  # the API calls a model for each scan
 LIST_TIMEOUT = 30
 RECORD_TIMEOUT = 20
 
@@ -65,22 +64,18 @@ def observe(
     return call("concern observe", limited(client, OBSERVE_TIMEOUT).concern_observe, inputs)
 
 
-def scan(client, project: str, owner: str) -> None:
-    """``concern scan`` for one project: the API reads its dated PM Notes lines and opens, continues or announces
-    Concerns. ``project`` is a T6 ID or a page id, ``owner`` the T6 ID of the project's coordinator."""
-    call("concern scan", limited(client, SCAN_TIMEOUT).concern_scan, ConcernScanInput(project=project, owner=owner))
-
-
 def open_concerns(client) -> list[dict[str, Any]]:
     """Every Concern that is not closed (``concern list`` with ``open``), oldest first: id, project_id, owner_id,
     waiting_on, text, state ("open" or "snoozed") and more."""
     return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(open=True))["concerns"]
 
 
-def raise_at_psr_concerns(client) -> list[dict[str, Any]]:
-    """The Concerns to raise at PSR (``concern list`` with ``raise_at_psr``): every open, unsnoozed Concern, oldest evidence
-    first: id, project_id, owner_id, waiting_on, age_seconds and evidence_at. The reply has no text."""
-    return call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(raise_at_psr=True))["concerns"]
+def raise_at_psr_concerns(client) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The Concerns for the brief (``concern list`` with ``raise_at_psr``): the open Concerns, and the pending closes
+    ("Closing after PSR"). Each has id, project_id, owner_id, waiting_on, age_seconds and evidence_at; the reply has no text.
+    The pending closes are the reply's second list, ``pending``; an API without it has none."""
+    reply = call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(raise_at_psr=True))
+    return reply["concerns"], reply.get("pending") or []
 
 
 def record_message(client, concern: str, chat: int, message_id: int, brief_date: str, key: str) -> None:

@@ -29,12 +29,13 @@ def run_weeks(step=None):
     return fired
 
 
-def test_fires_monday_11_and_friday_2330_manila_and_nowhere_else():
+def test_fires_monday_11_and_tuesday_2330_manila_and_nowhere_else():
+    # The Tuesday 23:30 snapshot keeps its stored kind "friday": it is the snapshot the brief compares.
     assert run_weeks() == [
         (manila(2026, 11, 9, 11), "monday"),
-        (manila(2026, 11, 13, 23, 30), "friday"),
+        (manila(2026, 11, 10, 23, 30), "friday"),
         (manila(2026, 11, 16, 11), "monday"),
-        (manila(2026, 11, 20, 23, 30), "friday"),
+        (manila(2026, 11, 17, 23, 30), "friday"),
     ]
 
 
@@ -44,7 +45,7 @@ def test_early_wakeups_do_not_fire_early_or_twice():
 
 def test_next_run_is_strictly_after_and_works_from_utc():
     mon = manila(2026, 11, 9, 11)
-    assert next_run(mon) == (manila(2026, 11, 13, 23, 30), "friday")
+    assert next_run(mon) == (manila(2026, 11, 10, 23, 30), "friday")
     assert next_run(mon - timedelta(seconds=1)) == (mon, "monday")
     # Sunday 20:00 UTC is Monday 04:00 in Manila
     assert next_run(datetime(2026, 11, 8, 20, tzinfo=timezone.utc))[1] == "monday"
@@ -63,7 +64,7 @@ def test_failed_job_is_logged_without_message_and_loop_continues():
     assert not any("secret" in line for line in logs)
 
 
-def test_briefing_fires_saturday_12_manila_when_enabled():
+def test_the_wednesday_brief_fires_wednesday_10_manila_after_the_tuesday_snapshot_and_never_on_saturday():
     from t6_notion_reports.schedule import BRIEF_SLOT, SLOTS
     fake = FakeClock(manila(2026, 11, 8, 0, 0))
     fired = []
@@ -72,10 +73,23 @@ def test_briefing_fires_saturday_12_manila_when_enabled():
               slots=SLOTS + [BRIEF_SLOT]).run(stop=lambda: fake.now >= end)
     assert fired == [
         (manila(2026, 11, 9, 11), "monday"),
-        (manila(2026, 11, 13, 23, 30), "friday"),
-        (manila(2026, 11, 14, 12), "brief"),
+        (manila(2026, 11, 10, 23, 30), "friday"),
+        (manila(2026, 11, 11, 10), "brief"),
         (manila(2026, 11, 16, 11), "monday"),
     ]
+    assert all(when.weekday() != 5 for when, _ in fired)
+
+
+def test_serve_schedules_the_brief_but_no_mom_job_while_the_mom_is_paused(tmp_path):
+    import yaml
+    from t6_notion_reports.cli import _slots
+    from t6_notion_reports.config import load_config
+    from t6_notion_reports.schedule import BRIEF_SLOT, SEND_MOM_SLOT
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({"gateway_url": "http://gw:8780", "psr_group_chat_id": -1000000000001,
+                                    "meeting_notes_data_source": "44444444-4444-4444-4444-444444444444"}))
+    slots = _slots(load_config(str(path), {}))
+    assert BRIEF_SLOT in slots and SEND_MOM_SLOT not in slots
 
 
 def test_briefing_is_off_by_default():
@@ -125,10 +139,10 @@ def test_two_slots_on_same_minute_both_run_in_declared_order_once():
     assert fired == [(manila(2026, 11, 13, 18), "friday"), (manila(2026, 11, 13, 18), "shift18")]
 
 
-def test_friday_19_jo_shift_slot_fires_on_its_own_before_the_projects_snapshot():
+def test_tuesday_19_jo_shift_slot_fires_on_its_own_before_the_projects_snapshot():
     from t6_notion_reports.schedule import SHIFT_SLOTS, SLOTS
-    fired = run_slots(SLOTS + SHIFT_SLOTS, manila(2026, 11, 13, 17), manila(2026, 11, 14, 0, 1))
-    assert fired == [(manila(2026, 11, 13, 19), "shift1900"), (manila(2026, 11, 13, 23, 30), "friday")]
+    fired = run_slots(SLOTS + SHIFT_SLOTS, manila(2026, 11, 10, 17), manila(2026, 11, 11, 0, 1))
+    assert fired == [(manila(2026, 11, 10, 19), "shift1900"), (manila(2026, 11, 10, 23, 30), "friday")]
 
 
 def test_declared_order_wins_over_other_order():

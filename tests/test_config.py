@@ -78,7 +78,6 @@ def test_coordinator_recipients_config(tmp_path, suffix, expected):
     assert brief.coordinator_recipients == expected
     # This setting must not change identity conventions for existing config fields.
     assert brief.cyril_contact_id == "11111111-1111-1111-1111-111111111111"
-    assert brief.digest_recipients == (brief.cyril_contact_id,)
 
 
 @pytest.mark.parametrize("bad", [
@@ -110,7 +109,6 @@ def test_loads_briefing_settings_and_secret(tmp_path):
 @pytest.mark.parametrize("line,key", [
     ('gateway_url: "http://192.0.2.10:8780"', "gateway_url"),
     ("psr_group_chat_id: -1000000000001", "psr_group_chat_id"),
-    ('cyril_contact_id: "11111111-1111-1111-1111-111111111111"', "cyril_contact_id"),
 ])
 def test_partial_briefing_config_names_the_missing_key(tmp_path, line, key):
     with pytest.raises(ConfigError, match=key):
@@ -190,3 +188,36 @@ def test_shift_llm_is_off_when_llm_calls_are_off_or_the_api_is_not_set(tmp_path,
         cfg = load_config(write(tmp_path, shift % flag), ENV)
         cfg = type(cfg)(**{**cfg.__dict__, "shift": SimpleNamespace(llm_model="m")})
         assert (cli._shift_llm(cfg) is not None) is expected
+
+
+# ---- Wednesday brief delivery and the MOM pause (#147) ----
+
+def test_coordinator_briefs_go_by_dm_concerns_to_the_master_brief_and_the_mom_is_paused_by_default(tmp_path):
+    cfg = load_config(write(tmp_path, BRIEF_YAML), ENV)
+    assert (cfg.brief.coordinator_destination, cfg.brief.coordinator_chat_id, cfg.brief.concern_dm) == ("dm", None, "master")
+    assert cfg.mom_enabled is False
+
+
+def test_the_channel_destination_reads_its_chat_and_topic(tmp_path):
+    text = BRIEF_YAML + "coordinator_brief_destination: channel\ncoordinator_brief_chat_id: -1000000000002\ncoordinator_brief_topic_id: 3\nconcern_dm: coordinators\nmom_enabled: true\n"
+    cfg = load_config(write(tmp_path, text), ENV)
+    assert (cfg.brief.coordinator_destination, cfg.brief.coordinator_chat_id, cfg.brief.coordinator_topic_id) == ("channel", -1000000000002, 3)
+    assert cfg.brief.concern_dm == "coordinators" and cfg.mom_enabled is True
+
+
+@pytest.mark.parametrize("line, key", [
+    ("coordinator_brief_destination: channel\n", "coordinator_brief_chat_id"),
+    ("coordinator_brief_destination: hunter2\n", "coordinator_brief_destination"),
+    ("concern_dm: hunter2\n", "concern_dm"),
+    ("mom_enabled: hunter2\n", "mom_enabled"),
+])
+def test_bad_delivery_settings_name_the_key_never_the_value(tmp_path, line, key):
+    with pytest.raises(ConfigError) as err:
+        load_config(write(tmp_path, BRIEF_YAML + line), ENV)
+    assert key in str(err.value) and "hunter2" not in str(err.value)
+
+
+def test_digest_recipients_and_concern_scan_are_ignored_now(tmp_path):
+    text = BRIEF_YAML + f'digest_recipients: ["{ID_A}"]\nconcern_scan: false\n'
+    cfg = load_config(write(tmp_path, text), ENV)
+    assert {"digest_recipients", "concern_scan"} <= set(cfg.ignored_keys) and not hasattr(cfg.brief, "concern_scan")

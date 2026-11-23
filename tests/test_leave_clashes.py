@@ -28,6 +28,7 @@ def contacts():
     for page, (h, i) in zip(people[:4], (("oto_h", 111), ("owner_h", 999), ("nia_h", 333), ("cal_h", 444))):
         page["properties"].update(tg(h, i))
     people[2]["properties"]["Aliases"] = rich("Nio")
+    people[1]["master_brief"] = True  # the owner reads the Master brief
     return people  # Uma has no TelegramUserID
 
 
@@ -95,8 +96,8 @@ def brief(conn, notion, llm, brief_settings=BRIEF, **kw):
 
 def test_a_team_members_leave_near_a_project_date_is_one_clash_concern_in_the_dm_and_the_digest():
     conn, notion = build([team_project()])
-    gw, _ = brief(conn, notion, LeaveLlm(STANDARD))
-    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Raise at PSR (#142)
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD), replace(BRIEF, concern_dm="coordinators"))
+    assert digest(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # shown once, in Open Concerns (#142)
     assert dm(gw).count("Nia Varnel is on leave Nov 20–22") == 1  # no owner: it goes to its project's coordinator, once
     assert "Playdate (Nov 28, 2026)" in digest(gw) and "last evidence Nov 14" in digest(gw)  # the nearest of the dates
 
@@ -407,14 +408,20 @@ def test_a_failed_leave_parse_sends_the_leave_source_as_unavailable_and_the_open
     assert "Leaves unavailable" in digest(gw)
 
 
+def masters(people, recipients):
+    """The Master brief readers: ``master_brief`` on for the Contacts in ``recipients`` only."""
+    for page in people:
+        page["master_brief"] = page["id"] in recipients
+    return people
+
+
 def test_unmatched_names_go_to_cyril_alone_when_the_digest_has_several_recipients():
     from fake_notion import contact as page_of
     people = contacts() + [page_of("c-kit", "Kit")]
     people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
-    notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
-    settings = replace(BRIEF, digest_recipients=("c-owner", "c-kit"))
-    gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
+    notion = FakeNotion.live(conn, masters(people, ("c-owner", "c-kit")), description="\n".join([HEADING, *LEAVES]))
+    gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]))
     by = lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
     assert "Unmatched leave names (add an alias in Contacts): Zed" in by(999)
     assert by(777) and "Zed" not in by(777)
@@ -476,8 +483,8 @@ def _unmatched_run(recipients, cyril_id):
     people = contacts() + [page_of("c-kit", "Kit")]
     people[-1]["properties"].update(tg("kit_h", 777))
     conn, _ = build([team_project()])
-    notion = FakeNotion.live(conn, people, description="\n".join([HEADING, *LEAVES]))
-    settings = replace(BRIEF, cyril_contact_id=cyril_id, digest_recipients=recipients)
+    notion = FakeNotion.live(conn, masters(people, recipients), description="\n".join([HEADING, *LEAVES]))
+    settings = replace(BRIEF, cyril_contact_id=cyril_id)
     gw, _ = brief(conn, notion, LeaveLlm(STANDARD + [entry("Zed", "2026-11-25", "2026-11-25", "Zed - leave Nov 25")]), settings)
     return lambda who: "\n".join(t for to, _, _, t in gw.sent if to == who)
 

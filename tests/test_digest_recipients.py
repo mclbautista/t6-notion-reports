@@ -5,7 +5,7 @@ from t6_notion_reports.diff import ProjectChange, FieldChange, Person
 
 SUNDAY = date(2026, 11, 15)
 
-def test_multiple_digest_recipients():
+def test_every_master_brief_reader_gets_a_master_brief():
     cyril = Contact("c-owner", "Owner", telegram_id=999)
     kit = Contact("c-kit", "Kit", telegram_id=777)
     quilla = Contact("c-quil", "Quilla", telegram_id=888)
@@ -15,7 +15,7 @@ def test_multiple_digest_recipients():
         cyril=cyril,
         group_chat_id=-1001,
         group_topic_id=None,
-        digest_recipients=(cyril, kit, quilla, oto),
+        master_recipients=(cyril, kit, quilla, oto),
     )
 
     changes = [
@@ -37,11 +37,11 @@ def test_multiple_digest_recipients():
 
     msgs = build_briefing(changes, coordinators, contacts, settings, SUNDAY)
 
-    # 1 coordinator DM (Owner) + 4 digest DMs (Owner, Kit, Quilla, Oto)
+    # 1 Coordinator brief (Owner) + 4 Master briefs (Owner, Kit, Quilla, Oto)
     assert len(msgs) == 5
     recipients = {m.to for m in msgs}
     assert recipients == {999, 777, 888, 666}
 
-    digest_msgs = [m for m in msgs if "psr-digest" in m.key]
+    digest_msgs = [m for m in msgs if "master-brief" in m.key]
     assert len(digest_msgs) == 4
     assert {m.to for m in digest_msgs} == {999, 777, 888, 666}
