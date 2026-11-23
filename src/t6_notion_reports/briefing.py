@@ -191,6 +191,8 @@ def _raise_text(q: RaiseConcern) -> str:
         parts.append(f"waiting on {q.waiting_on}")
     if q.open_days is not None:
         parts.append(f"open {q.open_days} day{'' if q.open_days == 1 else 's'}")
+    if q.closing_on:
+        parts.append(f"closing (by {q.closing_by}, {q.closing_on:%b} {q.closing_on.day})" if q.closing_by else f"closing ({q.closing_on:%b} {q.closing_on.day})")
     return "• " + " · ".join(parts)
 
 

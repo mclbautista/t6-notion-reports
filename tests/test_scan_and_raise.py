@@ -119,18 +119,42 @@ def test_the_section_is_sorted_by_project_then_oldest_first():
     assert [ln.split(" · ")[0] for ln in raise_lines(digest(gw))] == ["• ONE: Older news", "• ONE: Newer news", "• TWO: Two old"]
 
 
-def test_a_pending_close_is_listed_only_under_closing_after_psr():
+def closed_at(day):
+    return datetime.fromisoformat(day).replace(hour=15, tzinfo=ZoneInfo("Asia/Manila")).timestamp()
+
+
+def pending_world(**close):
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     stale(notion.api.concerns, text="Still open")
     stale(notion.api.concerns, text="Vendor quote still missing", waiting_on="the vendor")
-    notion.api.concerns.pending_list = {"t6c_Vendor"}
+    notion.api.concerns.pending_list = {"t6c_Vendor": {"close_at": closed_at("2026-11-26"), **close}}
+    return conn, notion
+
+
+def test_a_pending_close_is_listed_only_under_closing_after_psr_with_who_and_when():
+    conn, notion = pending_world(close_by_name="Ida", close_source="close")
     gw, _ = go(conn, notion)
-    assert raise_lines(digest(gw), "Closing after PSR") == [EXPECTED]
+    closing = EXPECTED + " · closing (by Ida, Nov 26)"
+    assert raise_lines(digest(gw), "Closing after PSR") == [closing]
     assert [ln.split(" · ")[0] for ln in raise_lines(digest(gw))] == ["• ONE: Still open"]
     assert digest(gw).count("Vendor quote still missing") == 1
     assert "Closing after PSR" not in dm(gw)
     gw, _ = go(conn, notion, COORDINATORS)
-    assert raise_lines(dm(gw), "Closing after PSR") == [EXPECTED]
+    assert raise_lines(dm(gw), "Closing after PSR") == [closing]
+
+
+def test_a_pending_close_is_not_in_the_open_list_so_its_text_is_the_pending_items_own():
+    from t6.verbs import ConcernListInput
+    conn, notion = pending_world(close_by_name="Ida")
+    assert "t6c_Vendor" not in [c["id"] for c in notion.api.concern_list(ConcernListInput(open=True)).result["concerns"]]
+    gw, _ = go(conn, notion)
+    assert len(raise_lines(digest(gw), "Closing after PSR")) == 1
+
+
+def test_a_done_line_close_says_done_line_when_it_has_no_name():
+    conn, notion = pending_world(close_by_name=None, close_source="done_line")
+    gw, _ = go(conn, notion)
+    assert raise_lines(digest(gw), "Closing after PSR") == [EXPECTED + " · closing (by Done line, Nov 26)"]
 
 
 def test_without_a_pending_list_from_the_api_there_is_no_closing_section():

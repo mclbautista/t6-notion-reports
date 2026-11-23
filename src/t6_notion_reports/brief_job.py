@@ -279,7 +279,7 @@ def record_concerns(
 
 def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[tuple[list[RaiseConcern], list[RaiseConcern]], bool]:
     """The open Concerns and the pending closes of the gated projects, from ``concern list --raise-at-psr`` (read after the
-    observe, so a Concern this run found again is current), with their text from ``concern list --open``. If the API does
+    observe, so a Concern this run found again is current), with the text of the open ones from ``concern list --open`` (a pending close carries its own). If the API does
     not answer both sections are left out: ``(([], []), False)``."""
     try:
         raised, pending = raise_at_psr_concerns(notion.client)

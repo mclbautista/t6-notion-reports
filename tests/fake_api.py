@@ -104,7 +104,7 @@ class FakeConcerns:
         self.observed: list[object] = []  # the inputs of each call, dry runs included
         self.scans: list[object] = []  # the inputs of each ``concern scan``
         self.recorded: list[tuple[str, str, str, str | None, str]] = []  # (concern, chat, message_id, brief_date, key), once done
-        self.pending_list: set[str] | None = None  # the Concern IDs with a pending close; None: the API has no pending list
+        self.pending_list: dict[str, dict] | None = None  # Concern ID -> its close fields (close_by_name, close_at, close_source); None: the API has no pending list
 
     def close(self, text_part, on):
         """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
@@ -460,12 +460,15 @@ class FakeApi:
             listed = [i for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]
             if self.concerns.pending_list is None:  # an API before the pending closes (core #639): one list
                 return Done(result={"concerns": [row(i) for i in listed]})
-            return Done(result={"concerns": [row(i) for i in listed if i["id"] not in self.concerns.pending_list],
-                                "pending": [row(i) for i in listed if i["id"] in self.concerns.pending_list]})
+            pend = self.concerns.pending_list
+            return Done(result={"concerns": [row(i) for i in listed if i["id"] not in pend],  # a pending Concern is not in the open list
+                                "pending": [{**row(i), "text": i["text"], "close_by": None, "close_by_name": None, "close_at": 0.0,
+                                             "close_source": "close", "close_quote": None, **pend[i["id"]]} for i in listed if i["id"] in pend]})
+        pend = self.concerns.pending_list or {}
         return Done(result={"concerns": [
             {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
              "text": i["text"], "source": i["source"], "state": i["state"], "age_seconds": 0, "chronic": False}
-            for i in sorted(self.concerns.items, key=lambda i: (i["opened_on"], i["id"])) if i["state"] != "closed"]})
+            for i in sorted(self.concerns.items, key=lambda i: (i["opened_on"], i["id"])) if i["state"] != "closed" and i["id"] not in pend]})
 
     def jo_list(self, inputs):
         orders = []

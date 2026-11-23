@@ -72,8 +72,9 @@ def open_concerns(client) -> list[dict[str, Any]]:
 
 def raise_at_psr_concerns(client) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """The Concerns for the brief (``concern list`` with ``raise_at_psr``): the open Concerns, and the pending closes
-    ("Closing after PSR"). Each has id, project_id, owner_id, waiting_on, age_seconds and evidence_at; the reply has no text.
-    The pending closes are the reply's second list, ``pending``; an API without it has none."""
+    ("Closing after PSR"). An open item has id, project_id, owner_id, waiting_on, age_seconds and evidence_at, and no text.
+    The pending closes are the reply's second list, ``pending`` (a pending Concern is not in ``concerns``); each has the
+    open fields plus text, close_by_name, close_at and close_source. An API without it has none."""
     reply = call("concern list", limited(client, LIST_TIMEOUT).concern_list, ConcernListInput(raise_at_psr=True))
     return reply["concerns"], reply.get("pending") or []
 
