@@ -156,6 +156,9 @@ class FakeNotion:
     def t6_person_ids(self):
         return self._reads().t6_person_ids()
 
+    def master_brief_pages(self, log=lambda _: None):
+        return self._reads().master_brief_pages(log)
+
     def contact_names(self):
         return self._reads().contact_names()
 

@@ -221,6 +221,18 @@ def default_diff_pair(conn: sqlite3.Connection) -> tuple[int, int] | None:
     return (monday[0], friday[0]) if monday else None
 
 
+def brief_diff_pair(conn: sqlite3.Connection) -> tuple[int, int] | None:
+    """(old, new) for the Wednesday brief: the previous Tuesday (kind ``friday``) snapshot and the latest one, so the
+    changes run Wednesday to Wednesday. With no earlier Tuesday snapshot yet, the Monday one stands in.
+
+    None when ``default_diff_pair`` has none."""
+    pair = default_diff_pair(conn)
+    if pair is None:
+        return None
+    previous = previous_friday(conn, pair[1])
+    return (previous if previous is not None else pair[0], pair[1])
+
+
 def previous_friday(conn: sqlite3.Connection, friday_id: int) -> int | None:
     """The Friday snapshot before ``friday_id``: the start of the "since the last brief" window."""
     row = conn.execute(

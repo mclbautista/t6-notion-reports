@@ -47,3 +47,16 @@ def test_diff_with_explicit_ids_and_baseline_message(tmp_path, capsys):
     assert main(["diff", "--db", db, "--old", str(a), "--new", str(b)]) == 0
     assert "Stage: Offline → Online" in capsys.readouterr().out
     assert main(["diff", "--db", db, "--old", "1"]) == 2
+
+
+def test_the_brief_pair_is_the_previous_tuesday_snapshot_to_the_latest_and_falls_back_to_monday():
+    from t6_notion_reports.snapshots import brief_diff_pair
+    conn = connect()
+    assert brief_diff_pair(conn) is None
+    m1 = take_snapshot(conn, [rec("Offline")], at(19), "monday").snapshot_id
+    f1 = take_snapshot(conn, [rec("Offline")], at(23), "friday").snapshot_id
+    assert brief_diff_pair(conn) == (m1, f1)  # no earlier Tuesday snapshot yet
+    m2 = take_snapshot(conn, [rec("Online")], at(26), "monday").snapshot_id
+    f2 = take_snapshot(conn, [rec("Online")], at(30), "friday").snapshot_id
+    assert brief_diff_pair(conn) == (f1, f2)
+    assert default_diff_pair(conn) == (m2, f2)

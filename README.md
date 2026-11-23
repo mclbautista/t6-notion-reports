@@ -1,11 +1,11 @@
 # t6-notion-reports
 
-Snapshots the Notion **Projects** and **Job Orders** databases into SQLite, drafts the weekly PSR briefings
-(per-coordinator diffs) and the meeting minutes, and builds the daily JO shift reports. Sends nothing itself:
+Snapshots the Notion **Projects** and **Job Orders** databases into SQLite, builds the Wednesday brief
+(the Master brief and one Coordinator brief per coordinator), drafts the meeting minutes (MOM; paused by default), and builds the daily JO shift reports. Sends nothing itself:
 delivery goes through the Telegram gateway's `POST /notify`.
 
-Status: snapshots run on a schedule (Mon 11:00 and Fri 23:30, Asia/Manila), and the Saturday 12:00
-briefing sends through the gateway. The Monday run also drafts the minutes in Notion: their bullets are LLM-condensed through the t6 API (`llm run`), and stay raw PM Notes when `llm_enabled` is false. The briefing consolidates each project's week the same way. Approved minutes are sent to the PSR group topic set in `config.yaml` when the minutes owner ticks **Ready to send**.
+Status: snapshots run on a schedule (Mon 11:00 and Tue 23:30, Asia/Manila), and the Wednesday 10:00
+brief sends through the gateway. The MOM is paused: only with `mom_enabled: true` does the Monday run draft the minutes in Notion and the scheduler send them. The minutes draft: their bullets are LLM-condensed through the t6 API (`llm run`), and stay raw PM Notes when `llm_enabled` is false. The brief consolidates each project's week the same way. Approved minutes are sent to the PSR group topic set in `config.yaml` when the minutes owner ticks **Ready to send**.
 
     pip install -e '.[dev]' && pytest
 
@@ -38,7 +38,7 @@ Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secret
 - `snapshot --kind monday|friday|manual`: one Projects snapshot.
 - `jo-snapshot --kind 0500|1130|1900|manual`: one Job Orders snapshot.
 - `shift-report --slot 0500|1130|1900 [--dry-print]`: one shift report.
-- `brief [--dry-print] [--show-llm-input]`: the Saturday briefing now.
+- `brief [--dry-print] [--show-llm-input]`: the Wednesday brief now.
 - `draft-mom [--date YYYY-MM-DD] [--dry-print]`: re-draft the minutes in Notion (`--dry-print`: print the bullets, write nothing).
 - `send-ready-mom [--dry-print]`: send the approved minutes once.
 - `switch-concerns`: once, before the first brief that uses the API: back up the database and drop the old Concern table (see Concerns below).
@@ -47,8 +47,8 @@ Run the same check before you push (needs gitleaks 8.21.2, or add `--skip-secret
 ## Run on the Mac mini
 
 notion-reports runs as its own container on the T6 Mac mini (Intel, Colima), next to the gateway, with its
-own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Friday 23:30
-Asia/Manila time. It does not catch up missed slots: if the container is down at 11:00, take one by hand.
+own `compose.yaml`. An in-process scheduler takes a snapshot every Monday 11:00 and Tuesday 23:30
+Asia/Manila time (the Tuesday one keeps its stored kind `friday`: it is the snapshot the brief compares). It does not catch up missed slots: if the container is down at 11:00, take one by hand.
 
 The scheduler fires on its own, so **do not start the container before the owner's go-ahead**: the
 first snapshot taken becomes the baseline. A bad config exits with code 2, and
@@ -175,31 +175,49 @@ access is lost until the overlay is enabled again.
 `--kind` is `monday`, `friday` or `manual`. The first snapshot ever taken is flagged as the
 baseline.
 
-## Saturday briefing
+## Wednesday brief
 
-Every Saturday 12:00 Asia/Manila each T6 Post Coordinator gets a DM built from the latest Friday
-snapshot against the Monday before it, and the owner gets one digest of every project. Everything goes
-through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when the
-briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
+Every Wednesday 10:00 Asia/Manila the Wednesday brief goes out, built from the Tuesday 23:30 snapshot against the
+previous Tuesday one (stored kind `friday`), so the changes run Wednesday to Wednesday; the LLM also gets the
+changes since the Monday snapshot (`since_psr`). With no earlier Tuesday snapshot the Monday one stands in. If the
+newest snapshot is more than 2 days older than the brief, the changes are left out with a short note and the run
+logs `brief snapshot stale`; take `snapshot --kind friday` by hand and rerun. It has two parts:
 
-- `coordinator_recipients` optionally limits Coordinator DM delivery to a list of Contacts page ids. Omit it
-  to allow all coordinators; use `[]` to disable all Coordinator DMs and their group fallbacks. A nonempty
-  list allows only those coordinators. Excluded coordinators get no DM or fallback and are not named in
-  the delivery-specific quiet/fallback notices. Their projects still appear in the full Master PSR Digest
+- **Master brief**: a DM to each Person with `master_brief` on in the t6 API (read from `person list` when it
+  carries the flag, else with `person get` for each Contact that has a `TelegramUserID`; a Person that cannot be
+  read is skipped and logged; it is data, not config). It holds every project grouped by coordinator,
+  then "Open Concerns" and "Closing after PSR". Private notes (unmatched leave names) go only to the owner
+  (`cyril_contact_id`), and only when the owner is a Master brief reader. If no reader with a Telegram id is found,
+  the Coordinator briefs still go and the run exits non-zero. `digest_recipients` in an old `config.yaml` is ignored.
+- **Coordinator brief**: one message per coordinator, headed `Coordinator brief · <name> · <date>`, with their
+  On-Hold and In-Progress projects. `coordinator_brief_destination` decides where it goes: `dm` (the default) to
+  the coordinator, or `channel` to `coordinator_brief_chat_id` and `coordinator_brief_topic_id`. The text is the
+  same either way. Put the real chat and topic ids only in the deployed `config.yaml`.
+  The idempotency key does not carry the destination: after switching it, a rerun the same day is deduped and the new
+  destination gets nothing until the next day.
+- `concern_dm` is `master` (the default) or `coordinators`. With `master` the Concerns are only in the Master brief;
+  with `coordinators` each Coordinator brief also lists the Concerns that coordinator owns.
+
+Everything goes through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when
+the briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.
+
+- `coordinator_recipients` optionally limits Coordinator brief delivery to a list of Contacts page ids. Omit it
+  to allow all coordinators; use `[]` to disable all Coordinator briefs. A nonempty
+  list allows only those coordinators. Excluded coordinators get no Coordinator brief and are not named in
+  the delivery-specific quiet/fallback notices. Their projects still appear in the full Master brief
   and still pass through the normal LLM/status gate. This setting does not change Minutes or JO shift delivery.
-- `digest_recipients` independently selects Master PSR Digest recipients by Contacts page id; it defaults
-  to `cyril_contact_id` when omitted. Keep excluded entries commented out for a temporary rollout.
-- An allowed coordinator with no `TelegramUserID` in Contacts gets their briefing in the PSR group topic,
-  prefixed with their @handle, and the digest says so.
-- Idempotency keys are `notion-reports-<date>-<contact id>` for each coordinator and `psr-digest-<date>` for the digest (`psr-digest-<date>-<contact id>` when there is more than one digest recipient), so a same-day rerun
+- In `dm` mode an allowed coordinator with no `TelegramUserID` in Contacts gets their Coordinator brief in the PSR
+  group topic, prefixed with their @handle, and the Master brief says so.
+- Idempotency keys are `notion-reports-<date>-<contact id>` for each Coordinator brief and
+  `master-brief-<date>-<contact id>` for each Master brief, so a same-day rerun
   queues nothing new. A message that splits into parts adds `-2`, `-3`, ... to the later parts.
 - **PSR message splitting policy (owner approved for #96):** normal messages split only between
-  complete projects. A new part repeats the coordinator (in the digest) and section heading, marking
+  complete projects. A new part repeats the coordinator (in the Master brief) and section heading, marking
   an already-started section `(cont.)`. The approved exception to #40's project-only boundary rule
   is a single project that exceeds the message limit: preserve all content and continue it under its
-  project identity and section, both marked `(cont.)`, plus its coordinator in the digest. Split at
+  project identity and section, both marked `(cont.)`, plus its coordinator in the Master brief. Split at
   lines first; an oversized line splits at words, or characters for an unbroken word, preserving valid
-  HTML and the same context on every fragment. Digest warnings and tails continue under the digest
+  HTML and the same context on every fragment. Master brief warnings and tails continue under its
   title `(cont.)`, never as untitled messages. Every part, including repeated context and any test
   banner, stays within Telegram's 4096-character limit.
 - A gateway error is retried 3 times with backoff; then the run carries on with the other messages
@@ -229,7 +247,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   (`concern observe`, below). A valid `last_update` (a real "As of" header, not in the future) sets the weeks since
   update; otherwise Notion's last-edited time does.
   If a call fails or its JSON is invalid, that project shows its flags and raw changes marked "(LLM unavailable)",
-  the failure is logged (project id only) and the digest names it; its open Concerns stay open in the API. With `llm_enabled: false`
+  the failure is logged (project id only) and the Master brief names it; its open Concerns stay open in the API. With `llm_enabled: false`
   (or no `T6_API_URL`) a real send marks every project "(LLM unavailable)"; `--dry-print` leaves the LLM out.
 - Leave clashes: once per run, one more LLM call parses the Projects database's "Upcoming Holidays and Leaves"
   lines (it gets those lines and today's date, nothing about projects) into entries with exact quotes; an entry
@@ -237,7 +255,7 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   by the t6 API (`person find`, one call for all the names; a match that needs review counts as unmatched). A leave by someone in the project's team relations (not Prod Coor/Supe, the production's post supervisor and a client)
   that starts on or before its Playdate, Submission Deadline or Archival Deadline and ends no more than
   `leave_clash_days` (default 14) days before that date becomes one Concern, handed to the API like the others. Holidays and office closures never clash. Names nobody matched are
-  listed in the owner's digest only. If the call, or the name matching, fails there are no clash Concerns that run, and the digest says
+  listed in the owner's Master brief only. If the call, or the name matching, fails there are no clash Concerns that run, and the Master brief says
   leaves were unavailable.
 - Concerns: reports keeps no Concern store. The brief hands the run's findings (the date flags and sanity problems,
   the Concerns of each project's LLM call, the leave clashes) to the API with `concern observe` and shows what
@@ -245,23 +263,21 @@ briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goe
   mark (the API decides, after 28 days) and "not seen this week" when this run's findings lack it, and "Resolved
   last week" for what was closed since the previous brief. The weekly run closes nothing: a person, a settling
   event or expiry does. A source that could not be read is sent as unavailable, so its open Concerns stay. If
-  the API does not answer, the lines show without age and the digest says "Concern history unavailable".
+  the API does not answer, the lines show without age and the Master brief says "Concern history unavailable".
   `concern_chronic_weeks` in an old `config.yaml` is ignored (logged at boot). Once, before the first brief that
   uses the API, run `python -m t6_notion_reports switch-concerns --config config.yaml`: it copies the database
   file to `<file>.pre-concerns-switch` and drops the old Concern table; the old Concerns are not moved. Rollback:
   put the previous image tag back and copy that file over the database file.
-- Concern scan and "Raise at PSR": before a real brief (not `--dry-print`) the app calls `concern scan` once for each
-  gated project that has exactly one coordinator known to the API, so the API's Concerns are current (60 s for each
-  call, 10 minutes for the step; a refused or failed scan is logged by rule name and the brief goes on; the log line
-  `brief scan ok=<n> skipped=<n> failed=<n>` gives the counts). `concern_scan: false` turns it off. The brief then
-  reads `concern list --raise-at-psr` (with `concern list --open` for the text) and shows every open, unsnoozed
-  Concern in a "Raise at PSR" section, oldest evidence first, however old it is: in the digest all of them, in a
-  coordinator's DM the ones that coordinator owns, each with the date of its last evidence, its owner and the party
-  it waits on. A Concern a human operator snoozed (`concern snooze`) is in no line of the brief. An open Concern is
-  shown only there, never also on its project's lines (those keep "Resolved last week"). A coordinator who has any
-  Raise at PSR Concern gets a DM even when none of their projects is listed: the header and that section. A Concern
-  with no owner goes to the DM of its project's coordinator. If the list cannot be read the section is left out
-  and the digest says "Raise at PSR unavailable".
+- "Open Concerns" and "Closing after PSR": the brief runs no `concern scan` of its own (the API scans at 21:00;
+  `concern_scan` in an old `config.yaml` is ignored). It reads `concern list --raise-at-psr` (with
+  `concern list --open` for the text): the open Concerns go under "Open Concerns", and the API's pending closes
+  (the reply's `pending` list; an API without that list has none) under "Closing after PSR" only. Each line reads
+  `Project: text · last evidence <date> · owner <name> · waiting on <party> · open N days`, sorted by project, then
+  oldest first, however old. In the Master brief all of them; with `concern_dm: coordinators` a Coordinator brief
+  also lists the ones that coordinator owns (a Concern with no owner goes to its project's coordinator), and a
+  coordinator with such a Concern gets a Coordinator brief even when none of their projects is listed. An open
+  Concern is shown only there, never also on its project's lines (those keep "Resolved last week"). If the list
+  cannot be read both sections are left out and the Master brief says "Open Concerns unavailable".
 - Recording the message that carried each Concern: after the last message is queued (never on `--dry-print`, never
   before) the app asks the gateway (`GET /notify/{ref}`) for the Telegram id of each message that showed Concerns (6
   tries, 10 s apart) and calls `concern record-message` for each Concern of that message (preview, then confirm, key
@@ -280,7 +296,11 @@ without `--dry-print` before the owner's go-ahead:** it messages the real coordi
 
 ## Minutes draft
 
-With `meeting_notes_data_source` in `config.yaml`, the Monday 11:00 job takes its snapshot and then
+**The MOM is paused:** with `mom_enabled` false (the default) the scheduler neither drafts the minutes after the
+Monday snapshot nor checks for approved minutes to send. `draft-mom` and `send-ready-mom` still work by hand.
+Set `mom_enabled: true` to turn both scheduled jobs back on.
+
+With `meeting_notes_data_source` in `config.yaml` and `mom_enabled: true`, the Monday 11:00 job takes its snapshot and then
 drafts a page named `PSR MOM <YYYY-MM-DD>` in Meeting Notes: `Meeting Date`, a `Project` relation to
 every project on the page, and `Team Attendees` copied from the previous `PSR MOM` page. The diff is
 that Monday's snapshot against the Friday one before it. Groups, order and rules are in
@@ -298,7 +318,7 @@ that date and makes a new one, and exits 1 without touching a page whose `Sent a
 ## Sending the approved minutes
 
 The minutes owner edits the draft in Notion and ticks `Ready to send`. Every 5 minutes (when the briefing keys
-and `meeting_notes_data_source` are in `config.yaml`) the scheduler looks for `PSR MOM` pages with
+and `meeting_notes_data_source` are in `config.yaml`, and `mom_enabled` is true) the scheduler looks for `PSR MOM` pages with
 `Ready to send` ticked and `Sent at` empty, reads each page as it is now, and sends it to the PSR group
 topic: one message per group (header first, 🔴 🟠 🟡 🔵 🟢, ⚫️ Others last), split on bullet boundaries
 past 4,096 characters. The "Unchanged" heading and everything after it, and any toggle, stay in Notion.
@@ -315,7 +335,7 @@ gateway failure it stays empty, the next check retries, and the gateway drops pa
 
 Three Job Orders reports go to their configured destinations every day (weekends and holidays included), Asia/Manila:
 05:00 night end of shift, 11:30 day mid shift, 19:00 day end of shift. At each slot the scheduler takes a
-Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Friday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
+Job Orders snapshot (kind `0500`, `1130` or `1900`) and then sends that slot's report. The Tuesday Projects snapshot (23:30) is a separate slot. Turn it on in `config.yaml`:
 
     gateway_url: "http://192.0.2.10:8780"
     shift_reports_enabled: true

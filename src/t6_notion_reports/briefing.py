@@ -1,7 +1,7 @@
-"""Build the Saturday briefing messages from a diff (spec section 7).
+"""Build the Wednesday brief messages from a diff (spec section 7).
 
-Pure: no network, no clock. ``build_briefing`` returns the messages to send, in order: one DM per
-coordinator, then the owner's digest.
+Pure: no network, no clock. ``build_briefing`` returns the messages to send, in order: one Coordinator brief per
+coordinator, then one Master brief per Master brief reader.
 """
 from __future__ import annotations
 
@@ -23,8 +23,9 @@ DIGEST_SECTIONS = ("on_hold", "in_progress", "leads")
 NOTION_PAGE = "https://www.notion.so/"
 LLM_UNAVAILABLE = "(LLM unavailable)"
 AFTER_PSR = "after PSR"
-RAISE_AT_PSR = "Raise at PSR"
-RAISE_UNAVAILABLE_NOTE = "⚠️ Raise at PSR unavailable"
+OPEN_CONCERNS = "Open Concerns"
+CLOSING_AFTER_PSR = "Closing after PSR"
+RAISE_UNAVAILABLE_NOTE = "⚠️ Open Concerns unavailable"
 NO_CYRIL_NOTE = "⚠️ Some warnings are withheld: set cyril_contact_id so private notes reach the right person"
 
 
@@ -44,13 +45,15 @@ class Settings:
     group_chat_id: int
     group_topic_id: int | None
     test_banner: bool = False
-    digest_recipients: tuple[Contact, ...] = ()
+    master_recipients: tuple[Contact, ...] = ()  # the Persons with master_brief on
     coordinator_recipients: tuple[str, ...] | None = None
+    coordinator_channel: tuple[int, int | None] | None = None  # (chat, topic): every Coordinator brief goes there; None: DMs
+    concern_dm: str = "master"  # "coordinators": a Coordinator brief also lists that coordinator's Concerns
 
 
 def digest_missing(settings: Settings) -> bool:
-    recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
-    return not any(c.telegram_id is not None for c in recipients)
+    """No Master brief reader can be reached."""
+    return not any(c.telegram_id is not None for c in settings.master_recipients)
 
 
 def build_briefing(
@@ -66,6 +69,7 @@ def build_briefing(
     notes: list[str] | None = None,
     cyril_notes: list[str] | None = None,
     raise_at_psr: list[RaiseConcern] | None = None,
+    closing: list[RaiseConcern] | None = None,
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
@@ -73,27 +77,30 @@ def build_briefing(
     consolidated changes. A project outside the status gate (``group`` is None) is left out.
     ``llm_failed`` names the projects whose LLM call failed, for the owner's digest.
 
-    The DM has On-Hold then In-Progress sections. The digest groups by coordinator, alphabetically,
+    The Coordinator brief has On-Hold then In-Progress sections; its text is the same whether it goes to the coordinator
+    channel or to a DM. The Master brief groups by coordinator, alphabetically,
     each with On-Hold, In-Progress, then Leads. Empty sections are left out, and a section is sorted by
     Project Health, then name.
 
-    A coordinator with nothing to show in the DM gets no message at all (no DM, no group fallback).
-    Their name goes on the digest's "No changes" line only if their id is in ``active``; ``None``
+    A coordinator with nothing to show gets no Coordinator brief at all.
+    Their name goes on the Master brief's "No changes" line only if their id is in ``active``; ``None``
     means no filtering. ``first`` marks the first brief, which has no earlier snapshot to compare with.
 
-    ``notes`` are extra warning lines for every digest recipient (leaves unavailable); ``cyril_notes``
-    go in the owner's digest alone (unmatched leave names), so with several recipients the digests differ.
+    ``notes`` are extra warning lines for every Master brief (leaves unavailable); ``cyril_notes``
+    go in the owner's Master brief alone (unmatched leave names), so the Master briefs differ.
 
-    ``raise_at_psr`` are the open, unsnoozed Concerns of the gated projects (age never hides one): the digest lists them
-    all in a "Raise at PSR" section after the projects, and a coordinator's DM lists the ones that coordinator owns.
-    The section is left out when there are none.
+    ``raise_at_psr`` are the open Concerns of the gated projects and ``closing`` their pending closes: the Master brief
+    lists them all in "Open Concerns" and "Closing after PSR" after the projects. With ``concern_dm`` "coordinators" a
+    Coordinator brief lists the ones that coordinator owns. A section is left out when it has none.
 
-    Without a Telegram id for the owner the digest is left out (the DMs still go); see ``digest_missing``.
+    Without a Master brief reader who has a Telegram id the Master brief is left out (the Coordinator briefs still go);
+    see ``digest_missing``.
     """
     changes = [ch for ch in changes if ch.group in SECTION_TITLES]
     groups = group_by_coordinator(changes)
     banner = BANNER if settings.test_banner else ""
     raised = raise_at_psr or []
+    pending = closing or []
     stamp = f"{today:%a %b} {today.day}"
     notice = [line(FIRST_BRIEF)] if first else []
     messages: list[OutboundMessage] = []
@@ -109,18 +116,23 @@ def build_briefing(
             continue
         coordinated = groups.by_coordinator.get(contact_id, (name, []))[1]
         projects = [ch for ch in coordinated if ch.group in DM_SECTIONS]
-        # Raise at PSR for a DM: the Concerns this person owns, and the ownerless ones of the projects they coordinate
-        raise_block = _raise_block([q for q in raised if q.owner_page == contact_id or (q.owner_page is None and contact_id in q.coordinators)])
+        # The Concerns this person owns, and the ownerless ones of the projects they coordinate; only when the setting says so
+        mine = lambda q: q.owner_page == contact_id or (q.owner_page is None and contact_id in q.coordinators)
+        raise_block = [] if settings.concern_dm != "coordinators" else (
+            _raise_block(OPEN_CONCERNS, [q for q in raised if mine(q)]) + _raise_block(CLOSING_AFTER_PSR, [q for q in pending if mine(q)]))
         contact = contacts.get(contact_id)
         chat = contact.telegram_id if contact else None
         if not projects and not raise_block:
             if active is None or contact_id in active:
                 quiet.append(name)
             continue
-        head: list[Block] = [line(bold(f"PSR briefing · {stamp}")), *notice, line()]
+        head: list[Block] = [line(bold(f"Coordinator brief · {name} · {stamp}")), *notice, line()]
         key = f"notion-reports-{today.isoformat()}-{contact_id}"
         units = _units([(None, projects)], DM_SECTIONS, today)
-        if chat is not None:
+        if settings.coordinator_channel is not None:
+            to, topic = settings.coordinator_channel
+            messages += _send(to, topic, _pack(head, units, raise_block, banner, limit), key, name)
+        elif chat is not None:
             messages += _send(chat, None, _pack(head, units, raise_block, banner, limit), key, name)
         else:
             fallbacks.append(name)
@@ -134,40 +146,39 @@ def build_briefing(
 
     if digest_missing(settings):
         return messages
-    head = [line(bold(f"PSR digest · {stamp}")), *notice, line()]
+    head = [line(bold(f"Master brief · {stamp}")), *notice, line()]
     if not changes and not first:
         head.append(line("No changes on any project this week"))
     people = sorted(groups.by_coordinator.values(), key=lambda v: v[0].lower())
     if groups.no_coordinator:
         people.append(("No coordinator", groups.no_coordinator))
     units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
-    tail: list[Block] = _raise_block(raised)
+    tail: list[Block] = _raise_block(OPEN_CONCERNS, raised) + _raise_block(CLOSING_AFTER_PSR, pending)
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:
-        tail.append(line(f"⚠️ {name} has no Telegram id: briefing posted in the group topic"))
+        tail.append(line(f"⚠️ {name} has no Telegram id: Coordinator brief posted in the group topic"))
     if llm_failed:
         tail.append(line("⚠️ LLM unavailable: " + ", ".join(llm_failed)))
     tail += [line(note) for note in notes or ()]
     private = [line(note) for note in cyril_notes or ()]
-    recipients = settings.digest_recipients or ((settings.cyril,) if settings.cyril else ())
+    recipients = settings.master_recipients
     if private and not any(settings.cyril and c.page_id == settings.cyril.page_id for c in recipients):
-        tail.append(line(NO_CYRIL_NOTE))  # fail closed: the names are sent to nobody, and the digest says why
-    multi = len(recipients) > 1
+        tail.append(line(NO_CYRIL_NOTE))  # fail closed: the names are sent to nobody, and the Master brief says why
     for contact in recipients:
         if contact.telegram_id is not None:
-            key = f"psr-digest-{today.isoformat()}-{contact.page_id}" if multi else f"psr-digest-{today.isoformat()}"
+            key = f"master-brief-{today.isoformat()}-{contact.page_id}"
             is_cyril = settings.cyril is not None and contact.page_id == settings.cyril.page_id
             digest_tail = tail + private if is_cyril else tail
             messages += _send(contact.telegram_id, None, _pack(head, units, digest_tail, banner, limit), key, contact.name)
     return messages
 
 
-def _raise_block(items: list[RaiseConcern]) -> list[Block]:
-    """The "Raise at PSR" heading and one line per Concern, or nothing."""
+def _raise_block(title: str, items: list[RaiseConcern]) -> list[Block]:
+    """The section heading and one line per Concern, or nothing."""
     if not items:
         return []
-    return [line(bold(RAISE_AT_PSR)), *(replace(line(_raise_text(q)), concern=q.concern_id) for q in items), line()]
+    return [line(bold(title)), *(replace(line(_raise_text(q)), concern=q.concern_id) for q in items), line()]
 
 
 def _raise_text(q: RaiseConcern) -> str:
@@ -178,6 +189,10 @@ def _raise_text(q: RaiseConcern) -> str:
         parts.append(f"owner {q.owner}")
     if q.waiting_on:
         parts.append(f"waiting on {q.waiting_on}")
+    if q.open_days is not None:
+        parts.append(f"open {q.open_days} day{'' if q.open_days == 1 else 's'}")
+    if q.closing_on:
+        parts.append(f"closing (by {q.closing_by}, {q.closing_on:%b} {q.closing_on.day})" if q.closing_by else f"closing ({q.closing_on:%b} {q.closing_on.day})")
     return "• " + " · ".join(parts)
 
 

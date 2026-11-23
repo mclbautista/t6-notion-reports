@@ -1,4 +1,4 @@
-"""When jobs fire, Asia/Manila: snapshots Monday 11:00 and Friday 23:30, briefing Saturday 12:00."""
+"""When jobs fire, Asia/Manila: snapshots Monday 11:00 and Tuesday 23:30, Wednesday brief Wednesday 10:00."""
 from __future__ import annotations
 
 import logging
@@ -8,9 +8,11 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 MANILA = ZoneInfo("Asia/Manila")
-# (weekday with Monday=0, local time, snapshot kind)
-SLOTS = [(0, time(11, 0), "monday"), (4, time(23, 30), "friday")]
-BRIEF_SLOT = (5, time(12, 0), "brief")
+# (weekday with Monday=0, local time, snapshot kind). The pre-brief snapshot keeps its stored kind "friday" (the
+# database and the diff pairs know it by that name); it is taken on Tuesday at 23:30, so the brief's week runs
+# Wednesday to Wednesday.
+SLOTS = [(0, time(11, 0), "monday"), (1, time(23, 30), "friday")]
+BRIEF_SLOT = (2, time(10, 0), "brief")
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,6 @@ class Daily:
 
 
 # JO shift reports: snapshot Job Orders, then build and send that slot's report. Kind "shift<slot>".
-# The Friday Projects snapshot (23:30) no longer shares a minute with the 18:00 slot.
 SHIFT_SLOTS = [Daily(time(5, 0), "shift0500"), Daily(time(11, 30), "shift1130"), Daily(time(19, 0), "shift1900")]
 
 

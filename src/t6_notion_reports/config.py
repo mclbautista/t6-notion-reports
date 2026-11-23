@@ -23,12 +23,17 @@ SHIFT_SECRET_ENV = "SHIFT_SECRET"
 SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "shift_topic_id", "ops_chat_id", "shift_llm_model"}
 # shift_destinations report names -> job slot codes (the slot codes the job and scheduler use today)
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
-BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "digest_recipients", "coordinator_recipients", "test_banner", "llm_model", "lead_warning_days", "concern_scan", "pm_notes_weeks", "leave_clash_days"}
+BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "coordinator_recipients", "test_banner", "llm_model",
+              "lead_warning_days", "pm_notes_weeks", "leave_clash_days", "coordinator_brief_destination", "coordinator_brief_chat_id",
+              "coordinator_brief_topic_id", "concern_dm"}
+COORDINATOR_DESTINATIONS = ("channel", "dm")
+CONCERN_DM = ("master", "coordinators")
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 # Read, matched or decided by the t6 API now: an old config.yaml that still has them boots, they are ignored and logged.
+# digest_recipients: the Master brief goes to the Persons with ``master_brief`` on. concern_scan: the API scans on its own.
 IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics",
-                "concern_chronic_weeks")
-KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
+                "concern_chronic_weeks", "digest_recipients", "concern_scan")
+KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled", "mom_enabled"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -38,7 +43,7 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class BriefSettings:
-    """Saturday briefing settings. Present only when the briefing keys are in config.yaml."""
+    """Wednesday brief settings. Present only when the briefing keys are in config.yaml."""
 
     gateway_url: str
     group_chat_id: int
@@ -46,13 +51,15 @@ class BriefSettings:
     cyril_contact_id: str | None
     test_banner: bool
     psr_secret: str | None  # None when PSR_SECRET is unset; only ``brief --dry-print`` may go without
-    digest_recipients: tuple[str, ...] = ()  # list of Contact page ids who receive the master digest
     llm_model: str = DEFAULT_MODEL
     lead_warning_days: int = DEFAULT_LEAD_WARNING_DAYS  # a Lead whose Playdate is less than this many days away is flagged
-    concern_scan: bool = True  # scan each gated project's PM Notes for Concerns (in the API) before a real brief
     leave_clash_days: int = DEFAULT_CLASH_DAYS  # a team member's leave within this many days of a project date is a Concern
     pm_notes_weeks: int = DEFAULT_PM_NOTES_WEEKS  # PM Notes blocks older than this go to the LLM only if they hold a future date
-    coordinator_recipients: tuple[str, ...] | None = None  # None: all coordinators; (): no DMs or group fallbacks
+    coordinator_recipients: tuple[str, ...] | None = None  # None: all coordinators; (): no Coordinator briefs
+    coordinator_destination: str = "dm"  # "channel": every Coordinator brief goes to coordinator_chat (and topic); "dm": to each coordinator
+    coordinator_chat_id: int | None = None
+    coordinator_topic_id: int | None = None
+    concern_dm: str = "master"  # "coordinators": each Coordinator brief also carries that coordinator's Concerns
 
 
 @dataclass(frozen=True)
@@ -84,6 +91,7 @@ class Config:
     shift: ShiftSettings | None = None  # None when shift reports are disabled
     ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
     llm_enabled: bool = True  # false: no model is called; summaries fall back to three words, a real brief says "LLM unavailable"
+    mom_enabled: bool = False  # the MOM is paused: no Monday minutes draft and no MOM send are scheduled until this is true
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -110,6 +118,7 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         shift=_shift(raw, env),
         ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
         llm_enabled=_flag(raw, "llm_enabled"),
+        mom_enabled=_flag(raw, "mom_enabled", default=False),
     )
 
 
@@ -126,19 +135,9 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
     banner = _banner(raw)
     topic = _integer(raw, "psr_group_topic_id") if "psr_group_topic_id" in raw else None
     cyril_id = _notion_id(raw, "cyril_contact_id") if "cyril_contact_id" in raw else None
-    digest_recipients: list[str] = []
-    if "digest_recipients" in raw:
-        val = raw["digest_recipients"]
-        if not isinstance(val, list) or not val:
-            raise ConfigError("invalid config key: digest_recipients (expected a non-empty list)")
-        for i, item in enumerate(val):
-            if not isinstance(item, str) or not _NOTION_ID.match(item.strip()):
-                raise ConfigError(f"invalid config key: digest_recipients (entry {i} is not a Notion id)")
-            digest_recipients.append(item.strip())
-    elif cyril_id is not None:
-        digest_recipients.append(cyril_id)
-    else:
-        raise ConfigError("missing config key: cyril_contact_id or digest_recipients")
+    destination = _choice(raw, "coordinator_brief_destination", COORDINATOR_DESTINATIONS, "dm")
+    if destination == "channel" and "coordinator_brief_chat_id" not in raw:
+        raise ConfigError("missing config key: coordinator_brief_chat_id (coordinator_brief_destination is channel)")
 
     coordinator_recipients = None
     if "coordinator_recipients" in raw:
@@ -157,12 +156,14 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         cyril_contact_id=cyril_id,
         test_banner=banner,
         psr_secret=env.get(PSR_SECRET_ENV, "").strip() or None,
-        digest_recipients=tuple(digest_recipients),
         coordinator_recipients=coordinator_recipients,
+        coordinator_destination=destination,
+        coordinator_chat_id=_integer(raw, "coordinator_brief_chat_id") if "coordinator_brief_chat_id" in raw else None,
+        coordinator_topic_id=_integer(raw, "coordinator_brief_topic_id") if "coordinator_brief_topic_id" in raw else None,
+        concern_dm=_choice(raw, "concern_dm", CONCERN_DM, "master"),
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
-        concern_scan=_flag(raw, "concern_scan"),
         leave_clash_days=_days(raw, "leave_clash_days", DEFAULT_CLASH_DAYS),
     )
 
@@ -183,8 +184,15 @@ def _gateway_url(raw: dict) -> str:
     return url
 
 
-def _flag(raw: dict, key: str) -> bool:
-    value = raw.get(key, True)
+def _choice(raw: dict, key: str, choices: tuple[str, ...], default: str) -> str:
+    value = raw.get(key, default)
+    if value not in choices:
+        raise ConfigError(f"invalid config key: {key} (expected {' or '.join(choices)})")
+    return value
+
+
+def _flag(raw: dict, key: str, default: bool = True) -> bool:
+    value = raw.get(key, default)
     if not isinstance(value, bool):
         raise ConfigError(f"invalid config key: {key} (expected true or false)")
     return value

@@ -17,7 +17,13 @@ _ON_HOLD = {"standby", "archiving"}
 _INCOMING = {"leads", "lead", "negotiations", "proposal made"}
 _ROLES = ("editor_ids", "assistant_editor_ids", "online_editor_ids", "colorist_ids", "sound_tech_ids",
           "post_coordinator_ids", "director_ids", "cinematographer_ids")
-_HEALTH_FLAGS = ("Blocked", "Delayed", "Urgent")
+_HEALTH_NAMES = ("Closed", "Blocked", "Delayed", "Urgent", "Advanced", "On Track")
+
+
+def health_name(health):
+    """The JO Health formula read by its words, ignoring emoji and case (core #637); None when blank or unknown."""
+    words = " ".join(re.sub(r"[^\w\s]", "", str(health or "")).split()).casefold()
+    return next((n for n in _HEALTH_NAMES if n.casefold() == words), None)
 
 
 def status_key(status):
@@ -98,6 +104,7 @@ class FakeConcerns:
         self.observed: list[object] = []  # the inputs of each call, dry runs included
         self.scans: list[object] = []  # the inputs of each ``concern scan``
         self.recorded: list[tuple[str, str, str, str | None, str]] = []  # (concern, chat, message_id, brief_date, key), once done
+        self.pending_list: dict[str, dict] | None = None  # Concern ID -> its close fields (close_by_name, close_at, close_source); None: the API has no pending list
 
     def close(self, text_part, on):
         """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
@@ -199,6 +206,14 @@ class FakeApi:
                 "aliases": [a.strip() for a in _text(p.get("Aliases")).split(",") if a.strip()],
             })
         return self._done("person list", {"people": people})
+
+    def person_get(self, inputs):
+        """The Person ``person_id`` names (a T6 ID or a page id); ``master_brief`` is a Contact's top-level key in the fixtures."""
+        found = next((c for c in self.notion.contacts if inputs.person_id in (c["id"], self._ref(c["id"]))), None)
+        if found is None:
+            self.calls.append("person get")
+            return Refused(rule="person", reason="Contact not found")
+        return self._done("person get", {"person": {"page_id": found["id"], "master_brief": bool(found.get("master_brief"))}})
 
     def person_find(self, inputs):
         """The API's rule is not in this repo. The fake: a name matches a Contact by its name, an alias or its first word;
@@ -440,14 +455,20 @@ class FakeApi:
         if "concern list" in self.fail:
             return self.fail["concern list"]
         if inputs.raise_at_psr:  # every open, unsnoozed Concern, oldest evidence first; no text, no label
-            return Done(result={"concerns": [
-                {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
-                 "age_seconds": 0, "evidence_at": i.get("evidence_at", 0.0)}
-                for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]})
+            row = lambda i: {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
+                             "age_seconds": i.get("age_seconds", 0), "evidence_at": i.get("evidence_at", 0.0)}
+            listed = [i for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]
+            if self.concerns.pending_list is None:  # an API before the pending closes (core #639): one list
+                return Done(result={"concerns": [row(i) for i in listed]})
+            pend = self.concerns.pending_list
+            return Done(result={"concerns": [row(i) for i in listed if i["id"] not in pend],  # a pending Concern is not in the open list
+                                "pending": [{**row(i), "text": i["text"], "close_by": None, "close_by_name": None, "close_at": 0.0,
+                                             "close_source": "close", "close_quote": None, **pend[i["id"]]} for i in listed if i["id"] in pend]})
+        pend = self.concerns.pending_list or {}
         return Done(result={"concerns": [
             {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
              "text": i["text"], "source": i["source"], "state": i["state"], "age_seconds": 0, "chronic": False}
-            for i in sorted(self.concerns.items, key=lambda i: (i["opened_on"], i["id"])) if i["state"] != "closed"]})
+            for i in sorted(self.concerns.items, key=lambda i: (i["opened_on"], i["id"])) if i["state"] != "closed" and i["id"] not in pend]})
 
     def jo_list(self, inputs):
         orders = []
@@ -465,8 +486,9 @@ class FakeApi:
             status_name, health = opt("Status"), p["Health"]["formula"]["string"]
             orders.append({
                 "active": status_name not in ("Done", "Cancelled"), "done": status_name == "Done",
-                "health_flags": [f for f in _HEALTH_FLAGS if f.lower() in (health or "").lower()],
-                "status_group": {"Needs Intake Review": "not_started", "Pending": "not_started", "In progress": "started",
+                "health_name": health_name(health),
+                "status_group": {"Needs Intake Review": "not_started", "Pending": "not_started", "On Hold": "not_started",
+                                 "In progress": "started",
                                  "Needs Completion Review": "started", "Done": "started", "Cancelled": "cancelled"}.get(status_name),
                 "page_id": page["id"], "name": _text(p["Name"]), "number": _text(p["JO Number"]) or None,
                 "task": _text(p["Task"]) or None, "status": opt("Status"), "department": opt("Department"),

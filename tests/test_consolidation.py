@@ -232,7 +232,7 @@ def test_a_hallucinated_name_in_a_concern_drops_only_that_concern():
          "line_id": qc(p), "quote": "• QC on Nov 20, waiting for client notes"},
     ]
     gw, _ = run(conn_one(), Llm(reply_with(concerns=concerns)))
-    text = digest(gw)  # an open Concern is shown once, in Raise at PSR (#142)
+    text = digest(gw)  # an open Concern is shown once, in Open Concerns (#142)
     assert "QC on Nov 20 still waits for client notes · last evidence Nov 14" in text
     assert "Dario" not in text and "is odd" not in text
 

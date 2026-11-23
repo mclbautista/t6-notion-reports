@@ -8,29 +8,33 @@
 # still has them boots; each is ignored and logged as "config key ignored: <key>".
 database_path: /app/data/psr.db
 
-# Minutes draft (optional). With it set, the Monday 11:00 snapshot is followed by a draft page in
-# Meeting Notes, and `draft-mom` works. Meeting Notes: collection://22222222-2222-2222-2222-222222222222
+# Minutes draft (optional). With it set, `draft-mom` works. Meeting Notes: collection://22222222-2222-2222-2222-222222222222
 # meeting_notes_data_source: "22222222-2222-2222-2222-222222222222"
+# The MOM is paused: unless mom_enabled is true, the scheduler neither drafts the minutes after the Monday 11:00
+# snapshot nor sends approved minutes.
+# mom_enabled: false
 
-# Saturday briefing (optional; leave all of these out to run snapshots only).
-# When any is set, gateway_url and psr_group_chat_id are required, and so is cyril_contact_id or digest_recipients.
-# The secret PSR_SECRET goes in .env. Briefings fire Saturday 12:00 Asia/Manila (Friday snapshot at 23:30).
-# The Minutes go to the same chat and topic: PSR group -1000000000001, topic 1.
+# Wednesday brief (optional; leave all of these out to run snapshots only).
+# When any is set, gateway_url and psr_group_chat_id are required. The secret PSR_SECRET goes in .env.
+# The brief fires Wednesday 10:00 Asia/Manila (Tuesday snapshot at 23:30).
+# The Master brief goes to each Person with master_brief on in the t6 API (data, not config).
+# The Minutes go to the PSR group chat and topic: PSR group -1000000000001, topic 1.
 # gateway_url: "http://192.0.2.10:8780"
-# psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; fallback for coordinators with no Telegram id)
+# psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; dm-mode fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 1                    # PSR topic: Minutes go here
-# cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: the owner's page id in Contacts
-# Coordinator delivery only; the digest and LLM still include every eligible project.
-# Omit coordinator_recipients for all coordinators; [] disables their DMs and group fallbacks.
+# cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: the owner's page id in Contacts; private notes go only to the owner's Master brief
+# Coordinator briefs: one message per coordinator, the same text in either mode.
+# coordinator_brief_destination: dm        # dm (default): each coordinator's DM; channel: the chat and topic below
+# coordinator_brief_chat_id: -1000000000002   # FILL IN (channel mode): the channel's chat id
+# coordinator_brief_topic_id: 2              # FILL IN (channel mode, optional): the channel's topic id
+# concern_dm: master                       # master (default): Concerns only in the Master brief; coordinators: each Coordinator brief also lists its own
+# Coordinator delivery only; the Master brief and LLM still include every eligible project.
+# Omit coordinator_recipients for all coordinators; [] disables every Coordinator brief.
 # coordinator_recipients:
 #   - "00000000-0000-0000-0000-000000000000"   # FILL IN: an allowed coordinator's Contacts page id
-# Digest delivery is independent; when omitted it defaults to cyril_contact_id.
-# digest_recipients:
-#   - "00000000-0000-0000-0000-000000000000"   # FILL IN: a digest recipient's Contacts page id
 # llm_model: "anthropic/claude-haiku-4.5"   # model for the Minutes, leaves and per-project consolidation, named for the t6 API (default shown)
 # pm_notes_weeks: 52                     # PM Notes older than this go to the LLM only if a block holds a future date
 # lead_warning_days: 30                  # a Lead whose Playdate is less than this many days away is flagged
-# concern_scan: true                    # before a real brief, the API scans each gated project's PM Notes for Concerns; false turns it off
 # leave_clash_days: 14                   # a team member's leave within this many days of a project date is a Concern
 # test_banner: false                       # true adds "🧪 TEST" to every message (Nov 13 dry run)
 
@@ -50,7 +54,7 @@ database_path: /app/data/psr.db
 # ops_chat_id: 100000001                   # optional; where the ops alerts go (T6 API outage, masked read, undelivered); else the first chat entry of that report's list
 # llm_enabled: true                       # false: no model is called (summaries show three words; a real brief says "LLM unavailable")
 # shift_llm_model: "qwen/qwen3.8-27b"      # model (named for the t6 API) for the three-word task summaries (default shown).
-#   It is separate from llm_model above, which the Saturday briefing, the leaves and the Minutes use. Every call requires
+#   It is separate from llm_model above, which the Wednesday brief, the leaves and the Minutes use. Every call requires
 #   zero data retention, so pick a model the t6 API lists with it.
 #   A model without one fails every call, and the report shows each Task's first three words instead.
 #
@@ -64,5 +68,6 @@ database_path: /app/data/psr.db
 #      summarised keep their Haiku summary until their Task text changes).
 
 # Names in free text (leave entries) are matched by the t6 API (person find). fuzzy_min_score, fuzzy_min_lead and
-# honorifics no longer do anything: an old config.yaml that has them boots, and each is logged as
+# honorifics no longer do anything, nor do digest_recipients (the Master brief readers are the master_brief Persons)
+# and concern_scan (the API scans on its own): an old config.yaml that has them boots, and each is logged as
 # "config key ignored: <key>".

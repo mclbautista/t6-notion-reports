@@ -148,8 +148,51 @@ def test_line_format_health_emoji_link_and_escaping():
     assert lines[0] == ('🔥<a href="https://www.notion.so/abcd1234">FAKEX#48</a> - Export &lt;v2&gt; &amp; - '
                         "In progress - Nov 3 / Tue (18:00)")
     assert lines[1].startswith('🔴<a ') and lines[2].startswith('⚠️<a ')
-    assert lines[3].startswith('<a ') and lines[4].startswith('<a ')
+    assert lines[3].startswith('🔵<a ') and lines[4].startswith('<a ')  # "At Risk" has no Health name
     assert_valid_html(text)
+
+
+@pytest.mark.parametrize("health, icon", [
+    ("✅ Closed", "✅"), ("🔴 Blocked", "🔴"), ("⚠️ Delayed", "⚠️"), ("🔥 Urgent", "🔥"),
+    ("⚡ Advanced", "⚡️"), ("⚡️ Advanced", "⚡️"), ("🔵 On Track", "🔵"), ("", ""), ("🟡 At Risk", ""),
+])
+def test_each_health_name_from_the_api_starts_the_line_with_its_icon_and_none_gives_no_icon(health, icon):
+    conn = connect()
+    prior(conn)
+    _, text, _ = run(conn, world(jo("j1", "48", "TOC", health=health)), "1900", PM)
+    [row] = [l for l in text.splitlines() if "notion.so" in l]
+    assert row.startswith(f'{icon}<a href="https://www.notion.so/j1">')
+
+
+def test_the_icon_follows_the_apis_health_name_not_the_health_text():
+    conn = connect()
+    prior(conn)
+    fake = world(jo("j1", "48", "TOC", health="🔵 On Track"))
+    original = fake.api.jo_list
+
+    def listed(inputs):
+        out = original(inputs)
+        out.result["job_orders"][0]["health_name"] = "Urgent"  # the API decides, whatever the Health text
+        return out
+
+    fake.api.jo_list = listed
+    _, text, _ = run(conn, fake, "1900", PM)
+    assert [l for l in text.splitlines() if "notion.so" in l][0].startswith("🔥<a ")
+
+
+def test_an_on_hold_jo_is_listed_with_its_blocked_icon_and_status_and_is_never_processed():
+    conn = connect()
+    older = world(jo("h1", "1", "AE", st="Pending", health="🔵 On Track"), jo("h2", "2", "AE", st="On Hold", health="🔴 Blocked"))
+    run_jo_snapshot(conn, older, "1130", MID)
+    fake = world(
+        jo("h1", "1", "AE", st="On Hold", health="🔴 Blocked"),   # was Pending: paused, not processed
+        jo("h2", "2", "AE", st="On Hold", health="🔴 Blocked"),   # still On Hold
+        jo("h3", "3", "AE", st="On Hold", health="🔴 Blocked"),   # new and On Hold
+    )
+    report, text, _ = run(conn, fake, "1900", PM)
+    rows = [l for l in text.splitlines() if "notion.so" in l]
+    assert len(rows) == 3 and all(r.startswith("🔴<a ") and " - On Hold - " in r for r in rows)
+    assert report.counts.processed == 0 and report.counts.accomplished == 0
 
 
 def test_jo_id_fallbacks():
@@ -539,7 +582,7 @@ def test_turnover_format_requested_by_coordinators():
         '⚠️<a href="https://www.notion.so/t1">FAKEX#62</a> - Process D15 - Pending - Nov 3 / Tue (18:00)',
         "",
         "<b>Rex</b>",
-        '<a href="https://www.notion.so/t2">FAKEX#0014</a> - Upload TLR guide - Pending - Nov 3 / Tue (18:00)',
+        '🔵<a href="https://www.notion.so/t2">FAKEX#0014</a> - Upload TLR guide - Pending - Nov 3 / Tue (18:00)',
     ]
     assert "<b>Total</b>: Received 0 · Processed 0 · Accomplished 0" in text
     assert lines[-1] == "Last JO edit: Nov 3 / Tue (09:00)"

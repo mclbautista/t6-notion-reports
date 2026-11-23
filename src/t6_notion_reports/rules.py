@@ -25,11 +25,12 @@ class ProjectRules:
 
 @dataclass(frozen=True)
 class JoRules:
-    """What ``jo list`` says of one Job Order: not Done and not Cancelled, the Health flags
-    ("Blocked", "Delayed", "Urgent"), worst first, its status group ("not_started", "started", "cancelled"; None for
-    an unknown Status) and whether it is Done. The group and ``done`` are also stored in the snapshot."""
+    """What ``jo list`` says of one Job Order: not Done and not Cancelled, the Health name ("Closed", "Blocked",
+    "Delayed", "Urgent", "Advanced", "On Track"; None for a blank or unknown Health), its status group ("not_started",
+    "started", "cancelled"; None for an unknown Status) and whether it is Done. The group and ``done`` are also stored
+    in the snapshot."""
 
     active: bool
-    health_flags: tuple[str, ...] = ()
+    health_name: str | None = None
     status_group: str | None = None
     done: bool = False

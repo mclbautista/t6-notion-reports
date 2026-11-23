@@ -19,7 +19,7 @@ CONTACTS = {
     JUNO: Contact(JUNO, "Juno Vex", "heyjunebug", None),
     CYRIL: Contact(CYRIL, "Owner", None, 999),
 }
-SETTINGS = Settings(CONTACTS[CYRIL], -1003, 7)
+SETTINGS = Settings(CONTACTS[CYRIL], -1003, 7, master_recipients=(CONTACTS[CYRIL],))
 
 
 def person(cid):
@@ -113,7 +113,7 @@ def test_digest_no_changes_line_lists_only_active_coordinators():
 
 def test_digest_covers_everything_grouped_including_no_coordinator():
     [digest] = by_recipient(run(BEFORE, AFTER))["Owner"]
-    assert (digest.to, digest.topic, digest.key) == (999, None, "psr-digest-2026-11-15")
+    assert (digest.to, digest.topic, digest.key) == (999, None, "master-brief-2026-11-15-c-owner")
     text = digest.text
     assert text.index("<b>Oto</b>") < text.index("No coordinator")
     assert "QAZ" in text and "ORF" in text and "DW" in text
@@ -147,7 +147,7 @@ def test_unknown_contact_falls_back_to_group_topic():
 
 
 def test_test_banner_on_every_message_and_part():
-    settings = Settings(CONTACTS[CYRIL], -1003, 7, test_banner=True)
+    settings = Settings(CONTACTS[CYRIL], -1003, 7, test_banner=True, master_recipients=(CONTACTS[CYRIL],))
     msgs = run(BEFORE, AFTER, settings=settings)
     assert msgs and all(m.text.startswith("🧪 TEST\n") for m in msgs)
 
@@ -216,7 +216,7 @@ def test_a_digest_tail_that_does_not_fit_starts_a_part_with_the_digest_title():
     digest = [m for m in msgs if m.recipient == "Owner"]
     assert len(digest) > 1
     for m in digest[1:]:
-        assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
+        assert _plain(m.text).splitlines()[0] == "Master brief · Sun Nov 15 (cont.)"
 
 
 # ---- a single oversized line keeps its context on every part (#62 item 1) -------------------
@@ -269,7 +269,7 @@ def test_a_single_oversized_digest_warning_keeps_the_digest_title():
         assert_valid_html(m.text)
         assert len(m.text) <= 4096
     for m in digest[1:]:
-        assert _plain(m.text).splitlines()[0] == "PSR digest · Sun Nov 15 (cont.)"
+        assert _plain(m.text).splitlines()[0] == "Master brief · Sun Nov 15 (cont.)"
     assert _all_words([m.text for m in digest], "z") >= {f"z{i}" for i in range(2500)}
 
 
@@ -339,6 +339,6 @@ def test_oversized_tail_after_projects_keeps_title_banner_and_every_warning_atom
         assert len(message.text) <= 4096
         assert message.text.startswith("🧪 TEST\n")
         if i:
-            assert _plain(message.text).splitlines()[1] == "PSR digest · Sun Nov 15 (cont.)"
+            assert _plain(message.text).splitlines()[1] == "Master brief · Sun Nov 15 (cont.)"
     assert _all_words([m.text for m in messages], "warning") >= {f"warning{i}" for i in range(2500)}
     assert sum("final warning" in m.text for m in messages) == 1

@@ -15,11 +15,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
+    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonGetInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
     ProjectListInput, Refused, StudioNoticesInput,
 )
 
@@ -163,6 +163,27 @@ class ApiNotion:
         """Contacts page id -> T6 Person ID, for the Contacts the API has bound to a Person."""
         return {p["page_id"]: p["t6_id"] for p in self._people() if p.get("t6_id")}
 
+    def master_brief_pages(self, log: Callable[[str], None] = lambda _: None) -> set[str]:
+        """Contacts page ids of the Persons with ``master_brief`` on. A ``person list`` item that carries the flag is
+        used as it is; one without it (an older API) is read with ``person get`` when it has a Telegram user id (only
+        they can get a DM). One Person that cannot be read is skipped and logged by error type; the others stay."""
+        pages: set[str] = set()
+        for p in self._people():
+            if "master_brief" in p:
+                if p["master_brief"]:
+                    pages.add(p["page_id"])
+                continue
+            if p.get("telegram_user_id") is None:
+                continue
+            try:
+                person = self._read(self.client.person_get, PersonGetInput(person_id=p.get("t6_id") or p["page_id"]))["person"]
+            except ApiUnavailable as exc:
+                log(f"brief master brief reader unavailable error={type(exc).__name__}")
+                continue
+            if person.get("master_brief"):
+                pages.add(p["page_id"])
+        return pages
+
     def contact_names(self) -> dict[str, str | None]:
         return {p["page_id"]: p.get("name") for p in self._people()}
 
@@ -259,7 +280,7 @@ class ApiNotion:
                 "Projects": [{"id": i, "name": labels.get(i)} for i in project_pages],
                 "last_edited_time": _notion_time(o.get("last_edited")),
             }
-            rules = JoRules(bool(o["active"]), tuple(o.get("health_flags") or ()), o.get("status_group"), bool(o["done"]))
+            rules = JoRules(bool(o["active"]), o.get("health_name"), o.get("status_group"), bool(o["done"]))
             records.append(JoRecord(o["page_id"], fields, rules))
         return records
 

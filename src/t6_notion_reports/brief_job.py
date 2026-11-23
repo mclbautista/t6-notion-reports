@@ -1,15 +1,15 @@
-"""The Saturday briefing job: diff Friday against Monday, build the messages, send them."""
+"""The Wednesday brief job: diff the Tuesday 23:30 snapshot against Monday, build the messages, send them."""
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
-from .concern_api import ConcernApiError, observe, open_concerns, raise_at_psr_concerns, record_message, scan
+from .concern_api import ConcernApiError, observe, open_concerns, raise_at_psr_concerns, record_message
 from .concerns import AgedConcerns, RaiseConcern, aged_from_reply, raise_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
@@ -25,7 +25,7 @@ from .mom_lines import Minutes, load_minutes
 from .rules import ProjectRules
 from .schedule import MANILA
 from .snapshots import (
-    RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
+    RELATION_FIELDS, brief_diff_pair, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
 )
 from .status_gate import gate, is_archiving, looks_like_in_progress
 from .t6_api import ApiUnavailable
@@ -39,10 +39,11 @@ CONSOLIDATION_BUDGET = 20 * 60  # seconds for the whole consolidation loop
 RECORD_TRIES = 6  # polls of the gateway for a message's Telegram id
 RECORD_WAIT = 10  # seconds between polls
 RECORD_CAP = 2 * 60  # seconds for the whole record-message step
-SCAN_BUDGET = 10 * 60  # seconds for the whole PM Notes scan step; a project not reached is skipped
 
 # The sources of a finding, as ``concern observe`` names them.
 FLAG_RULE, PM_NOTES_READ, LEAVE = "flag_rule", "pm_notes_read", "leave"
+STALE_AFTER = timedelta(days=2)  # the brief refuses a newest snapshot older than this
+STALE_NOTE = "⚠️ Changes not shown: the latest snapshot is too old"
 HISTORY_UNAVAILABLE_NOTE = "⚠️ Concern history unavailable"
 
 
@@ -70,7 +71,6 @@ def run_brief(
     show_llm_input: bool = False,
     leaves_llm: LlmClient | None = None,
     budget: float = CONSOLIDATION_BUDGET,
-    scan_budget: float = SCAN_BUDGET,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> BriefResult:
@@ -87,12 +87,12 @@ def run_brief(
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     leaves_llm = llm if leaves_llm is None else leaves_llm
-    pair = default_diff_pair(conn)
+    pair = brief_diff_pair(conn)
     first = False
     if pair is None:
         latest = latest_snapshot_ids(conn, 1)
         if not latest:
-            out("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one)")
+            out("first snapshot, no changes yet (need a Tuesday (kind friday) snapshot and an earlier Monday one)")
             log("brief baseline=True sent=0 failed=0")
             return BriefResult(baseline=True)
         # Only one comparison point exists: brief without a changes section.
@@ -100,12 +100,21 @@ def run_brief(
         old_id = new_id = latest[0]
     else:
         old_id, new_id = pair
+    psr_id = (default_diff_pair(conn) or (old_id, new_id))[0]  # the Monday snapshot: the start of the since-PSR window
+    stale = False
+    if not first:
+        taken = datetime.fromisoformat(snapshot_info(conn, new_id).taken_at)
+        if now - taken > STALE_AFTER:  # the Tuesday snapshot was missed: its changes are last week's, not this week's
+            stale = True
+            old_id = new_id
+            log(f"brief snapshot stale snapshot={new_id}")
+    no_diff = first or stale
     raw_old, raw_new = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
     rules = gate_rules(notion, raw_old, raw_new)
     old_state, new_state = apply_gate(raw_old, raw_new, rules, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
-    changes = [] if first else diff_snapshots(
+    changes = [] if no_diff else diff_snapshots(
         old_state, new_state,
         datetime.fromisoformat(old_on).astimezone(MANILA).date(),
         datetime.fromisoformat(new_on).astimezone(MANILA).date(),
@@ -117,7 +126,7 @@ def run_brief(
     outcomes: dict[str, Outcome] = {}
     contacts = notion.read_contacts()  # read once: the messages
     if llm is not None or show_llm_input:
-        windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
+        windows = diff_windows(conn, psr_id, new_id, no_diff, new_state)
         minutes = None
         if meeting_notes_ds:
             try:
@@ -135,7 +144,7 @@ def run_brief(
             if show_llm_input:
                 out(f"--- llm input: {names[page_id]} (names are masked by the API, not here) ---\n{payloads[page_id].json(indent=2)}\n")
             elif llm is not None:
-                if monotonic() - started >= budget:  # the brief goes out at 12:00: it does not wait without end
+                if monotonic() - started >= budget:  # the brief goes out at 10:00: it does not wait without end
                     outcomes[page_id] = Outcome(failed=True)
                     skipped += 1
                 else:
@@ -174,24 +183,27 @@ def run_brief(
             *((t, PM_NOTES_READ) for t in (o.concerns if o and not o.failed else ())),
             *((t, LEAVE) for t in leaves.concerns.get(p, ())),
         )
-    if brief.concern_scan and gateway is not None and not dry_print:  # the scan writes Concerns in the API: not on a dry run
-        scan_concerns(notion, new_state, rules, log, scan_budget, monotonic)
     aged, history = observe_concerns(
         notion, current, unavailable, today, dry_print or gateway is None, new_state, rules, log,
     )
-    raised, raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
+    (raised, closing), raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
-    changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
+    changes = with_consolidation(changes, outcomes, names, new_state, new_day, no_diff)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
-    cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
-    digest_contacts = tuple(
-        contacts.get(cid) or Contact(cid, cid)
-        for cid in brief.digest_recipients
-    ) or ((cyril,) if cyril else ())
+    norm = lambda cid: cid.replace("-", "").lower()  # a hyphen-less or upper-case id in the config still names the owner
+    cyril = next((c for cid, c in contacts.items() if norm(cid) == norm(cyril_id)), Contact(cyril_id, "Cyril")) if cyril_id else None
+    try:
+        masters = notion.master_brief_pages(log)
+    except OSError as exc:  # no reader is known: the Master brief goes to nobody, and the run fails below
+        log(f"brief master brief readers unavailable error={type(exc).__name__}")
+        masters = set()
+    master_contacts = tuple(contacts[cid] for cid in sorted(masters) if cid in contacts)
+    channel = (brief.coordinator_chat_id, brief.coordinator_topic_id) if brief.coordinator_destination == "channel" else None
     settings = Settings(
         cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner,
-        digest_recipients=digest_contacts, coordinator_recipients=brief.coordinator_recipients,
+        master_recipients=master_contacts, coordinator_recipients=brief.coordinator_recipients,
+        coordinator_channel=channel, concern_dm=brief.concern_dm,
     )
     for ch in changes:
         ch.group = gate(rules.get(ch.page_id))
@@ -200,8 +212,8 @@ def run_brief(
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state, rules), first=first,
-        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if raised_ok else (RAISE_UNAVAILABLE_NOTE,))],
-        cyril_notes=list(leaves.cyril_notes), raise_at_psr=raised,
+        notes=[*(() if not stale else (STALE_NOTE,)), *leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if raised_ok else (RAISE_UNAVAILABLE_NOTE,))],
+        cyril_notes=list(leaves.cyril_notes), raise_at_psr=raised, closing=closing,
     )
     no_digest = digest_missing(settings)
 
@@ -210,7 +222,7 @@ def run_brief(
             out(f"--- to={m.to} topic={m.topic} key={m.key} ({m.recipient}) ---\n{m.text}\n")
         log(f"brief dry_print=True messages={len(messages)} changed={changed} llm_failed={len(llm_failed)}")
         if no_digest:
-            raise BriefFailed("No digest recipient has a TelegramUserID: digest not built")
+            raise BriefFailed("No Master brief reader has a TelegramUserID: Master brief not built")
         return BriefResult(messages=tuple(messages), changed=changed, llm_failed=len(llm_failed))
 
     sent = failed = 0
@@ -228,7 +240,7 @@ def run_brief(
     except Exception as exc:
         log(f"brief record-message failed error={type(exc).__name__}")
     if no_digest:
-        raise BriefFailed("No digest recipient has a TelegramUserID: DMs sent, digest not sent")
+        raise BriefFailed("No Master brief reader has a TelegramUserID: Coordinator briefs sent, Master brief not sent")
     if failed:
         raise BriefFailed(f"{failed} of {len(messages)} messages were not queued")
     return BriefResult(messages=tuple(messages), sent=sent, changed=changed, llm_failed=len(llm_failed))
@@ -277,58 +289,25 @@ def record_concerns(
     log(f"brief record-message ok={ok} missing_id={missing} refused={refused}")
 
 
-def scan_concerns(notion, state, rules, log, budget: float = SCAN_BUDGET, monotonic: Callable[[], float] = time.monotonic) -> None:
-    """``concern scan`` once for each gated project, so the API's Concerns are current when the brief reads them.
-
-    The owner is the project's one coordinator, as the API's person. A project with none or several coordinators (or one
-    the API does not know) is skipped. A refused or failed scan never stops the brief: its rule name is logged and the
-    brief goes on with the Concerns the API holds. The step has a total ``budget``; projects not reached are skipped.
-    """
-    people = {}
+def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[tuple[list[RaiseConcern], list[RaiseConcern]], bool]:
+    """The open Concerns and the pending closes of the gated projects, from ``concern list --raise-at-psr`` (read after the
+    observe, so a Concern this run found again is current), with the text of the open ones from ``concern list --open`` (a pending close carries its own). If the API does
+    not answer both sections are left out: ``(([], []), False)``."""
     try:
-        people = notion.t6_person_ids()
-    except Exception as exc:  # any failure: the brief goes on
-        log(f"brief scan unavailable error={type(exc).__name__}")
-    ok = skipped = failed = 0
-    started = monotonic()
-    for page_id in sorted(state):
-        coordinators = [r["id"] for r in state[page_id].get("T6 Post Coordinator") or [] if isinstance(r, dict)]
-        if len(coordinators) != 1:
-            log(f"brief scan skipped reason=coordinators n={len(coordinators)}")
-            skipped += 1
-        elif coordinators[0] not in people:
-            log("brief scan skipped reason=owner")
-            skipped += 1
-        elif monotonic() - started >= budget:
-            skipped += 1
-        else:
-            try:
-                scan(notion.client, rules[page_id].t6_id or page_id, people[coordinators[0]])
-                ok += 1
-            except Exception as exc:  # the rule name of a refusal; for any other error its type only
-                log(f"brief scan failed error={exc if isinstance(exc, ConcernApiError) else type(exc).__name__}")
-                failed += 1
-    log(f"brief scan ok={ok} skipped={skipped} failed={failed}")
-
-
-def raise_at_psr(notion, state, rules, names, contacts, log) -> tuple[list[RaiseConcern], bool]:
-    """The open, unsnoozed Concerns of the gated projects, from ``concern list --raise-at-psr`` (read after the observe, so
-    a Concern this run found again is current), with their text from ``concern list --open``. If the API does not answer
-    the section is left out: ``([], False)``."""
-    try:
-        raised = raise_at_psr_concerns(notion.client)
+        raised, pending = raise_at_psr_concerns(notion.client)
         texts = {c["id"]: c["text"] for c in open_concerns(notion.client)}
         people = notion.t6_person_ids()
         page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
         page_of.update({p: p for p in state})  # a project the API does not know by a T6 ID is sent and listed by its page id
-        return raise_concerns(
-            raised, texts, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
+        lines = lambda items: raise_concerns(
+            items, texts, {p: names[p] for p in state}, page_of, {t6: page for page, t6 in people.items()},
             {page: c.name for page, c in contacts.items()},
             {p: tuple(r["id"] for r in state[p].get("T6 Post Coordinator") or [] if isinstance(r, dict)) for p in state},
-        ), True
-    except Exception as exc:  # any failure, a malformed reply too: the section is left out and the brief goes on
+        )
+        return (lines(raised), lines(pending)), True
+    except Exception as exc:  # any failure, a malformed reply too: the sections are left out and the brief goes on
         log(f"brief raise at psr unavailable error={exc if isinstance(exc, (ConcernApiError, ApiUnavailable)) else type(exc).__name__}")
-        return [], False
+        return ([], []), False
 
 
 def observe_concerns(
@@ -410,7 +389,7 @@ def leave_concerns(
     return Leaves(found.concerns, cyril_notes=unmatched)
 
 
-def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:
+def diff_windows(conn, old_id, new_id, first, new_state) -> dict[str, list[Window]]:
     """Each gated project's property changes for the two windows: since the last brief and since the PSR.
 
     ``since_last_brief`` runs from the previous Friday snapshot to this one, ``since_psr`` from the
@@ -420,7 +399,10 @@ def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str,
     if first:
         return {}
     new_at = datetime.fromisoformat(snapshot_info(conn, new_id).taken_at)
-    spans = [("since_psr", old_id, {c.page_id: c for c in since_psr})]
+    psr = {p: s for p, s in load_snapshot(conn, old_id).items() if p in new_state}
+    psr_at = datetime.fromisoformat(snapshot_info(conn, old_id).taken_at)
+    psr_diffs = diff_snapshots(psr, new_state, psr_at.astimezone(MANILA).date(), new_at.astimezone(MANILA).date())
+    spans = [("since_psr", old_id, {c.page_id: c for c in psr_diffs})]
     last = previous_friday(conn, new_id)
     if last is not None:
         prev = {p: s for p, s in load_snapshot(conn, last).items() if p in new_state}

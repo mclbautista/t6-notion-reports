@@ -32,8 +32,8 @@ SECTIONS = (  # (heading, departments in it), after TOC and AE
     ("🟣 For COOR & ADMIN", ("COOR", "ADMIN")),
 )
 NO_DEPARTMENT_HEADING = "🔴 No Department"
-# The emoji each Health flag the API returns shows with (layout).
-HEALTH_EMOJI = {"Blocked": "🔴", "Delayed": "⚠️", "Urgent": "🔥"}
+# The icon each Health name the API returns shows with (layout).
+HEALTH_ICON = {"Closed": "✅", "Blocked": "🔴", "Delayed": "⚠️", "Urgent": "🔥", "Advanced": "⚡️", "On Track": "🔵"}
 UNASSIGNED = "Unassigned"
 
 
@@ -131,9 +131,9 @@ def assignee_names(fields: Fields) -> list[str]:
 def turnover_line(
     page_id: str, fields: Fields, rules: JoRules, summarizer: TaskSummarizer, owner: str | None,
 ) -> Line:
-    """``[health emoji]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
+    """``[health icon]<JO ID> - <task> - <Status> - <deadline>[ - also: <names>]``; the JO ID links to Notion."""
     others = [n for n in assignee_names(fields) if n != owner]
-    parts: list = [next((HEALTH_EMOJI[f] for f in rules.health_flags if f in HEALTH_EMOJI), ""),
+    parts: list = [HEALTH_ICON.get(rules.health_name or "", ""),
                    link(jo_id_text(fields), page_url(page_id)),
                    f" - {task_label(fields.get('Task'), for_page(summarizer, page_id))}",
                    f" - {fields.get('Status') or 'no status'}",

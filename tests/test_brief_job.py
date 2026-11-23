@@ -27,6 +27,7 @@ def contacts():
     out = [contact("c-oto", "Oto"), contact(CYRIL_ID, "Owner"), contact("c-juno", "Juno Vex")]
     out[0]["properties"].update(tg("oto_h", 111))
     out[1]["properties"].update(tg("owner_h", 999))
+    out[1]["master_brief"] = True  # the owner reads the Master brief
     out[2]["properties"].update({"TelegramHandle": rich("@heyjunebug"), "TelegramUserID": {"type": "number", "number": None}})
     return out
 
@@ -90,7 +91,7 @@ def test_sends_dms_only_to_changed_coordinators_plus_digest_through_the_gateway(
     assert res.sent == 2 and res.failed == 0
     assert {(to, topic, key) for to, topic, key, _ in gw.sent} == {
         (111, None, "notion-reports-2026-11-15-c-oto"),
-        (999, None, "psr-digest-2026-11-15"),
+        (999, None, "master-brief-2026-11-15-c-owner"),
     }
 
 
@@ -108,7 +109,7 @@ def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed,
     gw, llm = FakeGateway(), FakeLlm(fail_for={"Show", "Dubbing"})
     result = run_brief(conn_unstaffed, FakeNotion.live(conn_unstaffed, contacts()), settings, SUNDAY,
                        gateway=gw, llm=llm, log=lambda _: None)
-    coordinator_messages = [m for m in result.messages if not m.key.startswith("psr-digest")]
+    coordinator_messages = [m for m in result.messages if not m.key.startswith("master-brief")]
     assert {m.to for m in coordinator_messages} == targets
     assert len(coordinator_messages) == len(targets)
     for message in coordinator_messages:
@@ -116,7 +117,7 @@ def test_coordinator_allowlist_limits_delivery_not_digest_or_llm(conn_unstaffed,
     digest = digest_text(gw)
     assert "QAZ" in digest and "DW" in digest
     assert "Oto" in digest and "Juno Vex" in digest
-    assert ("briefing posted in the group topic" in digest) is fallback
+    assert ("Coordinator brief posted in the group topic" in digest) is fallback
     assert {p["project"]["name"] for p in llm.users} == {"Show", "Dubbing"}
     assert result.llm_failed == 2
 
@@ -159,7 +160,7 @@ def test_configured_coordinator_allowlist_matches_notion_id_formats(tmp_path, co
     assert {m.to for m in result.messages} == {111, 999}
     assert any(m.key == f"notion-reports-2026-11-15-{notion_id}" for m in result.messages)
     assert "QAZ" in digest_text(gw) and "DW" in digest_text(gw)
-    assert "briefing posted in the group topic" not in digest_text(gw)
+    assert "Coordinator brief posted in the group topic" not in digest_text(gw)
 
 
 def digest_text(gw):
@@ -190,7 +191,7 @@ def test_dry_print_prints_and_sends_nothing(conn):
     res = run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SUNDAY, gateway=gw,
                     dry_print=True, out=printed.append, log=lambda _: None)
     assert gw.sent == [] and res.sent == 0 and len(res.messages) == 2
-    assert any("psr-digest-2026-11-15" in p for p in printed)
+    assert any("master-brief-2026-11-15-c-owner" in p for p in printed)
 
 
 def test_a_failed_send_does_not_stop_the_others_and_then_raises(conn):
@@ -267,7 +268,7 @@ def test_cli_dry_print_needs_no_secret_and_prints_to_stdout(tmp_path, monkeypatc
     cfg = write_config(tmp_path, seeded_db(tmp_path))
     assert main(["brief", "--dry-print", "--config", cfg], notion=AnyContacts(pages("Online"), cfg_contacts()), now=SUNDAY) == 0
     out = capsys.readouterr().out
-    assert "key=psr-digest-2026-11-15" in out and "QAZ" in out  # gitleaks:allow (idempotency key, not a secret)
+    assert f"key=master-brief-2026-11-15-{CFG_CYRIL}" in out and "QAZ" in out  # gitleaks:allow (idempotency key, not a secret)
 
 
 def test_cli_send_without_secret_is_a_config_error(tmp_path, monkeypatch, capsys):
@@ -292,7 +293,7 @@ def test_missing_cyril_id_sends_dms_then_fails(conn):
     gw = FakeGateway()
     no_id = [c for c in contacts()]
     no_id[1]["properties"]["TelegramUserID"] = {"type": "number", "number": None}
-    with pytest.raises(BriefFailed, match="digest"):
+    with pytest.raises(BriefFailed, match="Master brief"):
         run_brief(conn, FakeNotion.live(conn, no_id), BRIEF, SUNDAY, gateway=gw, log=lambda _: None)
     assert len(gw.sent) == 1
 
@@ -318,7 +319,7 @@ def test_brief_job_llm_failure_still_sends_and_digest_notes_it(conn_unstaffed):
                     llm=FakeLlm(fail_for={"Show"}), log=logs.append)
     texts = {key: text for _, _, key, text in gw.sent}
     assert "(LLM unavailable)" in texts["notion-reports-2026-11-15-c-oto"]
-    assert "LLM unavailable: QAZ" in texts["psr-digest-2026-11-15"]
+    assert "LLM unavailable: QAZ" in texts["master-brief-2026-11-15-c-owner"]
     assert res.sent == 3 and res.llm_failed == 1
     assert any("llm unavailable project=p1" in line for line in logs)
 
