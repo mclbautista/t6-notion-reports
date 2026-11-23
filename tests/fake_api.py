@@ -17,7 +17,13 @@ _ON_HOLD = {"standby", "archiving"}
 _INCOMING = {"leads", "lead", "negotiations", "proposal made"}
 _ROLES = ("editor_ids", "assistant_editor_ids", "online_editor_ids", "colorist_ids", "sound_tech_ids",
           "post_coordinator_ids", "director_ids", "cinematographer_ids")
-_HEALTH_FLAGS = ("Blocked", "Delayed", "Urgent")
+_HEALTH_NAMES = ("Closed", "Blocked", "Delayed", "Urgent", "Advanced", "On Track")
+
+
+def health_name(health):
+    """The JO Health formula read by its words, ignoring emoji and case (core #637); None when blank or unknown."""
+    words = " ".join(re.sub(r"[^\w\s]", "", str(health or "")).split()).casefold()
+    return next((n for n in _HEALTH_NAMES if n.casefold() == words), None)
 
 
 def status_key(status):
@@ -465,8 +471,9 @@ class FakeApi:
             status_name, health = opt("Status"), p["Health"]["formula"]["string"]
             orders.append({
                 "active": status_name not in ("Done", "Cancelled"), "done": status_name == "Done",
-                "health_flags": [f for f in _HEALTH_FLAGS if f.lower() in (health or "").lower()],
-                "status_group": {"Needs Intake Review": "not_started", "Pending": "not_started", "In progress": "started",
+                "health_name": health_name(health),
+                "status_group": {"Needs Intake Review": "not_started", "Pending": "not_started", "On Hold": "not_started",
+                                 "In progress": "started",
                                  "Needs Completion Review": "started", "Done": "started", "Cancelled": "cancelled"}.get(status_name),
                 "page_id": page["id"], "name": _text(p["Name"]), "number": _text(p["JO Number"]) or None,
                 "task": _text(p["Task"]) or None, "status": opt("Status"), "department": opt("Department"),

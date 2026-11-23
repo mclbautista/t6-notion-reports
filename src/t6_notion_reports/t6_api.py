@@ -259,7 +259,7 @@ class ApiNotion:
                 "Projects": [{"id": i, "name": labels.get(i)} for i in project_pages],
                 "last_edited_time": _notion_time(o.get("last_edited")),
             }
-            rules = JoRules(bool(o["active"]), tuple(o.get("health_flags") or ()), o.get("status_group"), bool(o["done"]))
+            rules = JoRules(bool(o["active"]), o.get("health_name"), o.get("status_group"), bool(o["done"]))
             records.append(JoRecord(o["page_id"], fields, rules))
         return records
 

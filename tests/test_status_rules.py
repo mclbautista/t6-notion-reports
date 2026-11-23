@@ -157,7 +157,7 @@ def test_the_minutes_count_an_incoming_status_as_incoming(status):
 
 # ---- shift reports ----
 
-def test_the_shift_report_lists_the_job_orders_the_api_says_are_active_and_shows_its_health_flags():
+def test_the_shift_report_lists_the_job_orders_the_api_says_are_active_and_shows_its_health_icon():
     from test_shift_report import MID, jo, run, world
     from t6_notion_reports.jo_snapshots import connect
     fake = world(jo("j1", st="Pending", health="🔴 Blocked"), jo("j2", st="Done"), jo("j3", st="Pending", health="🔵 On Track"))
