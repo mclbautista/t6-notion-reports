@@ -5,7 +5,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from .briefing import AFTER_PSR, RAISE_UNAVAILABLE_NOTE, OutboundMessage, Settings, build_briefing, digest_missing
@@ -25,7 +25,7 @@ from .mom_lines import Minutes, load_minutes
 from .rules import ProjectRules
 from .schedule import MANILA
 from .snapshots import (
-    RELATION_FIELDS, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
+    RELATION_FIELDS, brief_diff_pair, default_diff_pair, latest_snapshot_ids, load_snapshot, previous_friday, snapshot_info,
 )
 from .status_gate import gate, is_archiving, looks_like_in_progress
 from .t6_api import ApiUnavailable
@@ -42,6 +42,8 @@ RECORD_CAP = 2 * 60  # seconds for the whole record-message step
 
 # The sources of a finding, as ``concern observe`` names them.
 FLAG_RULE, PM_NOTES_READ, LEAVE = "flag_rule", "pm_notes_read", "leave"
+STALE_AFTER = timedelta(days=2)  # the brief refuses a newest snapshot older than this
+STALE_NOTE = "⚠️ Changes not shown: the latest snapshot is too old"
 HISTORY_UNAVAILABLE_NOTE = "⚠️ Concern history unavailable"
 
 
@@ -85,12 +87,12 @@ def run_brief(
     """
     dry_print = dry_print or show_llm_input  # inspecting payloads never sends
     leaves_llm = llm if leaves_llm is None else leaves_llm
-    pair = default_diff_pair(conn)
+    pair = brief_diff_pair(conn)
     first = False
     if pair is None:
         latest = latest_snapshot_ids(conn, 1)
         if not latest:
-            out("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one)")
+            out("first snapshot, no changes yet (need a Tuesday (kind friday) snapshot and an earlier Monday one)")
             log("brief baseline=True sent=0 failed=0")
             return BriefResult(baseline=True)
         # Only one comparison point exists: brief without a changes section.
@@ -98,12 +100,21 @@ def run_brief(
         old_id = new_id = latest[0]
     else:
         old_id, new_id = pair
+    psr_id = (default_diff_pair(conn) or (old_id, new_id))[0]  # the Monday snapshot: the start of the since-PSR window
+    stale = False
+    if not first:
+        taken = datetime.fromisoformat(snapshot_info(conn, new_id).taken_at)
+        if now - taken > STALE_AFTER:  # the Tuesday snapshot was missed: its changes are last week's, not this week's
+            stale = True
+            old_id = new_id
+            log(f"brief snapshot stale snapshot={new_id}")
+    no_diff = first or stale
     raw_old, raw_new = load_snapshot(conn, old_id), load_snapshot(conn, new_id)
     rules = gate_rules(notion, raw_old, raw_new)
     old_state, new_state = apply_gate(raw_old, raw_new, rules, log)
     old_on = snapshot_info(conn, old_id).taken_at
     new_on = snapshot_info(conn, new_id).taken_at
-    changes = [] if first else diff_snapshots(
+    changes = [] if no_diff else diff_snapshots(
         old_state, new_state,
         datetime.fromisoformat(old_on).astimezone(MANILA).date(),
         datetime.fromisoformat(new_on).astimezone(MANILA).date(),
@@ -115,7 +126,7 @@ def run_brief(
     outcomes: dict[str, Outcome] = {}
     contacts = notion.read_contacts()  # read once: the messages
     if llm is not None or show_llm_input:
-        windows = diff_windows(conn, old_id, new_id, first, new_state, changes)
+        windows = diff_windows(conn, psr_id, new_id, no_diff, new_state)
         minutes = None
         if meeting_notes_ds:
             try:
@@ -177,12 +188,13 @@ def run_brief(
     )
     (raised, closing), raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
-    changes = with_consolidation(changes, outcomes, names, new_state, new_day, first)
+    changes = with_consolidation(changes, outcomes, names, new_state, new_day, no_diff)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
-    cyril = (contacts.get(cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
+    norm = lambda cid: cid.replace("-", "").lower()  # a hyphen-less or upper-case id in the config still names the owner
+    cyril = next((c for cid, c in contacts.items() if norm(cid) == norm(cyril_id)), Contact(cyril_id, "Cyril")) if cyril_id else None
     try:
-        masters = notion.master_brief_pages()
+        masters = notion.master_brief_pages(log)
     except OSError as exc:  # no reader is known: the Master brief goes to nobody, and the run fails below
         log(f"brief master brief readers unavailable error={type(exc).__name__}")
         masters = set()
@@ -200,7 +212,7 @@ def run_brief(
     messages = build_briefing(
         changes, coordinators_in(old_state, new_state), contacts, settings, now.astimezone(MANILA).date(),
         llm_failed, active_coordinators_in(new_state, rules), first=first,
-        notes=[*leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if raised_ok else (RAISE_UNAVAILABLE_NOTE,))],
+        notes=[*(() if not stale else (STALE_NOTE,)), *leaves.notes, *(() if history else (HISTORY_UNAVAILABLE_NOTE,)), *(() if raised_ok else (RAISE_UNAVAILABLE_NOTE,))],
         cyril_notes=list(leaves.cyril_notes), raise_at_psr=raised, closing=closing,
     )
     no_digest = digest_missing(settings)
@@ -377,7 +389,7 @@ def leave_concerns(
     return Leaves(found.concerns, cyril_notes=unmatched)
 
 
-def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str, list[Window]]:
+def diff_windows(conn, old_id, new_id, first, new_state) -> dict[str, list[Window]]:
     """Each gated project's property changes for the two windows: since the last brief and since the PSR.
 
     ``since_last_brief`` runs from the previous Friday snapshot to this one, ``since_psr`` from the
@@ -387,7 +399,10 @@ def diff_windows(conn, old_id, new_id, first, new_state, since_psr) -> dict[str,
     if first:
         return {}
     new_at = datetime.fromisoformat(snapshot_info(conn, new_id).taken_at)
-    spans = [("since_psr", old_id, {c.page_id: c for c in since_psr})]
+    psr = {p: s for p, s in load_snapshot(conn, old_id).items() if p in new_state}
+    psr_at = datetime.fromisoformat(snapshot_info(conn, old_id).taken_at)
+    psr_diffs = diff_snapshots(psr, new_state, psr_at.astimezone(MANILA).date(), new_at.astimezone(MANILA).date())
+    spans = [("since_psr", old_id, {c.page_id: c for c in psr_diffs})]
     last = previous_friday(conn, new_id)
     if last is not None:
         prev = {p: s for p, s in load_snapshot(conn, last).items() if p in new_state}

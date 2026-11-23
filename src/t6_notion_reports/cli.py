@@ -404,7 +404,7 @@ def _diff_conn(conn, args) -> int:
     if args.old is None and args.new is None:
         pair = default_diff_pair(conn)
         if pair is None:
-            print("first snapshot, no changes yet (need a Friday snapshot and an earlier Monday one; "
+            print("first snapshot, no changes yet (need a Tuesday (kind friday) snapshot and an earlier Monday one; "
                   "or pass --old and --new)")
             return 0
         old_id, new_id = pair

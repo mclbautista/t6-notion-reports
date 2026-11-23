@@ -93,4 +93,4 @@ def raise_concerns(raised: list[Mapping[str, Any]], texts: Mapping[str, str], la
                                 None if age is None else int(age) // 86400, closing_by,
                                 None if closed is None else datetime.fromtimestamp(closed, MANILA).date()))
     # Oldest first within a project: the most days open, then the earliest evidence, then the ID.
-    return sorted(out, key=lambda q: (q.project.lower(), -(q.open_days or 0), q.evidence_on or date.min, q.concern_id))
+    return sorted(out, key=lambda q: (q.project.lower(), q.page_id, -(q.open_days or 0), q.evidence_on or date.min, q.concern_id))

@@ -52,7 +52,7 @@ def test_master_brief_readers_that_cannot_be_read_fail_the_run_and_the_log_names
     gw, logs = Gateway(), []
     with pytest.raises(BriefFailed):
         run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, log=logs.append)
-    assert "brief master brief readers unavailable error=ApiUnavailable" in logs
+    assert "brief master brief reader unavailable error=ApiUnavailable" in logs
 
 
 def test_private_notes_reach_only_the_owners_master_brief():
@@ -86,3 +86,84 @@ def test_the_channel_gets_a_coordinator_brief_even_for_a_coordinator_without_a_t
     ida = [(to, topic, text) for to, topic, key, text in gw.sent if key == "notion-reports-2026-11-14-c-ida"]
     assert ida and ida[0][:2] == (-1000000000002, 3) and not ida[0][2].startswith("@")
     assert "has no Telegram id" not in "\n".join(text for to, *_, text in gw.sent if to == 999)
+
+
+def _master_texts(gw):
+    return {to for to, _, _, text in gw.sent if text.startswith("<b>Master brief")}
+
+
+def test_one_failed_person_get_drops_only_that_person_and_logs_the_error_type_only():
+    conn, notion = world(masters=("c-owner", "c-ida"))
+    real = notion.api.person_get
+    notion.api.person_get = lambda inputs: down() if inputs.person_id == "c-ida" else real(inputs)
+    gw, logs = Gateway(), []
+    run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, log=logs.append)
+    assert _master_texts(gw) == {999}
+    assert {111, 222} <= {to for to, *_ in gw.sent}  # the Coordinator briefs still go
+    assert "brief master brief reader unavailable error=ApiUnavailable" in logs
+    assert not any("c-ida" in line for line in logs)
+
+
+def test_master_brief_in_person_list_is_used_and_person_get_is_not_called():
+    conn, notion = world(masters=("c-owner", "c-ida"))
+    listed = notion.api.person_list
+    def person_list(inputs):
+        out = listed(inputs)
+        for p in out.result["people"]:
+            p["master_brief"] = p["page_id"] == "c-ida"  # the list says Ida only: it wins
+        return out
+    notion.api.person_list = person_list
+    notion.api.person_get = lambda inputs: pytest.fail("person get must not be called")
+    gw = Gateway()
+    run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, log=lambda _: None)
+    assert _master_texts(gw) == {222}
+
+
+def test_the_owner_is_recognised_whatever_the_id_spelling():
+    owner = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    people = contacts()
+    people[2]["id"] = owner
+    conn = make_db(*changed([("p1", "ONE", IN_PROGRESS, {})]))
+    notion = FakeNotion.live(conn, people)
+    gw = Gateway()
+    run_brief(conn, notion, replace(BRIEF, cyril_contact_id=owner.replace("-", "")), SATURDAY, gateway=gw, log=lambda _: None)
+    assert not any("set cyril_contact_id" in text for *_, text in gw.sent)
+
+
+def _two_weeks_db():
+    """Tuesday snapshot, Monday one, next Tuesday one: a Thursday change sits between the two Tuesdays only."""
+    from fake_notion import FakeNotion as FN
+    from t6_notion_reports.snapshot_job import run_snapshot
+    from t6_notion_reports.snapshots import SCHEMA
+    from test_gated_briefs import FRIDAY, MONDAY, proj
+    import sqlite3
+    from datetime import timedelta
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    run_snapshot(conn, FN([proj("p1", "ONE", stage="Offline")], contacts()), "friday", FRIDAY - timedelta(days=7))
+    run_snapshot(conn, FN([proj("p1", "ONE", stage="Online")], contacts()), "monday", MONDAY)  # changed Thursday
+    run_snapshot(conn, FN([proj("p1", "ONE", stage="Online")], contacts()), "friday", FRIDAY)
+    return conn
+
+
+def test_the_change_diff_runs_from_the_previous_tuesday_snapshot_not_the_monday_one():
+    conn = _two_weeks_db()
+    gw = Gateway()
+    run_brief(conn, FakeNotion.live(conn, contacts()), BRIEF, SATURDAY, gateway=gw, log=lambda _: None)
+    assert "Stage: Offline → Online" in "\n".join(text for to, _, _, text in gw.sent if to == 111)
+
+
+def test_a_diff_pair_whose_new_snapshot_is_over_two_days_old_is_refused_with_a_note():
+    conn, notion = world()
+    gw, logs = Gateway(), []
+    late = SATURDAY.replace(day=16)  # the snapshot is Fri 23:30 Manila: more than 2 days before
+    run_brief(conn, notion, BRIEF, late, gateway=gw, log=logs.append)
+    text = "\n".join(t for *_, t in gw.sent)
+    assert "Stage" not in text and "Offline" not in text
+    assert "snapshot is too old" in text
+    assert any(line.startswith("brief snapshot stale") for line in logs)
+
+
+def test_a_fresh_snapshot_is_not_refused():
+    gw = send()
+    assert "snapshot is too old" not in "\n".join(t for *_, t in gw.sent)
