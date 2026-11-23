@@ -1,5 +1,7 @@
 """``concern record-message`` after the brief is sent (#132): the Concern IDs of each message, the poll for the Telegram
 id, and a step that never changes what the brief does."""
+from dataclasses import replace
+
 import pytest
 
 from fake_api import FakeConcerns, down, refused
@@ -47,13 +49,13 @@ SLIP = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01"
 
 def unstaffed(*codes):
     """Projects with a Concern each (a submission before the playdate) and a missing Colorist, so each is listed. Two
-    coordinators, so a DM each; the Concern is shown once, in Raise at PSR, in the digest and in its owner's DM (#142)."""
+    coordinators, so a DM each; the Concern is shown once, in Open Concerns, in the digest and in its owner's DM (#142)."""
     pages = [proj(f"p{n}", code, IN_PROGRESS, coordinator="c-oto" if n == 1 else "c-ida", **staffed(Colorist=relation(), **SLIP))
              for n, code in enumerate(codes, 1)]
     return world(*pages)
 
 
-def go(conn, notion, gw, clock=None, brief=BRIEF, **kw):
+def go(conn, notion, gw, clock=None, brief=replace(BRIEF, concern_dm="coordinators"), **kw):
     clock = clock or Clock()
     logs = []
     res = run_brief(conn, notion, brief, SATURDAY, gateway=gw, log=logs.append, monotonic=clock.monotonic, sleep=clock.sleep, **kw)
@@ -122,7 +124,7 @@ def test_a_raise_at_psr_concern_is_recorded_with_the_message_that_shows_it():
     go(conn, notion, gw)
     concern = store.items[0]["id"]
     carriers = {r[1:3] for r in store.recorded if r[0] == concern}
-    shown = {(str(to), str(9000 + n)) for n, (to, _, _, text) in enumerate(gw.sent, 1) if "Raise at PSR" in text and "Vendor quote" in text}
+    shown = {(str(to), str(9000 + n)) for n, (to, _, _, text) in enumerate(gw.sent, 1) if "Open Concerns" in text and "Vendor quote" in text}
     assert carriers == shown and carriers
 
 
@@ -208,7 +210,7 @@ def test_the_send_loop_and_the_sent_counts_are_what_they_were():
     with pytest.raises(Exception) as err:
         go(conn, notion, gw)
     assert "1 of 3 messages were not queued" in str(err.value)
-    assert [(to, key) for to, _, key, _ in gw.sent] == [(111, "notion-reports-2026-11-14-c-oto"), (999, "psr-digest-2026-11-14")]
+    assert [(to, key) for to, _, key, _ in gw.sent] == [(111, "notion-reports-2026-11-14-c-oto"), (999, "master-brief-2026-11-14-c-owner")]
     assert all(r[1] in ("111", "999") for r in recorded(notion))  # the failed message has no ref: nothing to record
 
 

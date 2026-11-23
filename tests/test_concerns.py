@@ -45,7 +45,7 @@ def friday(conn, concern):
 
 def concern_lines(text):
     """The lines of a project that carry a date-sanity Concern. An open Concern is not one of them when the API answers:
-    it is in "Raise at PSR" (#142), which is where ``raised`` looks."""
+    it is in "Open Concerns" (#142), which is where ``raised`` looks."""
     return [ln for ln in lines_of(text) if "before" in ln and not ln.startswith(("Resolved", "• ONE:"))]
 
 
@@ -80,7 +80,7 @@ def test_a_line_the_run_no_longer_finds_stays_in_raise_at_psr_until_a_person_clo
     for week in (1, 2):
         text = digest(run(conn, store, week))
         (line,) = raised(text)
-        assert line.endswith("last evidence Nov 14") and "not seen" not in text
+        assert " · last evidence Nov 14 · " in line and "not seen" not in text
         assert not resolved_lines(text)
 
 
@@ -213,10 +213,10 @@ def test_a_project_with_only_an_open_concern_is_no_activity_its_concern_is_in_ra
     quiet = proj("p0", "QUIET", IN_PROGRESS, **staffed(**LATER))
     noisy = proj("p1", "ONE", IN_PROGRESS, coordinator="c-ida", **staffed(**SLIP))
     conn = make_db([quiet, noisy], [quiet, noisy])
-    gw = run(conn, FakeConcerns())
-    # nothing changed, so the DM holds only the header and Raise at PSR: the ownerless Concern goes to its project's coordinator
+    gw = run(conn, FakeConcerns(), brief=replace(BRIEF, concern_dm="coordinators"))
+    # nothing changed, so the DM holds only the header and Open Concerns: the ownerless Concern goes to its project's coordinator
     assert dm(gw, 111) == ""
-    assert dm(gw, 222).startswith("<b>PSR briefing") and raised(dm(gw, 222)) and "last evidence Nov 14" in dm(gw, 222)
+    assert dm(gw, 222).startswith("<b>Coordinator brief") and raised(dm(gw, 222)) and "last evidence Nov 14" in dm(gw, 222)
     assert digest(gw).count("Submission Deadline") == 1 and dm(gw, 222).count("Submission Deadline") == 1
     assert raised(digest(gw)) and "last evidence Nov 14" in digest(gw)
     assert "No changes on any project this week" in digest(gw)

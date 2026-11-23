@@ -30,7 +30,7 @@ def one(status, **props):
 
 
 def one_digest(status, **props):
-    """The digest for a single unchanged project: an open Concern is shown there once, in Raise at PSR, not in the project's lines."""
+    """The digest for a single unchanged project: an open Concern is shown there once, in Open Concerns, not in the project's lines."""
     page = proj("p1", "ONE", status, **props)
     return digest(brief(make_db([page], [page])))
 
@@ -179,7 +179,7 @@ def test_date_sanity_problems_are_listed_as_one_concern_each():
     text = one_digest(IN_PROGRESS, **staffed(Playdate=date("2026-12-10"), **{"Submission Deadline": date("2026-12-01")}))
     concerns = [ln for ln in lines_of(text) if "before" in ln]
     assert len(concerns) == 1 and "Submission Deadline" in concerns[0] and "Playdate" in concerns[0]
-    assert "Raise at PSR" in text and "Concerns" not in lines_of(text)
+    assert "Open Concerns" in text and "Concerns" not in lines_of(text)
 
     arch = one_digest(ARCHIVING, **staffed(**{"Submission Deadline": date("2026-12-01"), "Archival Deadline": date("2026-11-20")}))
     concerns = [ln for ln in lines_of(arch) if "before" in ln]
@@ -224,4 +224,4 @@ def test_date_sanity_concerns_also_apply_to_standby_and_leads():
     backwards = {"Playdate": date("2026-12-10"), "Submission Deadline": date("2026-12-01")}
     for status in (STANDBY, LEADS):
         text = one_digest(status, **staffed(**backwards))
-        assert len([ln for ln in lines_of(text) if "before" in ln]) == 1  # shown once, in Raise at PSR
+        assert len([ln for ln in lines_of(text) if "before" in ln]) == 1  # shown once, in Open Concerns

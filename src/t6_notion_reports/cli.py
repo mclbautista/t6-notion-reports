@@ -45,9 +45,9 @@ def main(argv=None, notion=None, now: datetime | None = None) -> int:
     dif.add_argument("--db", default=os.environ.get("PSR_DB"), help="default: data/psr.db")
     dif.add_argument("--old", type=int, help="snapshot id; default: latest Monday before the latest Friday")
     dif.add_argument("--new", type=int, help="snapshot id; default: latest Friday")
-    serve = sub.add_parser("serve", help="run the scheduler (Mon 11:00, Fri 23:30 and Sat 12:00 Manila)")
+    serve = sub.add_parser("serve", help="run the scheduler (Mon 11:00, Tue 23:30 and Wed 10:00 Manila)")
     serve.add_argument("--config", default="config.yaml")
-    brief = sub.add_parser("brief", help="send the Saturday briefing now")
+    brief = sub.add_parser("brief", help="send the Wednesday brief now")
     brief.add_argument("--config", default="config.yaml")
     brief.add_argument("--db", help="default: database_path from --config")
     brief.add_argument("--dry-print", action="store_true", help="render to stdout, send nothing")
@@ -281,7 +281,7 @@ def _switch_concerns(args) -> int:
 
 def _slots(cfg):
     slots = SLOTS + [BRIEF_SLOT] if cfg.brief else list(SLOTS)
-    if cfg.brief and cfg.meeting_notes_data_source:
+    if cfg.brief and cfg.meeting_notes_data_source and cfg.mom_enabled:
         slots.append(SEND_MOM_SLOT)
     if cfg.shift:
         slots += SHIFT_JOB_SLOTS
@@ -302,7 +302,7 @@ def _task_llm(cfg, task, dry_print=False):
 
 
 def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
-    """The scheduler's job: Monday = snapshot, then (when configured) the minutes draft."""
+    """The scheduler's job: Monday = snapshot, then (when configured and the MOM is not paused) the minutes draft."""
     def job(kind: str) -> None:
         moment = clock()
         if kind.startswith("shift"):
@@ -326,7 +326,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
                       log=lambda text: print(text, flush=True))
             return
         _snapshot(conn, notion, kind, moment)
-        if kind == "monday" and cfg.meeting_notes_data_source:
+        if kind == "monday" and cfg.meeting_notes_data_source and cfg.mom_enabled:
             run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
                           log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"))
     return job

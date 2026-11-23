@@ -212,13 +212,13 @@ def test_logs_counts_only():
 
 # ---- CLI and scheduler job ----
 
-def cli_cfg(tmp_path, monkeypatch, notes=True, secret=True):
+def cli_cfg(tmp_path, monkeypatch, notes=True, secret=True, mom=True):
     import yaml
     cfg = {"projects_data_source": "11111111-1111-1111-1111-111111111111",
            "contacts_data_source": "22222222-2222-2222-2222-222222222222",
            "database_path": str(tmp_path / "psr.db"), "gateway_url": "http://gw:8780",
            "psr_group_chat_id": CHAT, "psr_group_topic_id": TOPIC,
-           "cyril_contact_id": "33333333-3333-3333-3333-333333333330"}
+           "cyril_contact_id": "33333333-3333-3333-3333-333333333330", "mom_enabled": mom}
     if notes:
         cfg["meeting_notes_data_source"] = "44444444-4444-4444-4444-444444444444"
     path = tmp_path / "config.yaml"
@@ -258,6 +258,7 @@ def test_scheduler_job_runs_the_check_and_serve_adds_the_slot(tmp_path, monkeypa
     cfg = load_config(cli_cfg(tmp_path, monkeypatch))
     assert SEND_MOM_SLOT in _slots(cfg)
     assert SEND_MOM_SLOT not in _slots(load_config(cli_cfg(tmp_path, monkeypatch, notes=False)))
+    assert SEND_MOM_SLOT not in _slots(load_config(cli_cfg(tmp_path, monkeypatch, mom=False)))  # the MOM is paused
     n, gw = setup(), FakeGateway()
     make_job(sqlite3.connect(":memory:"), n, cfg, gw, lambda: NOW)("send_mom")
     assert len(gw.sent) == 4 and gw.sent[0][:2] == (CHAT, TOPIC) and len(n.api.verbs("mark-sent")) == 1

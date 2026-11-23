@@ -98,6 +98,7 @@ class FakeConcerns:
         self.observed: list[object] = []  # the inputs of each call, dry runs included
         self.scans: list[object] = []  # the inputs of each ``concern scan``
         self.recorded: list[tuple[str, str, str, str | None, str]] = []  # (concern, chat, message_id, brief_date, key), once done
+        self.pending_list: set[str] | None = None  # the Concern IDs with a pending close; None: the API has no pending list
 
     def close(self, text_part, on):
         """A person closes the open Concern whose text holds ``text_part``, on the ISO date ``on``."""
@@ -199,6 +200,14 @@ class FakeApi:
                 "aliases": [a.strip() for a in _text(p.get("Aliases")).split(",") if a.strip()],
             })
         return self._done("person list", {"people": people})
+
+    def person_get(self, inputs):
+        """The Person ``person_id`` names (a T6 ID or a page id); ``master_brief`` is a Contact's top-level key in the fixtures."""
+        found = next((c for c in self.notion.contacts if inputs.person_id in (c["id"], self._ref(c["id"]))), None)
+        if found is None:
+            self.calls.append("person get")
+            return Refused(rule="person", reason="Contact not found")
+        return self._done("person get", {"person": {"page_id": found["id"], "master_brief": bool(found.get("master_brief"))}})
 
     def person_find(self, inputs):
         """The API's rule is not in this repo. The fake: a name matches a Contact by its name, an alias or its first word;
@@ -440,10 +449,13 @@ class FakeApi:
         if "concern list" in self.fail:
             return self.fail["concern list"]
         if inputs.raise_at_psr:  # every open, unsnoozed Concern, oldest evidence first; no text, no label
-            return Done(result={"concerns": [
-                {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
-                 "age_seconds": 0, "evidence_at": i.get("evidence_at", 0.0)}
-                for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]})
+            row = lambda i: {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
+                             "age_seconds": i.get("age_seconds", 0), "evidence_at": i.get("evidence_at", 0.0)}
+            listed = [i for i in sorted(self.concerns.items, key=lambda i: (i.get("evidence_at", 0.0), i["id"])) if i["state"] == "open"]
+            if self.concerns.pending_list is None:  # an API before the pending closes (core #639): one list
+                return Done(result={"concerns": [row(i) for i in listed]})
+            return Done(result={"concerns": [row(i) for i in listed if i["id"] not in self.concerns.pending_list],
+                                "pending": [row(i) for i in listed if i["id"] in self.concerns.pending_list]})
         return Done(result={"concerns": [
             {"id": i["id"], "project_id": self._ref(i["project"]), "owner_id": i["owner"], "waiting_on": i.get("waiting_on"),
              "text": i["text"], "source": i["source"], "state": i["state"], "age_seconds": 0, "chronic": False}

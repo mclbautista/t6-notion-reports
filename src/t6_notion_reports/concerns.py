@@ -29,8 +29,8 @@ class AgedConcerns:
 
 @dataclass(frozen=True)
 class RaiseConcern:
-    """An open, unsnoozed Concern for "Raise at PSR": its project (the label the brief shows), text, owner (a Contacts page
-    id and the name shown), the party it waits on and the date of its last evidence."""
+    """A Concern line of the brief ("Open Concerns" or "Closing after PSR"): its project (the label the brief shows), text,
+    owner (a Contacts page id and the name shown), the party it waits on, the date of its last evidence and its age."""
 
     concern_id: str
     page_id: str
@@ -41,6 +41,7 @@ class RaiseConcern:
     waiting_on: str | None = None
     evidence_on: date | None = None
     coordinators: tuple[str, ...] = ()  # Contacts page ids of the project's coordinators: an ownerless Concern goes to their DMs
+    open_days: int | None = None  # whole days since it opened, from the API's age_seconds
 
 
 def age_text(opened_on: date, weeks: int, chronic: bool) -> str:
@@ -58,7 +59,7 @@ def line_text(concern: Mapping[str, Any]) -> str:
 def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dict[str, AgedConcerns]:
     """The reply of ``concern observe`` by project page id. ``page_of`` maps a T6 project id to its page id; a project
     of the reply that is not in it is not in this brief. Only the Concerns closed since the last run are lines of a
-    project: an open Concern is shown once, in "Raise at PSR", and a snoozed one nowhere."""
+    project: an open Concern is shown once, in "Open Concerns", and a snoozed one nowhere."""
     return {
         page_of[p["project_id"]]: AgedConcerns(resolved=tuple(c["text"] for c in p["closed_since_last_run"]))
         for p in reply["projects"] if p["project_id"] in page_of
@@ -68,10 +69,11 @@ def aged_from_reply(reply: Mapping[str, Any], page_of: Mapping[str, str]) -> dic
 def raise_concerns(raised: list[Mapping[str, Any]], texts: Mapping[str, str], labels: Mapping[str, str], page_of: Mapping[str, str],
                    contact_of: Mapping[str, str], names: Mapping[str, str],
                    coordinators_of: Mapping[str, tuple[str, ...]] = {}) -> list[RaiseConcern]:
-    """The Concerns of ``concern list --raise-at-psr`` that belong to a project of this brief, in the API's order.
+    """The Concerns of ``raised`` (a list of ``concern list --raise-at-psr``) that belong to a project of this brief, sorted
+    by project, then oldest first.
 
-    The API decides which Concerns are listed (every open, unsnoozed one, oldest evidence first); its reply carries no
-    text, so ``texts`` gives the text of each Concern ID from ``concern list --open``. ``labels`` is the label of each
+    The API decides which Concerns are listed; its reply carries no text, so ``texts`` gives the text of each Concern ID
+    from ``concern list --open``. ``labels`` is the label of each
     project page id, ``page_of`` maps a T6 project id to its page id, ``contact_of`` a T6 Person ID to a Contacts page
     id, ``names`` a Contacts page id to the name shown and ``coordinators_of`` a project page id to its coordinators' Contacts page ids."""
     out = []
@@ -81,5 +83,8 @@ def raise_concerns(raised: list[Mapping[str, Any]], texts: Mapping[str, str], la
             continue
         owner = contact_of.get(c.get("owner_id") or "")
         evidence = datetime.fromtimestamp(c["evidence_at"], MANILA).date() if c.get("evidence_at") is not None else None
-        out.append(RaiseConcern(c["id"], page, labels[page], texts[c["id"]], owner, names.get(owner) if owner else None, c.get("waiting_on") or None, evidence, coordinators_of.get(page, ())))
-    return out
+        age = c.get("age_seconds")
+        out.append(RaiseConcern(c["id"], page, labels[page], texts[c["id"]], owner, names.get(owner) if owner else None, c.get("waiting_on") or None, evidence, coordinators_of.get(page, ()),
+                                None if age is None else int(age) // 86400))
+    # Oldest first within a project: the most days open, then the earliest evidence, then the ID.
+    return sorted(out, key=lambda q: (q.project.lower(), -(q.open_days or 0), q.evidence_on or date.min, q.concern_id))

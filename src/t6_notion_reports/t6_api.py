@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
+    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonGetInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
     ProjectListInput, Refused, StudioNoticesInput,
 )
 
@@ -162,6 +162,14 @@ class ApiNotion:
     def t6_person_ids(self) -> dict[str, str]:
         """Contacts page id -> T6 Person ID, for the Contacts the API has bound to a Person."""
         return {p["page_id"]: p["t6_id"] for p in self._people() if p.get("t6_id")}
+
+    def master_brief_pages(self) -> set[str]:
+        """Contacts page ids of the Persons with ``master_brief`` on. ``person list`` does not carry the flag, so each
+        Contact with a Telegram user id (only they can get a DM) is read with ``person get``."""
+        return {
+            p["page_id"] for p in self._people() if p.get("telegram_user_id") is not None
+            and self._read(self.client.person_get, PersonGetInput(person_id=p.get("t6_id") or p["page_id"]))["person"].get("master_brief")
+        }
 
     def contact_names(self) -> dict[str, str | None]:
         return {p["page_id"]: p.get("name") for p in self._people()}

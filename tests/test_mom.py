@@ -202,10 +202,10 @@ def test_mom_pair_uses_monday_on_or_before_date_and_friday_before_it(conn):
 
 # ---- CLI ----
 
-def cli_setup(tmp_path, conn_path, meeting=True, monkeypatch=None):
+def cli_setup(tmp_path, conn_path, meeting=True, monkeypatch=None, mom=True):
     cfg = {"projects_data_source": "11111111-1111-1111-1111-111111111111",
            "contacts_data_source": "22222222-2222-2222-2222-222222222222",
-           "database_path": str(conn_path)}
+           "database_path": str(conn_path), "mom_enabled": mom}
     if meeting:
         cfg["meeting_notes_data_source"] = "11111111-1111-1111-1111-111111111111"
     path = tmp_path / "config.yaml"
@@ -249,12 +249,13 @@ def test_draft_mom_cli_without_the_api_writes_nothing(tmp_path, monkeypatch, cap
 
 # ---- scheduler ----
 
-def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
-    cfg = load_config(cli_setup(tmp_path, tmp_path / "psr.db", monkeypatch=monkeypatch))
+@pytest.mark.parametrize("mom, expected", [(True, ["friday", "draft", "monday"]), (False, ["friday", "monday"])])
+def test_scheduler_drafts_right_after_monday_snapshot_unless_the_mom_is_paused(tmp_path, monkeypatch, mom, expected):
+    cfg = load_config(cli_setup(tmp_path, tmp_path / "psr.db", monkeypatch=monkeypatch, mom=mom))
     conn = sqlite3.connect(":memory:")
     conn.executescript(SCHEMA)
     n = FakeNotion(pages(False), contacts())
-    now = [datetime(2026, 11, 13, 17, 59, tzinfo=MANILA)]
+    now = [datetime(2026, 11, 10, 17, 59, tzinfo=MANILA)]
 
     def sleep(seconds):
         now[0] += timedelta(seconds=seconds)
@@ -272,8 +273,8 @@ def test_scheduler_drafts_right_after_monday_snapshot(tmp_path, monkeypatch):
         wrapped(kind)
 
     Scheduler(swap_to_monday_data, lambda: now[0], sleep, log=lambda _: None).run(stop=lambda: now[0] >= end)
-    assert order == ["friday", "draft", "monday"]  # the draft happens inside the monday job
-    assert [i.title for i in n.api.verbs("create")] == ["PSR MOM 2026-11-16"]
+    assert order == expected  # the draft happens inside the monday job
+    assert [i.title for i in n.api.verbs("create")] == (["PSR MOM 2026-11-16"] if mom else [])
 
 
 # ---- holidays parser ----

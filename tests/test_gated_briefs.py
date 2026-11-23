@@ -28,6 +28,7 @@ def contacts():
     out = [contact("c-oto", "Oto"), contact("c-ida", "Ida"), contact("c-owner", "Owner")]
     for page, (h, i) in zip(out, (("oto_h", 111), ("ida_h", 222), ("owner_h", 999))):
         page["properties"].update(tg(h, i))
+    out[2]["master_brief"] = True  # the owner reads the Master brief
     return out
 
 
