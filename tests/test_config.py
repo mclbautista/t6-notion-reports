@@ -229,3 +229,9 @@ def test_digest_recipients_and_concern_scan_are_ignored_now(tmp_path):
     text = BRIEF_YAML + f'digest_recipients: ["{ID_A}"]\nconcern_scan: false\n'
     cfg = load_config(write(tmp_path, text), ENV)
     assert {"digest_recipients", "concern_scan"} <= set(cfg.ignored_keys) and not hasattr(cfg.brief, "concern_scan")
+
+
+def test_an_empty_or_blank_concerns_sheet_url_means_no_line(tmp_path):
+    for blank in ('""', '"   "'):
+        cfg = load_config(write(tmp_path, BRIEF_YAML + f"concerns_sheet_url: {blank}\n"), ENV)
+        assert cfg.brief.concerns_sheet_url is None

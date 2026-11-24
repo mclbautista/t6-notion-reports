@@ -92,6 +92,12 @@ def test_the_master_brief_links_the_concerns_sheet_when_the_setting_is_set_and_n
     assert SHEET not in dm(gw)
 
 
+def test_with_no_concerns_the_master_brief_has_no_sheet_line_even_when_the_setting_is_set():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    gw, _ = go(conn, notion, replace(COORDINATORS, concerns_sheet_url=SHEET))
+    assert "Concerns sheet" not in digest(gw)
+
+
 def test_without_the_setting_the_master_brief_has_no_sheet_line():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     stale(notion.api.concerns)

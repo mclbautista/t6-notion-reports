@@ -155,7 +155,7 @@ def build_briefing(
         people.append(("No coordinator", groups.no_coordinator))
     units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
     tail: list[Block] = _raise_block(OPEN_CONCERNS, raised) + _raise_block(CLOSING_AFTER_PSR, pending)
-    if settings.concerns_sheet_url:
+    if tail and settings.concerns_sheet_url:
         tail += [line(link("Concerns sheet", settings.concerns_sheet_url)), line()]
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))

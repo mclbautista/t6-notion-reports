@@ -162,7 +162,9 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         coordinator_chat_id=_integer(raw, "coordinator_brief_chat_id") if "coordinator_brief_chat_id" in raw else None,
         coordinator_topic_id=_integer(raw, "coordinator_brief_topic_id") if "coordinator_brief_topic_id" in raw else None,
         concern_dm=_choice(raw, "concern_dm", CONCERN_DM, "master"),
-        concerns_sheet_url=_http_url(raw, "concerns_sheet_url") if "concerns_sheet_url" in raw else None,
+        concerns_sheet_url=(
+            _http_url(raw, "concerns_sheet_url")
+            if "concerns_sheet_url" in raw and str(raw["concerns_sheet_url"] or "").strip() else None),
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
