@@ -22,7 +22,10 @@ SUMMARY_BUDGET = 5 * 60  # seconds for all the summaries of one report; the rest
 
 SYSTEM = (
     "You label a Job Order's task for a shift report. Reply with a summary of the task in at most "
-    f"{MAX_WORDS} words, as the JSON field \"summary\"."
+    f"{MAX_WORDS} words, as the JSON field \"summary\". Keep these first, exactly as written: the "
+    "deliverable type code (such as FTR, Ep1, TLR, TSR, IMF, DCP), then any day or episode numbers "
+    "(such as D23-24, Ep1-4, Ep2). Use any words left for the action. Example: \"Export the DCP of the "
+    "FTR for D23-24\" gives \"FTR DCP D23-24\"."
 )
 
 
@@ -82,7 +85,7 @@ def summarize_tasks(
     conn: sqlite3.Connection, summarizer: TaskSummarizer, tasks: dict[str, object], now: datetime,
     budget: float = SUMMARY_BUDGET, monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[SummaryLookup, SummaryStats]:
-    """``tasks``: page id -> Task text. A cached (page id, hash of Task) makes no call; a new valid
+    """``tasks``: page id -> Task text. A cached (page id, hash of prompt and Task) makes no call; a new valid
     reply is stored (older Tasks' rows stay until retention removes them, so A, B, A makes two calls); an empty, too long or failed reply is a fallback and is not stored.
     Once one call failed on a timeout or provider failure (``LlmUnavailable``), or ``budget`` seconds have passed, no more
     calls are made: the rest take the fallback, so the report is not held."""
@@ -95,7 +98,7 @@ def summarize_tasks(
             text = str(task or "").strip()
             if not text:
                 continue
-            digest = hashlib.sha256(text.encode()).hexdigest()
+            digest = hashlib.sha256(f"{SYSTEM}\n{text}".encode()).hexdigest()  # a new prompt makes new summaries
             row = conn.execute("SELECT summary FROM jo_task_summaries WHERE page_id = ? AND task_hash = ?",
                                (page_id, digest)).fetchone()
             if row:
