@@ -1,4 +1,5 @@
 """Task summaries: the summarizer over a fake ``llm run`` API, the cache and its retention (#77)."""
+import hashlib
 import re
 
 import pytest
@@ -8,7 +9,7 @@ from fake_llm_api import FakeLlmApi, invalid, ok, refused, unreachable
 from t6_notion_reports.jo_snapshots import connect, take_snapshot
 from t6_notion_reports.llm_api import ApiLlm
 from t6_notion_reports.shift_job import run_shift_report
-from t6_notion_reports.task_summary_llm import LlmTaskSummarizer, summarize_tasks
+from t6_notion_reports.task_summary_llm import SYSTEM, LlmTaskSummarizer, summarize_tasks
 from test_shift_report import PM, jo, prior, world
 
 NOW = datetime(2026, 11, 3, 19, tzinfo=timezone(timedelta(hours=8)))
@@ -73,6 +74,22 @@ def test_cached_jo_makes_no_call_and_a_changed_task_is_summarised_again():
     _, stats = summarize_tasks(conn, s, {"p1": "Fix the audio sync"}, NOW)
     assert stats.new == 1 and len(t.sent) == 2
     assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 2  # the old Task's summary stays cached
+
+
+def test_the_prompt_puts_deliverable_codes_and_day_or_episode_numbers_first():
+    for code in ("FTR", "Ep1", "TLR", "TSR", "IMF", "DCP", "D23-24", "Ep1-4", "Ep2"):
+        assert code in SYSTEM
+
+
+def test_a_summary_cached_under_an_older_prompt_is_made_again():
+    conn = connect()
+    old_hash = hashlib.sha256(b"Export DCP for FTR D23-24").hexdigest()  # the key before the prompt counted
+    conn.execute("INSERT INTO jo_task_summaries VALUES (?, ?, ?, ?, ?)",
+                 ("p1", old_hash, "Export the DCP", NOW.isoformat(), NOW.isoformat()))
+    t = FakeLlmApi(reply("FTR DCP D23-24"))
+    lookup, stats = summarize_tasks(conn, summarizer(t), {"p1": "Export DCP for FTR D23-24"}, NOW)
+    assert (stats.new, stats.cached) == (1, 0) and len(t.sent) == 1
+    assert lookup.for_page("p1").summarize("Export DCP for FTR D23-24") == "FTR DCP D23-24"
 
 
 def test_task_a_then_b_then_a_again_reuses_the_cached_summary_of_a():
