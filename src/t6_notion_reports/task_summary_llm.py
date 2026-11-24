@@ -22,7 +22,8 @@ SUMMARY_BUDGET = 5 * 60  # seconds for all the summaries of one report; the rest
 
 SYSTEM = (
     "You label a Job Order's task for a shift report. Reply with a summary of the task in at most "
-    f"{MAX_WORDS} words, as the JSON field \"summary\"."
+    f"{MAX_WORDS} words, as the JSON field \"summary\". If the task names a deliverable type, put it first: "
+    "FTR, Ep1, TLR, TSR, IMF or DCP. Then add the day or episode numbers, such as D23-24, Ep1-4 or Ep2."
 )
 
 

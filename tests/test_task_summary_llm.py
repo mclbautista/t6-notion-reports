@@ -52,6 +52,14 @@ def test_every_failure_gives_no_summary_and_the_report_shows_three_words(failure
     assert conn.execute("SELECT COUNT(*) FROM jo_task_summaries").fetchone()[0] == 0
 
 
+def test_the_prompt_puts_deliverable_types_and_day_or_episode_numbers_first():
+    api = FakeLlmApi(reply())
+    summarizer(api).summarize("TLR grade Ep2")
+    prompt = api.sent[0].prompt_template
+    for token in ("FTR", "Ep1", "TLR", "TSR", "IMF", "DCP", "D23-24", "Ep1-4", "Ep2"):
+        assert token in prompt
+
+
 def test_four_word_reply_becomes_a_fallback_and_is_not_cached():
     conn = connect()
     for api in (FakeLlmApi(reply("one two three four")),):
