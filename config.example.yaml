@@ -28,6 +28,7 @@ database_path: /app/data/psr.db
 # coordinator_brief_chat_id: -1000000000002   # FILL IN (channel mode): the channel's chat id
 # coordinator_brief_topic_id: 2              # FILL IN (channel mode, optional): the channel's topic id
 # concern_dm: master                       # master (default): Concerns only in the Master brief; coordinators: each Coordinator brief also lists its own
+# concerns_sheet_url: "https://docs.google.com/spreadsheets/d/EXAMPLE_SHEET_ID/edit"   # FILL IN (private config only): the Master brief links the Concerns sheet under its Concern sections; leave out for no line
 # Coordinator delivery only; the Master brief and LLM still include every eligible project.
 # Omit coordinator_recipients for all coordinators; [] disables every Coordinator brief.
 # coordinator_recipients:

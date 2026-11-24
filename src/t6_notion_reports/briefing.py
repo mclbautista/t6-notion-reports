@@ -12,7 +12,7 @@ from .concerns import RESOLVED_LABEL, RaiseConcern
 from .contacts import Contact
 from .diff import ProjectChange, group_by_coordinator, last_updated_text
 from .telegram_html import (
-    LIMIT, Block, Line, Quote, Span, bold, line, mention_handle, quote, render_line, render_messages, split_line,
+    LIMIT, Block, Line, Quote, Span, bold, line, link, mention_handle, quote, render_line, render_messages, split_line,
 )
 
 BANNER = "🧪 TEST"
@@ -49,6 +49,7 @@ class Settings:
     coordinator_recipients: tuple[str, ...] | None = None
     coordinator_channel: tuple[int, int | None] | None = None  # (chat, topic): every Coordinator brief goes there; None: DMs
     concern_dm: str = "master"  # "coordinators": a Coordinator brief also lists that coordinator's Concerns
+    concerns_sheet_url: str | None = None  # the Master brief links it under the Concern sections; None: no line
 
 
 def digest_missing(settings: Settings) -> bool:
@@ -154,6 +155,8 @@ def build_briefing(
         people.append(("No coordinator", groups.no_coordinator))
     units = _units([(line(bold(name)), projects) for name, projects in people], DIGEST_SECTIONS, today)
     tail: list[Block] = _raise_block(OPEN_CONCERNS, raised) + _raise_block(CLOSING_AFTER_PSR, pending)
+    if tail and settings.concerns_sheet_url:
+        tail += [line(link("Concerns sheet", settings.concerns_sheet_url)), line()]
     if quiet:
         tail.append(line("No changes: " + ", ".join(quiet)))
     for name in fallbacks:

@@ -203,7 +203,7 @@ def run_brief(
     settings = Settings(
         cyril, brief.group_chat_id, brief.group_topic_id, brief.test_banner,
         master_recipients=master_contacts, coordinator_recipients=brief.coordinator_recipients,
-        coordinator_channel=channel, concern_dm=brief.concern_dm,
+        coordinator_channel=channel, concern_dm=brief.concern_dm, concerns_sheet_url=brief.concerns_sheet_url,
     )
     for ch in changes:
         ch.group = gate(rules.get(ch.page_id))

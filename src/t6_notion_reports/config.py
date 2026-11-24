@@ -25,7 +25,7 @@ SHIFT_KEYS = {"shift_reports_enabled", "shift_destinations", "shift_chat_id", "s
 SHIFT_REPORT_SLOTS = {"mid": "1130", "day": "1900", "night": "0500"}
 BRIEF_KEYS = {"gateway_url", "psr_group_chat_id", "psr_group_topic_id", "cyril_contact_id", "coordinator_recipients", "test_banner", "llm_model",
               "lead_warning_days", "pm_notes_weeks", "leave_clash_days", "coordinator_brief_destination", "coordinator_brief_chat_id",
-              "coordinator_brief_topic_id", "concern_dm"}
+              "coordinator_brief_topic_id", "concern_dm", "concerns_sheet_url"}
 COORDINATOR_DESTINATIONS = ("channel", "dm")
 CONCERN_DM = ("master", "coordinators")
 BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
@@ -60,6 +60,7 @@ class BriefSettings:
     coordinator_chat_id: int | None = None
     coordinator_topic_id: int | None = None
     concern_dm: str = "master"  # "coordinators": each Coordinator brief also carries that coordinator's Concerns
+    concerns_sheet_url: str | None = None  # the Concerns sheet; the Master brief links it, and has no line when unset
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,9 @@ def _brief(raw: dict, env: Mapping[str, str]) -> BriefSettings | None:
         coordinator_chat_id=_integer(raw, "coordinator_brief_chat_id") if "coordinator_brief_chat_id" in raw else None,
         coordinator_topic_id=_integer(raw, "coordinator_brief_topic_id") if "coordinator_brief_topic_id" in raw else None,
         concern_dm=_choice(raw, "concern_dm", CONCERN_DM, "master"),
+        concerns_sheet_url=(
+            _http_url(raw, "concerns_sheet_url")
+            if "concerns_sheet_url" in raw and str(raw["concerns_sheet_url"] or "").strip() else None),
         llm_model=_string(raw, "llm_model", default=DEFAULT_MODEL),
         lead_warning_days=_days(raw, "lead_warning_days", DEFAULT_LEAD_WARNING_DAYS),
         pm_notes_weeks=_days(raw, "pm_notes_weeks", DEFAULT_PM_NOTES_WEEKS, "weeks"),
@@ -178,9 +182,13 @@ def _days(raw: dict, key: str, default: int, unit: str = "days") -> int:
 
 
 def _gateway_url(raw: dict) -> str:
-    url = _string(raw, "gateway_url")
+    return _http_url(raw, "gateway_url")
+
+
+def _http_url(raw: dict, key: str) -> str:
+    url = _string(raw, key)
     if not url.startswith(("http://", "https://")):
-        raise ConfigError("invalid config key: gateway_url (expected an http(s) URL)")
+        raise ConfigError(f"invalid config key: {key} (expected an http(s) URL)")
     return url
 
 
