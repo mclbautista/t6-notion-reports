@@ -197,6 +197,8 @@ logs `brief snapshot stale`; take `snapshot --kind friday` by hand and rerun. It
   destination gets nothing until the next day.
 - `concern_dm` is `master` (the default) or `coordinators`. With `master` the Concerns are only in the Master brief;
   with `coordinators` each Coordinator brief also lists the Concerns that coordinator owns.
+- `concerns_sheet_url` (optional, an http(s) URL) puts one "Concerns sheet" link line under the Master brief's Concern
+  sections. Without it there is no line. The Coordinator briefs never carry it. Put the real URL only in the deployed `config.yaml`.
 
 Everything goes through the gateway's `POST /notify` (`PSR_SECRET` bearer, `format: "html"`). It is on only when
 the briefing keys are in `config.yaml` (see `config.example.yaml`); `PSR_SECRET` goes in `.env`.

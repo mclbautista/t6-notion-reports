@@ -192,6 +192,14 @@ def test_shift_llm_is_off_when_llm_calls_are_off_or_the_api_is_not_set(tmp_path,
 
 # ---- Wednesday brief delivery and the MOM pause (#147) ----
 
+def test_concerns_sheet_url_is_optional_and_must_be_an_http_url(tmp_path):
+    assert load_config(write(tmp_path, BRIEF_YAML), ENV).brief.concerns_sheet_url is None
+    cfg = load_config(write(tmp_path, BRIEF_YAML + "concerns_sheet_url: https://sheets.example.invalid/d/x\n"), ENV)
+    assert cfg.brief.concerns_sheet_url == "https://sheets.example.invalid/d/x"
+    with pytest.raises(ConfigError, match="concerns_sheet_url"):
+        load_config(write(tmp_path, BRIEF_YAML + "concerns_sheet_url: hunter2\n"), ENV)
+
+
 def test_coordinator_briefs_go_by_dm_concerns_to_the_master_brief_and_the_mom_is_paused_by_default(tmp_path):
     cfg = load_config(write(tmp_path, BRIEF_YAML), ENV)
     assert (cfg.brief.coordinator_destination, cfg.brief.coordinator_chat_id, cfg.brief.concern_dm) == ("dm", None, "master")

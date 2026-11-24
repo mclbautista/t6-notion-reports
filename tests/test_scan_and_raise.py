@@ -80,6 +80,25 @@ def test_a_dry_run_still_reads():
 EXPECTED = "• ONE: Vendor quote still missing · last evidence Nov 3 · owner Oto · waiting on the vendor · open 25 days"
 
 
+SHEET = "https://sheets.example.invalid/d/SHEET_ID"
+SHEET_LINE = f'<a href="{SHEET}">Concerns sheet</a>'
+
+
+def test_the_master_brief_links_the_concerns_sheet_when_the_setting_is_set_and_no_coordinator_brief_does():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    stale(notion.api.concerns)
+    gw, _ = go(conn, notion, replace(COORDINATORS, concerns_sheet_url=SHEET))
+    assert digest(gw).count(SHEET_LINE) == 1 and digest(gw).index("Vendor quote") < digest(gw).index(SHEET_LINE)
+    assert SHEET not in dm(gw)
+
+
+def test_without_the_setting_the_master_brief_has_no_sheet_line():
+    conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
+    stale(notion.api.concerns)
+    gw, _ = go(conn, notion)
+    assert "Concerns sheet" not in digest(gw)
+
+
 def test_an_open_concern_is_in_the_master_brief_with_the_evidence_date_the_owner_the_party_and_its_age():
     conn, notion = world(proj("p1", "ONE", IN_PROGRESS))
     stale(notion.api.concerns, waiting_on="the vendor")
