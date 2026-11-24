@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 # t6 is pinned to a t6-core tag (ADR 0002 rule 7).
 dependencies = [
     "PyYAML>=6", "pydantic>=2", "tzdata",
-    "t6[client] @ git+https://github.com/mclbautista/t6-core@v0.6.15",
+    "t6[client] @ git+https://github.com/mclbautista/t6-core@v0.6.24",
 ]
 
 [project.optional-dependencies]
