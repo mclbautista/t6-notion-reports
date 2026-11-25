@@ -180,6 +180,9 @@ class FakeNotion:
     def project_rules(self):
         return self._reads().project_rules()
 
+    def drive_project_weekly(self, today):
+        return self._reads().drive_project_weekly(today)
+
     def project_rule(self, page_id):
         return self._reads().project_rule(page_id)
 

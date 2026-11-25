@@ -189,6 +189,7 @@ def run_brief(
     (raised, closing), raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, no_diff)
+    changes = with_drive_activity(changes, notion, names, new_state, rules, new_day, today)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
     norm = lambda cid: cid.replace("-", "").lower()  # a hyphen-less or upper-case id in the config still names the owner
@@ -427,6 +428,26 @@ def minutes_for(minutes: Minutes | None, display_name: str, state: dict[str, obj
     return lines, {
         "page_date": minutes.page_date.isoformat(), "last_edited": minutes.last_edited, "sent_at": minutes.sent_at,
     }
+
+
+def with_drive_activity(changes, notion, names, state, rules, snap_day, today):
+    """Attach Drive traffic after consolidation, so an empty LLM summary cannot hide a Project's activity.
+
+    Match resolved Project IDs only, within the status gate; coordinator grouping stays with the brief renderer.
+    """
+    page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
+    page_of.update({p: p for p in state})
+    by_page = {ch.page_id: ch for ch in changes}
+    for row in notion.drive_project_weekly(today):
+        page_id = page_of.get(row["project"]["page_id"])
+        if page_id is None or not (row["out_count"] or row["in_count"] or row["overdue"]):
+            continue
+        lines = [f"Drives: {row['out_count']} OUT, {row['in_count']} IN"]
+        lines += [f"Drive {d['label'] or d['serial'] or d['drive_id']}: out {d['days_out']} days" for d in row["overdue"]]
+        if page_id not in by_page:
+            by_page[page_id] = unchanged_project(page_id, names, state[page_id], snap_day)
+        by_page[page_id].drive_lines = tuple(lines)
+    return sort_projects(list(by_page.values()))
 
 
 def with_consolidation(changes, outcomes, names, state, snap_day, first):
