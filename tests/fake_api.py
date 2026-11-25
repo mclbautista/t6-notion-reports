@@ -180,6 +180,7 @@ class FakeApi:
         self.calls: list[str] = []
         self.fail = dict(fail or {})
         self.writes: list[tuple[str, object]] = []
+        self.drive_weeks: dict[str, list[dict]] = {}  # Monday ISO date -> ``drive project-weekly`` rows
 
     @property
     def down(self):
@@ -320,6 +321,14 @@ class FakeApi:
 
     def project_list(self, inputs):
         return self._done("project list", {"projects": self._projects()})
+
+    def drive_project_weekly(self, inputs):
+        day = date.fromisoformat(inputs.week) if inputs.week else date(2026, 11, 14)
+        start = day - timedelta(days=day.weekday())
+        return self._done("drive project-weekly", {
+            "practice": True, "week_start": start.isoformat(), "week_end": (start + timedelta(days=6)).isoformat(),
+            "as_of": day.isoformat(), "projects": self.drive_weeks.get(start.isoformat(), []),
+        })
 
     def _projects(self):
         def ids(p, name):

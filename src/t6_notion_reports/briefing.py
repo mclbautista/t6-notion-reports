@@ -74,7 +74,7 @@ def build_briefing(
 ) -> list[OutboundMessage]:
     """``coordinators`` maps contact page id → name, for everyone who owns a project this week.
 
-    ``changes`` holds the changed projects plus any unchanged project with flags, Concerns or
+    ``changes`` holds the changed projects plus any unchanged project with flags, Concerns, Drive activity or
     consolidated changes. A project outside the status gate (``group`` is None) is left out.
     ``llm_failed`` names the projects whose LLM call failed, for the owner's digest.
 
@@ -344,6 +344,7 @@ def project_blocks(ch: ProjectChange, today: date | None = None) -> list[Block]:
     if ch.llm_failed:
         blocks.append(line(LLM_UNAVAILABLE))
     blocks += [line(text) for text in ch.flags]
+    blocks += [line(text) for text in ch.drive_lines]
     blocks += [line(f"📅 {text}") for text in ch.note_dates]
     if ch.concerns:
         blocks.append(line(bold("Concerns")))

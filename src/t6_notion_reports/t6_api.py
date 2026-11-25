@@ -19,7 +19,7 @@ from typing import Any, Callable, Mapping
 
 from t6.client import APIError, Client, Unavailable
 from t6.verbs import (
-    Done, JoListInput, MeetingNotesListInput, PersonFindInput, PersonGetInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
+    Done, DriveProjectWeeklyInput, JoListInput, MeetingNotesListInput, PersonFindInput, PersonGetInput, PersonListInput, ProjectFlagsInput, ProjectFlagsItem, ProjectGetInput,
     ProjectListInput, Refused, StudioNoticesInput,
 )
 
@@ -229,6 +229,10 @@ class ApiNotion:
     def project_rules(self) -> dict[str, ProjectRules]:
         """The rule results of every Project, by page id: one ``project list`` call."""
         return {p["page_id"]: _project_rules(p) for p in self._read(self.client.project_list, ProjectListInput())["projects"]}
+
+    def drive_project_weekly(self, today: date) -> list[dict[str, Any]]:
+        """Project Drive counts for the Manila week containing ``today``, and currently overdue Drives."""
+        return self._read(self.client.drive_project_weekly, DriveProjectWeeklyInput(week=today.isoformat()))["projects"]
 
     def project_rule(self, page_id: str) -> ProjectRules | None:
         """The rule results of one Project, or None when the API does not know the page."""

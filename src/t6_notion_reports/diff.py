@@ -66,6 +66,7 @@ class ProjectChange:
     summary: tuple[str, ...] = ()  # consolidated change lines, validated
     llm_failed: bool = False  # the LLM call failed: the raw changes are shown, marked "(LLM unavailable)"
     llm_update: date | None = None  # the "As of" date the LLM judged to be the last real update
+    drive_lines: tuple[str, ...] = ()  # weekly counts and overdue Drives, from ``drive project-weekly``
 
 
 @dataclass

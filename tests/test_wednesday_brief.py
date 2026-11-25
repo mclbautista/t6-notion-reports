@@ -10,6 +10,7 @@ from t6_notion_reports.brief_job import BriefFailed, run_brief
 from t6_notion_reports.briefing import Settings, build_briefing
 from t6_notion_reports.contacts import Contact
 from t6_notion_reports.diff import FieldChange, Person, ProjectChange
+from t6_notion_reports.t6_api import ApiUnavailable
 from test_gated_briefs import BRIEF, IN_PROGRESS, SATURDAY, Gateway, changed, contacts, make_db
 
 CHANNEL = replace(BRIEF, coordinator_destination="channel", coordinator_chat_id=-1000000000002, coordinator_topic_id=3)
@@ -167,3 +168,113 @@ def test_a_diff_pair_whose_new_snapshot_is_over_two_days_old_is_refused_with_a_n
 def test_a_fresh_snapshot_is_not_refused():
     gw = send()
     assert "snapshot is too old" not in "\n".join(t for *_, t in gw.sent)
+
+
+def test_unavailable_weekly_drives_are_logged_and_the_briefs_are_still_sent(monkeypatch):
+    expected = send().sent
+    conn, notion = world()
+
+    def unavailable(inputs):
+        raise ApiUnavailable("t6 API error status=404")
+
+    monkeypatch.setattr(notion.api, "drive_project_weekly", unavailable)
+    gw, logs = Gateway(), []
+    result = run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, log=logs.append)
+    assert result.sent == 3 and gw.sent == expected
+    assert all("Drives:" not in text and "Drive " not in text for *_, text in gw.sent)
+    assert "brief drives unavailable error=t6 API error status=404" in logs
+
+
+@pytest.mark.parametrize("brief", [BRIEF, CHANNEL])
+def test_weekly_drive_counts_and_each_overdue_drive_stay_under_their_project_and_coordinator(brief):
+    from test_gated_briefs import proj
+
+    rows = [proj("p1", "ONE"), proj("p2", "TWO", coordinator="c-ida"), proj("p3", "THREE")]
+    conn = make_db(rows, rows)
+    notion = FakeNotion.live(conn, contacts())
+    notion.t6_ids = {"p1": "t6_proj_one", "p2": "t6_proj_two"}
+    notion.api.drive_weeks["2026-11-09"] = [
+        {"project": {"page_id": "t6_proj_two", "text": None}, "out_count": 1, "in_count": 2,
+         "overdue": [{"drive_id": "drive-b", "label": "Box Beta", "serial": None, "person": "Receiver B",
+                      "released_on": "2026-10-29", "days_out": 16}]},
+        {"project": {"page_id": "t6_proj_one", "text": None}, "out_count": 3, "in_count": 1,
+         "overdue": [{"drive_id": "drive-a", "label": "Box Alpha", "serial": None, "person": "Receiver A",
+                      "released_on": "2026-10-25", "days_out": 20},
+                     {"drive_id": "drive-c", "label": None, "serial": "SYNTH-C", "person": None,
+                      "released_on": "2026-10-30", "days_out": 15}]},
+        {"project": {"page_id": "p3", "text": None}, "out_count": 2, "in_count": 0, "overdue": []},
+    ]
+    gw = Gateway()
+    run_brief(conn, notion, brief, SATURDAY, gateway=gw, log=lambda _: None)
+    by_key = {key: text for _, _, key, text in gw.sent}
+    oto = by_key["notion-reports-2026-11-14-c-oto"]
+    ida = by_key["notion-reports-2026-11-14-c-ida"]
+    master = by_key["master-brief-2026-11-14-c-owner"]
+    for text in (oto, master[master.index("<b>Oto</b>"):]):
+        one, three = text.split("<b>THREE · Show THREE</b>")
+        assert "<b>ONE · Show ONE</b>" in one and "Drives: 3 OUT, 1 IN" in one
+        assert "Drive Box Alpha: out 20 days" in one and "Drive SYNTH-C: out 15 days" in one
+        assert "Drives: 2 OUT, 0 IN" in three
+        assert "Box Beta" not in text and "1 OUT, 2 IN" not in text
+    for text in (ida, master[:master.index("<b>Oto</b>")]):
+        assert "<b>TWO · Show TWO</b>" in text and "Drives: 1 OUT, 2 IN" in text
+        assert "Drive Box Beta: out 16 days" in text
+        assert "Box Alpha" not in text and "SYNTH-C" not in text and "3 OUT, 1 IN" not in text
+
+
+def test_projects_without_movements_or_overdue_drives_add_nothing_to_either_brief():
+    from test_gated_briefs import STANDBY, proj
+
+    quiet = proj("p2", "QUIET", STANDBY, coordinator="c-ida")
+    conn = make_db([proj("p1", "ONE"), quiet], [proj("p1", "ONE", stage="Online"), quiet])
+    notion = FakeNotion.live(conn, contacts())
+    baseline = run_brief(conn, notion, BRIEF, SATURDAY, dry_print=True, out=lambda _: None, log=lambda _: None)
+    notion.api.drive_weeks["2026-11-09"] = [
+        {"project": {"page_id": p, "text": None}, "out_count": 0, "in_count": 0, "overdue": []}
+        for p in ("p1", "p2")
+    ]
+    result = run_brief(conn, notion, BRIEF, SATURDAY, dry_print=True, out=lambda _: None, log=lambda _: None)
+    assert result.messages == baseline.messages
+    assert all("Show QUIET" not in m.text and "Drives:" not in m.text for m in result.messages)
+
+
+@pytest.mark.parametrize("out_count, overdue", [
+    (3, []),
+    (0, [{"drive_id": "drive-old", "label": "Box <Delta>", "serial": None, "person": None,
+          "released_on": "2026-10-30", "days_out": 15}]),
+])
+def test_drive_activity_alone_lists_an_unchanged_project_even_when_the_llm_finds_no_changes(out_count, overdue):
+    from test_gated_briefs import Llm, STANDBY, proj
+
+    rows = [proj("p1", "ONE", STANDBY)]  # no flags, Concerns or snapshot changes
+    conn = make_db(rows, rows)
+    notion = FakeNotion.live(conn, contacts())
+    notion.api.drive_weeks["2026-11-09"] = [
+        {"project": {"page_id": "p1", "text": None}, "out_count": out_count, "in_count": 0, "overdue": overdue},
+    ]
+    gw = Gateway()
+    run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, llm=Llm(), log=lambda _: None)
+    assert {to for to, *_ in gw.sent} == {111, 999}
+    for *_, text in gw.sent:
+        assert "<b>ONE · Show ONE</b>" in text and f"Drives: {out_count} OUT, 0 IN" in text
+        assert ("Drive Box &lt;Delta&gt;: out 15 days" in text) is bool(overdue)
+        assert "No changes" not in text
+
+
+@pytest.mark.parametrize("now, expected", [
+    (SATURDAY.replace(day=15, hour=15, minute=59), "Drives: 1 OUT, 0 IN"),  # Sunday Manila
+    (SATURDAY.replace(day=15, hour=16, minute=1), "Drives: 2 OUT, 0 IN"),  # Monday Manila, still Sunday UTC
+])
+def test_drive_counts_use_the_monday_sunday_week_in_manila(now, expected):
+    from test_gated_briefs import STANDBY, proj
+
+    rows = [proj("p1", "ONE", STANDBY)]
+    conn = make_db(rows, rows)
+    notion = FakeNotion.live(conn, contacts())
+    notion.api.drive_weeks = {
+        "2026-11-09": [{"project": {"page_id": "p1", "text": None}, "out_count": 1, "in_count": 0, "overdue": []}],
+        "2026-11-16": [{"project": {"page_id": "p1", "text": None}, "out_count": 2, "in_count": 0, "overdue": []}],
+    }
+    result = run_brief(conn, notion, BRIEF, now, dry_print=True, out=lambda _: None, log=lambda _: None)
+    assert {m.to for m in result.messages} == {111, 999}
+    assert all(expected in m.text for m in result.messages)
