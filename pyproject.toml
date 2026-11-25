@@ -3,10 +3,10 @@ name = "t6-notion-reports"
 version = "0.0.1"
 description = "Snapshot Notion Projects and Job Orders into SQLite, draft weekly PSR briefings/minutes, and generate daily shift status reports."
 requires-python = ">=3.11"
-# t6 is pinned to a t6-core tag (ADR 0002 rule 7).
+# t6 is pinned to a t6-core commit on main (ADR 0002 rule 7 asks for a tag; no tag has the drive reads yet).
 dependencies = [
     "PyYAML>=6", "pydantic>=2", "tzdata",
-    "t6[client] @ git+https://github.com/mclbautista/t6-core@v0.6.24",
+    "t6[client] @ git+https://github.com/mclbautista/t6-core@f6225f15c5c6207aa9c815f1c06b937282c59da5",
 ]
 
 [project.optional-dependencies]

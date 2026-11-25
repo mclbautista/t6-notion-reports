@@ -18,10 +18,10 @@ permissions:
 
 jobs:
   safety:
-    # Both refs are the same t6-core tag as pyproject.toml.
-    uses: mclbautista/t6-core/.github/workflows/public-repo-safety.yml@v0.6.24
+    # Both refs are the same t6-core commit as pyproject.toml.
+    uses: mclbautista/t6-core/.github/workflows/public-repo-safety.yml@f6225f15c5c6207aa9c815f1c06b937282c59da5
     with:
-      t6-core-ref: v0.6.24
+      t6-core-ref: f6225f15c5c6207aa9c815f1c06b937282c59da5
       full-history: ${{ github.event_name == 'workflow_dispatch' && inputs.full-history }}
     secrets:
       T6_NAMES_DENYLIST: ${{ secrets.T6_NAMES_DENYLIST }}
