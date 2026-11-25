@@ -25,15 +25,29 @@ You may NOT add facts: every date, number, episode, and person or company name i
 Do not guess, infer, or explain. Return {"bullets": [...]}."""
 
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH_DAYS = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 _MON = r"(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 _DAY = r"(?P<day>\d{1,2})(?:st|nd|rd|th)?"
+_RANGE_SEP = r"\s*(?:-|–|—|\bto\b)\s*"
+_DATE_MD_RANGE = re.compile(
+    rf"\b{_MON}\s*(?P<day>\d{{1,2}})(?:st|nd|rd|th)?{_RANGE_SEP}(?P<day2>\d{{1,2}})(?:st|nd|rd|th)?\b",
+    re.I,
+)
+_DATE_DM_RANGE = re.compile(
+    rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?{_RANGE_SEP}(?P<day2>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?![a-z])",
+    re.I,
+)
 _DATE_MD = re.compile(rf"\b{_MON}\s*{_DAY}\b", re.I)
 _DATE_DM = re.compile(rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?![a-z])", re.I)
 _DATE_NUM = re.compile(r"\b(?P<a>\d{1,2})/(?P<b>\d{1,2})(?:/\d{2,4})?\b")
-_EPISODE = re.compile(r"\bep(?:isode)?s?\.?\s*#?\s*(\d+(?:\s*(?:-|–|to|&|and|,|/)\s*#?\d+)*)", re.I)
+_EPISODE = re.compile(r"\bep(?:isode)?s?\.?\s*#?\s*(\d+(?:\s*(?:-|–|—|to|&|and|,|/)\s*#?\s*\d+)*)", re.I)
+_EP_RANGE = re.compile(r"(\d+)\s*(?:-|–|—|\bto\b)\s*#?\s*(\d+)", re.I)
+_EP_RANGE_CAP = 100
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _CAPITAL = re.compile(r"\b[A-ZÀ-Ý][\w'’-]*")
 _WORD = re.compile(r"[\w'’-]+")
+_APOSTROPHES = str.maketrans({c: "'" for c in "\u2019\u02bc\u201b\u2032\u0060\u00b4"})
+_PLACEHOLDER = re.compile(r"\[(?:person|project|id)\s+\d+\]", re.I)
 # Words the model may use to structure a bullet without adding a fact.
 STRUCTURE_WORDS = {"ep", "eps", "episode", "episodes", "status"}
 # Plain connecting words that carry no fact, so a sentence may use them without the sources having them.
@@ -78,6 +92,7 @@ class CondensedBullets(BaseModel):
 class Condensed:
     bullets: list[str]
     raw: bool  # True: the LLM output was rejected (or the call failed) and the raw bullets are used
+    reason: str | None = None
 
 
 @dataclass
@@ -88,8 +103,22 @@ class Facts:
     names: set[str]  # lower case capitalised words
 
 
+def _fold(text: str) -> str:
+    return text.translate(_APOSTROPHES)
+
+
 def extract_facts(text: str) -> Facts:
+    text = _fold(text)
     dates: set[tuple[int, int]] = set()
+    numbers = {n.replace(",", "") for n in _NUMBER.findall(text)}
+    for rx in (_DATE_MD_RANGE, _DATE_DM_RANGE):
+        for m in rx.finditer(text):
+            month = _MONTHS.index(m.group("mon").lower()[:3]) + 1
+            d1, d2 = int(m.group("day")), int(m.group("day2"))
+            if 1 <= d1 <= d2 <= _MONTH_DAYS[month - 1]:
+                for d in range(d1, d2 + 1):
+                    dates.add((month, d))
+                    numbers.add(str(d))
     for rx in (_DATE_MD, _DATE_DM):
         for m in rx.finditer(text):
             dates.add((_MONTHS.index(m.group("mon").lower()[:3]) + 1, int(m.group("day"))))
@@ -98,14 +127,22 @@ def extract_facts(text: str) -> Facts:
         dates.add((a, b) if a <= 12 else (b, a))  # month first unless that cannot be a month
         if b <= 12:
             dates.add((b, a))
-    episodes = {int(n) for m in _EPISODE.finditer(text) for n in re.findall(r"\d+", m.group(1))}
-    numbers = {n.replace(",", "") for n in _NUMBER.findall(text)}
+    episodes: set[int] = set()
+    for m in _EPISODE.finditer(text):
+        span = m.group(1)
+        episodes.update(int(n) for n in re.findall(r"\d+", span))
+        for r in _EP_RANGE.finditer(span):
+            a, b = int(r.group(1)), int(r.group(2))
+            if a <= b and b - a + 1 <= _EP_RANGE_CAP:
+                for ep in range(a, b + 1):
+                    episodes.add(ep)
+                    numbers.add(str(ep))
     names = {w.lower() for w in _CAPITAL.findall(text)}
     return Facts(dates, numbers, episodes, names)
 
 
 def _word_set(text: str) -> set[str]:
-    return {w.lower() for w in _WORD.findall(text)}
+    return {w.lower() for w in _WORD.findall(_fold(text))}
 
 
 def _stem(word: str) -> str:
@@ -127,6 +164,7 @@ def _stems(text: str) -> set[str]:
 def _unknown_word(text: str, sources: str) -> str | None:
     """The first word of ``text`` that is not in ``sources`` (any case or inflection), a month, a plain
     connecting word or a structure word. Catches an invented name however it is capitalised."""
+    text, sources = _fold(text), _fold(sources)
     have = _stems(sources)
     for word in _WORD_TOKEN.findall(text):
         low = word.lower()
@@ -144,6 +182,7 @@ def _is_month(word: str) -> bool:
 def _ungrounded_date(text: str, sources: str, anchor: date) -> str | None:
     """The first date ``text`` writes with a year that no source line writes. A source date without a
     year may be written with a year within a year of ``anchor``; any other year must be written as is."""
+    text, sources = _fold(text), _fold(sources)
     have = mentions(sources, anchor)
     for m in mentions(text, anchor):
         if not m.year_written:
@@ -164,9 +203,15 @@ def check_grounding(bullets: list[str], notes: str, source: list[str], meeting: 
     Reasons never quote more than the offending token. ``source`` is the raw new bullets; a date found
     only outside it comes from an older block.
     """
+    bullets = [_fold(b) for b in bullets]
+    notes = _fold(notes)
+    source = [_fold(s) for s in source]
     if not any(b.strip() for b in bullets):
         return "no bullets"
-    out = extract_facts("\n".join(bullets))
+    joined = "\n".join(bullets)
+    if (m := _PLACEHOLDER.search(joined)) is not None:
+        return f"unresolved placeholder {m.group(0)}"
+    out = extract_facts(joined)
     have = extract_facts(notes)
     words = _word_set(notes)
     fresh = extract_facts("\n".join(source))
@@ -179,9 +224,9 @@ def check_grounding(bullets: list[str], notes: str, source: list[str], meeting: 
     for name in sorted(out.names - STRUCTURE_WORDS):
         if name not in words:
             return f"{name.title()} is not in the notes"
-    if (when := _ungrounded_date("\n".join(bullets), notes, meeting)) is not None:
+    if (when := _ungrounded_date(joined, notes, meeting)) is not None:
         return f"date {when} is not in the notes"
-    if (word := _unknown_word("\n".join(bullets), notes)) is not None:
+    if (word := _unknown_word(joined, notes)) is not None:
         return f"{word} is not in the notes"
     older = out.dates - fresh.dates - {(meeting.month, meeting.day)}  # the meeting's own date is not an older one
     if len(older) > 1:
@@ -204,6 +249,14 @@ def upcoming(md: tuple[int, int], meeting: date, horizon_days: int = 183) -> boo
     return False
 
 
+def _llm_reason(exc: LlmError) -> str:
+    msg = str(exc)
+    head, sep, tail = msg.partition(": ")
+    if sep and head and " " not in head:
+        return tail
+    return msg or "llm error"
+
+
 def condense_bullets(llm: LlmClient, label: str, notes: str, source: list[str], meeting: date) -> Condensed:
     """Never raises: a failed call or a rejected answer is the raw bullets with ``raw=True``.
 
@@ -213,11 +266,11 @@ def condense_bullets(llm: LlmClient, label: str, notes: str, source: list[str], 
     prompt = json.dumps({"project": label, "new_blocks": source, "pm_notes": notes}, ensure_ascii=False)
     try:
         reply = llm.complete(SYSTEM, prompt, CondensedBullets)
-    except LlmError:
-        return Condensed(list(source), True)
+    except LlmError as exc:
+        return Condensed(list(source), True, _llm_reason(exc))
     bullets = [b.strip() for b in reply.value.bullets if b.strip()]
-    if check_grounding([grounding_text(b) for b in bullets], notes, source, meeting) is not None:
-        return Condensed(list(source), True)
+    if (why := check_grounding([grounding_text(b) for b in bullets], notes, source, meeting)) is not None:
+        return Condensed(list(source), True, f"grounding: {why}")
     return Condensed(bullets, False)
 
 
@@ -228,6 +281,9 @@ def ungrounded(text: str, sources: str, today: date | None = None) -> str | None
     with a year must be written that way in ``sources`` (see ``_ungrounded_date``); a word must be a
     word of ``sources`` in any case or inflection, a month, or a plain connecting word.
     """
+    text, sources = _fold(text), _fold(sources)
+    if (m := _PLACEHOLDER.search(text)) is not None:
+        return f"unresolved placeholder {m.group(0)}"
     out, have, words = extract_facts(text), extract_facts(sources), _word_set(sources)
     for d in sorted(out.dates - have.dates):
         return f"date {d[0]}/{d[1]} is not in the sources"

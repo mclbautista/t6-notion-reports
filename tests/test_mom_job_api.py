@@ -35,10 +35,13 @@ def test_a_page_over_100_blocks_goes_as_create_then_appends(conn):
     run_snapshot(conn, FakeNotion(many, []), "friday", FRIDAY.replace(hour=11))
     run_snapshot(conn, FakeNotion(many, []), "monday", MONDAY.replace(day=23))
     n = FakeNotion(many, contacts())
-    run_draft_mom(conn, n, MEETING, date(2026, 11, 23), log=lambda _: None)
+    logs = []
+    run_draft_mom(conn, n, MEETING, date(2026, 11, 23), log=logs.append)
     sizes = [len(i.blocks) for i in n.api.verbs("create", "append")]
     assert [v for v, _ in n.api.writes][0] == "create" and sizes[0] == 100 and all(s <= 100 for s in sizes) and len(sizes) > 1
     assert {i.note for i in n.api.verbs("append")} == {"new-1"}
+    assert len(n.api.verbs("create")[0].project_ids) == 100
+    assert any("project_cap=100 dropped=30" in line for line in logs)
 
 
 def test_a_failed_create_stops_the_job_and_keeps_the_old_draft(conn):

@@ -14,9 +14,16 @@ from datetime import date, timedelta
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _MON = r"(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 _YEAR = r"(?P<year>(?:19|20)\d\d)"
+_RANGE_SEP = r"\s*(?:-|–|—|\bto\b)\s*"
 _PATTERNS = (
     ("iso", re.compile(r"\b(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})\b")),
     ("num", re.compile(r"\b(?P<a>\d{1,2})/(?P<b>\d{1,2})(?:/(?P<year>\d{4}|\d{2}))?\b(?!/)")),
+    ("md_range", re.compile(
+        rf"\b{_MON}\s*(?P<day>\d{{1,2}})(?:st|nd|rd|th)?{_RANGE_SEP}"
+        rf"(?P<day2>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s*{_YEAR}\b)?", re.I)),
+    ("dm_range", re.compile(
+        rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?{_RANGE_SEP}"
+        rf"(?P<day2>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?![a-z])(?:,?\s*{_YEAR}\b)?", re.I)),
     ("md", re.compile(rf"\b{_MON}\s*(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s*{_YEAR}\b)?", re.I)),
     ("dm", re.compile(rf"\b(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?![a-z])(?:,?\s*{_YEAR}\b)?", re.I)),
     ("my", re.compile(rf"\b{_MON}\s*,?\s*{_YEAR}\b", re.I)),
@@ -50,10 +57,10 @@ def mentions(text: str, anchor: date) -> list[Mention]:
         for m in rx.finditer(text):
             if any(m.start() < end and start < m.end() for start, end in taken):
                 continue
-            hit = _read(kind, m, anchor)
-            if hit is not None:
+            hits = _read(kind, m, anchor)
+            if hits:
                 taken.append((m.start(), m.end()))
-                found.append((m.start(), hit))
+                found.extend((m.start(), hit) for hit in hits)
     return [hit for _, hit in sorted(found, key=lambda x: x[0])]
 
 
@@ -90,37 +97,46 @@ def is_period(text: str) -> bool:
     return bool(found) and not _NEGATING.search(text[: found.start()])
 
 
-def _read(kind: str, m: re.Match, anchor: date) -> Mention | None:
+def _read(kind: str, m: re.Match, anchor: date) -> list[Mention]:
     try:
         if kind == "iso":
-            return _day(date(int(m["year"]), int(m["month"]), int(m["day"])))
+            return [_day(date(int(m["year"]), int(m["month"]), int(m["day"])))]
         if kind == "num":
             a, b = int(m["a"]), int(m["b"])
             month, day = (a, b) if a <= 12 else (b, a)
-            return _yearly(month, day, m["year"], anchor)
+            hit = _yearly(month, day, m["year"], anchor)
+            return [hit] if hit else []
+        if kind in ("md_range", "dm_range"):
+            month = _MONTHS.index(m["mon"].lower()[:3]) + 1
+            d1, d2 = int(m["day"]), int(m["day2"])
+            if not (1 <= d1 <= d2 <= 31):
+                return []
+            hits = [_yearly(month, d, m["year"], anchor) for d in range(d1, d2 + 1)]
+            return [] if any(hit is None for hit in hits) else [hit for hit in hits if hit is not None]
         if kind in ("md", "dm"):
-            return _yearly(_MONTHS.index(m["mon"].lower()[:3]) + 1, int(m["day"]), m["year"], anchor)
+            hit = _yearly(_MONTHS.index(m["mon"].lower()[:3]) + 1, int(m["day"]), m["year"], anchor)
+            return [hit] if hit else []
         if kind == "my":
             month, year = _MONTHS.index(m["mon"].lower()[:3]) + 1, int(m["year"])
             first = date(year, month, 1)
-            return Mention(first, _next_month(first) - timedelta(days=1), False, True)
+            return [Mention(first, _next_month(first) - timedelta(days=1), False, True)]
         if kind == "h":
             half = int(m["h"] or m["h2"] or m["h3"])
             year = int(m["year"] or m["year2"] or m["year3"])
-            return _span(year, 1 + 6 * (half - 1), 6 + 6 * (half - 1))
+            return [_span(year, 1 + 6 * (half - 1), 6 + 6 * (half - 1))]
         if kind == "season":
             first, last, shift = _SEASONS[m["season"].lower()]
-            return _span(int(m["year"]), first, last, shift)
+            return [_span(int(m["year"]), first, last, shift)]
         if kind == "rel":
             first, last = _PARTS[re.sub(r"\s+", " ", m["rel"].lower())]
-            return _span(int(m["year"]), first, last)
+            return [_span(int(m["year"]), first, last)]
         if kind == "q":
             q, year = int(m["q"] or m["q2"]), int(m["year"] or m["year2"])
             first = date(year, 3 * q - 2, 1)
-            return Mention(first, _next_month(date(year, 3 * q, 1)) - timedelta(days=1), False, True)
+            return [Mention(first, _next_month(date(year, 3 * q, 1)) - timedelta(days=1), False, True)]
     except ValueError:
-        return None
-    return None
+        return []
+    return []
 
 
 _SEASONS = {"spring": (3, 5, 0), "summer": (6, 8, 0), "fall": (9, 11, 0), "autumn": (9, 11, 0), "winter": (12, 2, 1)}
