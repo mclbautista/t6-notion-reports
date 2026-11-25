@@ -10,6 +10,7 @@ from t6_notion_reports.brief_job import BriefFailed, run_brief
 from t6_notion_reports.briefing import Settings, build_briefing
 from t6_notion_reports.contacts import Contact
 from t6_notion_reports.diff import FieldChange, Person, ProjectChange
+from t6_notion_reports.t6_api import ApiUnavailable
 from test_gated_briefs import BRIEF, IN_PROGRESS, SATURDAY, Gateway, changed, contacts, make_db
 
 CHANNEL = replace(BRIEF, coordinator_destination="channel", coordinator_chat_id=-1000000000002, coordinator_topic_id=3)
@@ -167,6 +168,21 @@ def test_a_diff_pair_whose_new_snapshot_is_over_two_days_old_is_refused_with_a_n
 def test_a_fresh_snapshot_is_not_refused():
     gw = send()
     assert "snapshot is too old" not in "\n".join(t for *_, t in gw.sent)
+
+
+def test_unavailable_weekly_drives_are_logged_and_the_briefs_are_still_sent(monkeypatch):
+    expected = send().sent
+    conn, notion = world()
+
+    def unavailable(inputs):
+        raise ApiUnavailable("t6 API error status=404")
+
+    monkeypatch.setattr(notion.api, "drive_project_weekly", unavailable)
+    gw, logs = Gateway(), []
+    result = run_brief(conn, notion, BRIEF, SATURDAY, gateway=gw, log=logs.append)
+    assert result.sent == 3 and gw.sent == expected
+    assert all("Drives:" not in text and "Drive " not in text for *_, text in gw.sent)
+    assert "brief drives unavailable error=t6 API error status=404" in logs
 
 
 @pytest.mark.parametrize("brief", [BRIEF, CHANNEL])

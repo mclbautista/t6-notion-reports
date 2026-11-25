@@ -189,7 +189,7 @@ def run_brief(
     (raised, closing), raised_ok = raise_at_psr(notion, new_state, rules, names, contacts, log)
     changes = with_flags(changes, flagged, aged, names, new_state, new_day, note_dates)
     changes = with_consolidation(changes, outcomes, names, new_state, new_day, no_diff)
-    changes = with_drive_activity(changes, notion, names, new_state, rules, new_day, today)
+    changes = with_drive_activity(changes, notion, names, new_state, rules, new_day, today, log)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
     norm = lambda cid: cid.replace("-", "").lower()  # a hyphen-less or upper-case id in the config still names the owner
@@ -430,15 +430,20 @@ def minutes_for(minutes: Minutes | None, display_name: str, state: dict[str, obj
     }
 
 
-def with_drive_activity(changes, notion, names, state, rules, snap_day, today):
+def with_drive_activity(changes, notion, names, state, rules, snap_day, today, log):
     """Attach Drive traffic after consolidation, so an empty LLM summary cannot hide a Project's activity.
 
     Match resolved Project IDs only, within the status gate; coordinator grouping stays with the brief renderer.
     """
+    try:
+        rows = notion.drive_project_weekly(today)
+    except Exception as exc:  # optional read: an unavailable verb must not hold the brief
+        log(f"brief drives unavailable error={exc if isinstance(exc, ApiUnavailable) else type(exc).__name__}")
+        return changes
     page_of = {rules[p].t6_id: p for p in state if rules[p].t6_id}
     page_of.update({p: p for p in state})
     by_page = {ch.page_id: ch for ch in changes}
-    for row in notion.drive_project_weekly(today):
+    for row in rows:
         page_id = page_of.get(row["project"]["page_id"])
         if page_id is None or not (row["out_count"] or row["in_count"] or row["overdue"]):
             continue
