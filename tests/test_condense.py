@@ -67,7 +67,7 @@ def test_date_from_the_new_block_is_not_counted_as_older():
 def test_a_refusal_an_invalid_answer_a_timeout_or_an_unreachable_api_fall_back_raw():
     for answer in (refused("masking"), invalid(), refused("provider", "timeout"), unreachable()):
         out = condense_bullets(adapter(FakeLlmApi(answer)), "QAZ", NOTES, SOURCE, MEET)
-        assert out == Condensed(SOURCE, True)
+        assert out.raw and out.bullets == SOURCE and out.reason
 
 
 def test_a_bullet_with_an_unresolved_placeholder_is_dropped_alone():
@@ -77,7 +77,8 @@ def test_a_bullet_with_an_unresolved_placeholder_is_dropped_alone():
 
 
 def test_failed_call_or_empty_output_falls_back_raw():
-    assert run(error=True)[0] == Condensed(SOURCE, True)
+    err = run(error=True)[0]
+    assert err.raw and err.bullets == SOURCE and err.reason
     assert run([])[0].raw and run(["  "])[0].raw
 
 
@@ -217,3 +218,99 @@ def test_dry_print_condenses_prints_the_bullets_and_writes_nothing():
     assert result.page_id is not None and notion.api.writes == []
     assert "## QAZ (raw)" in out and "- Ep 3 locked na" in out and "## WED" in out and "- Online on Nov 9; Colorist: Pax" in out
     assert log and "condensed=" in log[0] and "raw=" in log[0]
+
+
+# ---- #155: apostrophe folding, day/episode ranges, 3/4 ----
+
+def test_apostrophe_variants_fold_both_ways_in_grounding():
+    variants = ("'", "’", "ʼ", "‛", "′", "`", "´")
+    for note_ap in variants:
+        notes = f"As of Oct 26\n• Screener{note_ap}s copy ready"
+        source = [f"Screener{note_ap}s copy ready"]
+        for bullet_ap in variants:
+            assert check_grounding([f"Screener{bullet_ap}s copy ready"], notes, source, MEET) is None
+
+
+def test_day_ranges_expand_and_preserve_year_and_older_rules():
+    for src, ok_bullets, bad_bullet in (
+        ("Shoot 15-17 Nov", ["Shoot Nov 15", "Shoot Nov 16", "Shoot Nov 17"], "Shoot Nov 18"),
+        ("Grade Dec 15-17", ["Grade Dec 15", "Grade Dec 16", "Grade Dec 17"], "Grade Dec 18"),
+        ("Mix 15th–17th of Nov", ["Mix Nov 16"], "Mix Nov 14"),
+        ("Online Dec 15 to 17, 2026", ["Online Dec 16, 2026"], "Online Dec 16, 2027"),
+    ):
+        notes = f"As of Oct 26\n• {src}"
+        assert check_grounding(ok_bullets, notes, [src], MEET) is None
+        assert check_grounding([bad_bullet], notes, [src], MEET) is not None
+
+
+def test_episode_ranges_expand_with_cap_and_3_4_remains_a_date():
+    for src in ("Ep 15-17 locked", "Eps 15–17 locked", "Ep #15-#17 locked", "Ep 15 to 17 locked"):
+        notes = f"As of Oct 26\n• {src}"
+        assert check_grounding(["Ep 16 locked"], notes, [src], MEET) is None
+        assert "18" in check_grounding(["Ep 18 locked"], notes, [src], MEET)
+    huge_notes = "As of Oct 26\n• Ep 1-150 locked"
+    assert "50" in check_grounding(["Ep 50 locked"], huge_notes, ["Ep 1-150 locked"], MEET)
+
+    f = extract_facts("Delivery 3/4")
+    assert f.dates == {(3, 4), (4, 3)}
+    assert extract_facts("Ep 3/4").dates == {(3, 4), (4, 3)}
+    assert check_grounding(["Delivery 3/4"], "As of Oct 26\n• Delivery 3/4", ["Delivery 3/4"], MEET) is None
+    assert "3/5" in check_grounding(["Delivery 3/5"], "As of Oct 26\n• Delivery 3/4", ["Delivery 3/4"], MEET)
+
+
+# ---- #156: raw reason logging, placeholder rejection ----
+
+def test_literal_placeholder_is_rejected_even_when_words_exist_in_notes():
+    notes = "As of Oct 26\n• person 1 on project 1 with id 1"
+    src = ["person 1 on project 1 with id 1"]
+    for tok in ("[person 1]", "[project 1]", "[id 1]"):
+        reason = check_grounding([f"{tok} confirmed"], notes, src, MEET)
+        assert reason is not None and tok in reason
+
+
+def test_raw_reason_is_populated_and_logged_per_raw_project():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    run_snapshot(conn, FakeNotion(snap(OLD_ALL), []), "friday", FRI)
+    run_snapshot(conn, FakeNotion(snap(NEW_ALL), []), "monday", MON)
+    notion = FakeNotion(snap(NEW_ALL), [])
+
+    def answer(inputs):
+        code = json.loads(inputs.input_text)["project"].split()[0]
+        if code == "QAZ":
+            return ok({"bullets": ["Dario confirmed 12 shooting days"]})
+        if code == "LSB":
+            return refused("masking", "leak")
+        return ok({"bullets": ["Online on Nov 9; Colorist: Pax"]})
+
+    logs = []
+    run_draft_mom(conn, notion, MEETING, date(2026, 10, 26), log=logs.append, llm=adapter(FakeLlmApi(answer)))
+    raw_logs = [line for line in logs if line.startswith("mom raw ")]
+    assert len(raw_logs) == 2
+    assert any("project=QAZ" in line and "grounding:" in line and "Dario" in line for line in raw_logs)
+    assert any("project=LSB" in line and "rule=masking" in line and "failure=leak" in line for line in raw_logs)
+
+
+def test_condensed_or_raw_project_never_renders_person_or_project_placeholders():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    p_old = [project("a", "Show A", "AAA"), project("b", "Show B", "BBB")]
+    p_new = [
+        project("a", "Show A", "AAA", **{"PM Notes": rich("As of Oct 26\n• person 1 and project 1 ready")}),
+        project("b", "Show B", "BBB", **{"PM Notes": rich("As of Oct 26\n• Grading done")}),
+    ]
+    run_snapshot(conn, FakeNotion(p_old, []), "friday", FRI)
+    run_snapshot(conn, FakeNotion(p_new, []), "monday", MON)
+    notion = FakeNotion(p_new, [])
+
+    def answer(inputs):
+        code = json.loads(inputs.input_text)["project"].split()[0]
+        if code == "AAA":
+            return ok({"bullets": ["[person 1] and [project 1] ready"]})  # unflagged literal placeholder
+        return ok({"bullets": ["[person 9] updates", "Grading done"]}, unresolved=["bullets[0]"])
+
+    run_draft_mom(conn, notion, MEETING, date(2026, 10, 26), log=lambda _: None, llm=adapter(FakeLlmApi(answer)))
+    rendered = "\n".join(text for b in notion.api.verbs("create", "append") for blk in b.blocks for text, _ in flat(blk))
+    assert "[person" not in rendered and "[project" not in rendered
+    assert "AAA (raw)" in rendered and "BBB (raw)" not in rendered
+

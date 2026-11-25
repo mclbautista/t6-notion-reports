@@ -60,6 +60,7 @@ class Entry:
     flag: str | None = None
     source: list[str] = field(default_factory=list)  # raw bullets from PM Notes, for the raw toggle
     raw_fallback: bool = False  # condensing was tried and rejected or failed: shown as "(raw)"
+    raw_reason: str | None = None
 
 
 @dataclass
@@ -136,7 +137,7 @@ def condense_draft(
             continue
         result = condense_bullets(llm, e.label, str(new[e.page_id].get("PM Notes") or ""), e.source,
                                  draft.meeting_date)
-        e.bullets, e.raw_fallback = result.bullets, result.raw
+        e.bullets, e.raw_fallback, e.raw_reason = result.bullets, result.raw, result.reason
         done, raw = done + (not result.raw), raw + result.raw
     return done, raw
 

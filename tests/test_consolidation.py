@@ -612,3 +612,33 @@ def test_a_name_from_another_line_is_not_evidence():
     gw, _ = run(conn_one(notes), Llm(reply))
     assert "QC waiting for client notes" in dm(gw)
     assert "QC waiting for Oto" not in dm(gw)
+
+
+def test_consolidation_folds_apostrophes_and_expands_day_and_episode_ranges():
+    notes = (
+        "As of Nov 9\n"
+        "• Screener’s cut ready\n"
+        "• Shoot 15-17 Nov, online Dec 15-17, 2026\n"
+        "• Ep 15-17 locked, delivery 3/4"
+    )
+    def reply(p):
+        rows = p["pm_notes"]
+        c_ap = {"source": "pm_notes", "line_id": line_id(p, "Screener"), "quote": rows[1]["text"]}
+        c_rng = {"source": "pm_notes", "line_id": line_id(p, "Shoot 15-17"), "quote": rows[2]["text"]}
+        c_ep = {"source": "pm_notes", "line_id": line_id(p, "Ep 15-17"), "quote": rows[3]["text"]}
+        return {"changes": [
+            {**c_ap, "text": "Screener's cut ready"},
+            {**c_ap, "text": "Screenerʼs cut ready"},
+            {**c_rng, "text": "Shoot Nov 16, online Dec 16, 2026"},
+            {**c_rng, "text": "Shoot Nov 18"},
+            {**c_ep, "text": "Ep 16 locked, delivery 3/4"},
+        ]}
+
+    gw, _ = run(conn_one(notes), Llm(reply))
+    text = dm(gw)
+    assert "• Screener's cut ready" in text
+    assert "• Screenerʼs cut ready" in text
+    assert "• Shoot Nov 16, online Dec 16, 2026" in text
+    assert "Nov 18" not in text
+    assert "• Ep 16 locked, delivery 3/4" in text
+

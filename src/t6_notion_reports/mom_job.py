@@ -9,9 +9,9 @@ from typing import Callable
 from .holidays import upcoming_entries
 from .llm_api import LlmClient
 from .minutes_api import MinutesApiError, create_draft, trash_draft
-from .mom import build_draft, condense_draft, render_blocks
+from .mom import Draft, build_draft, condense_draft, render_blocks
 from .schedule import MANILA
-from .snapshots import load_snapshot, mom_diff_pair, snapshot_info
+from .snapshots import load_snapshot, mom_diff_pair, snapshot_info, squash
 
 TITLE_PREFIX = "PSR MOM"
 
@@ -62,6 +62,7 @@ def run_draft_mom(
             for bullet in e.bullets:
                 out(f"- {bullet}")
         log(f"mom dry_print=True date={meeting_date} shown={len(draft.entries)} condensed={condensed} raw={raw}")
+        _log_raw(draft, new_state, log)
         return MomResult("dry-print", len(draft.entries), len(draft.unchanged))  # no page: a marker, not an id
 
     others = upcoming_entries(notion.notices().description, meeting_date)
@@ -76,6 +77,8 @@ def run_draft_mom(
 
     blocks = render_blocks(draft, [name for _, name in people], others, [m for m in mentions if m])
 
+    if len(draft.project_ids) > 100:
+        log(f"mom date={meeting_date} project_cap=100 dropped={len(draft.project_ids) - 100}")
     page_id = create_draft(notion.client, title, meeting_date, draft.project_ids[:100], [i for i, _ in people], blocks)
     # A re-run replaces the unsent draft, but only once the new page exists. A failed trash leaves two
     # unsent drafts; the next run finds both by title and trashes them.
@@ -86,7 +89,15 @@ def run_draft_mom(
             log(f"mom trash failed: {exc}")
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
+    _log_raw(draft, new_state, log)
     return MomResult(page_id, len(draft.entries), len(draft.unchanged))
+
+
+def _log_raw(draft: Draft, new_state: dict[str, dict[str, object]], log: Callable[[str], None]) -> None:
+    for e in draft.entries:
+        if e.raw_fallback:
+            code = squash(str(new_state.get(e.page_id, {}).get("Project Code") or "")) or e.label
+            log(f"mom raw project={code} reason={e.raw_reason}")
 
 
 def _local_date(taken_at: str) -> date:
