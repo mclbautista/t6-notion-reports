@@ -23,6 +23,10 @@ database_path: /app/data/psr.db
 # psr_group_chat_id: -1000000000001       # PSR group chat id (Minutes destination; dm-mode fallback for coordinators with no Telegram id)
 # psr_group_topic_id: 1                    # PSR topic: Minutes go here
 # cyril_contact_id: "00000000-0000-0000-0000-000000000000"   # FILL IN: the owner's page id in Contacts; private notes go only to the owner's Master brief
+# The Monday minutes draft sends one line per raw Project (code and rule kind, never a name) to the bots test topic.
+# Unset: nothing is sent. Real values live only in the Sixto config.
+# bots_test_chat_id: -1000000000003        # FILL IN: the bots test group's chat id
+# bots_test_topic_id: 3                    # FILL IN: its topic id
 # Coordinator briefs: one message per coordinator, the same text in either mode.
 # coordinator_brief_destination: dm        # dm (default): each coordinator's DM; channel: the chat and topic below
 # coordinator_brief_chat_id: -1000000000002   # FILL IN (channel mode): the channel's chat id
