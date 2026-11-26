@@ -342,8 +342,10 @@ def _cyril(cfg) -> str | None:
 
 
 def _bots_test(cfg) -> tuple[int, int | None] | None:
-    """The bots test topic for raw-Project lines, or None when ``bots_test_chat_id`` is not set."""
-    return (cfg.bots_test_chat_id, cfg.bots_test_topic_id) if cfg.bots_test_chat_id is not None else None
+    """The bots test topic for raw-Project lines, or None unless both ``bots_test_chat_id`` and ``bots_test_topic_id`` are set."""
+    if cfg.bots_test_chat_id is None or cfg.bots_test_topic_id is None:
+        return None
+    return (cfg.bots_test_chat_id, cfg.bots_test_topic_id)
 
 
 def _draft_mom(args, notion, now) -> int:

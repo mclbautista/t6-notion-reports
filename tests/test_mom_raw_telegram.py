@@ -129,3 +129,32 @@ def test_config_reads_the_bots_test_keys(tmp_path):
     path.write_text("database_path: x.db\n")
     cfg = load_config(str(path), {})
     assert (cfg.bots_test_chat_id, cfg.bots_test_topic_id) == (None, None)
+
+
+@pytest.mark.parametrize("yaml_text, expected", [
+    ("bots_test_chat_id: -100777\nbots_test_topic_id: 42\n", (-100777, 42)),
+    ("bots_test_chat_id: -100777\n", None),
+    ("bots_test_topic_id: 42\n", None),
+    ("database_path: x.db\n", None),
+])
+def test_lines_go_out_only_with_both_bots_test_keys(tmp_path, yaml_text, expected):
+    from t6_notion_reports.cli import _bots_test
+    from t6_notion_reports.config import load_config
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml_text)
+    assert _bots_test(load_config(str(path), {})) == expected
+
+
+def test_a_raw_project_without_a_code_shows_no_code_and_never_its_name():
+    gw = FakeGateway()
+    which = {"QAZ": NEW_ALL["QAZ"]}
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(SCHEMA)
+    nameless = lambda notes: [project("qaz", "Secret Show QAZ", "", **{"PM Notes": rich(notes)})]  # noqa: E731
+    run_snapshot(conn, FakeNotion(nameless(OLD_ALL["QAZ"]), []), "friday", FRI)
+    run_snapshot(conn, FakeNotion(nameless(which["QAZ"]), []), "monday", MON)
+    run_draft_mom(conn, FakeNotion(nameless(which["QAZ"]), []), MEETING, DAY, log=lambda _: None,
+                  llm=adapter(FakeLlmApi(lambda i: ok({"bullets": ["Dario confirmed 12 shooting days"]}))),
+                  gateway=gw, raw_destination=(CHAT, TOPIC))
+    ((_, _, key, text),) = gw.sent
+    assert key == "psr-raw-2026-10-26-qaz" and "NO-CODE" in text and "Secret Show" not in text

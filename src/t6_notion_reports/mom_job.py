@@ -139,10 +139,14 @@ def _failed_draft(client, exc: MinutesAmbiguous, meeting_date: date, contacts, g
         log(f"mom failure dm failed error={type(exc_gw).__name__}")
 
 
+def _project_code(new_state: dict[str, dict[str, object]], page_id: str) -> str:
+    return squash(str(new_state.get(page_id, {}).get("Project Code") or ""))
+
+
 def _log_raw(draft: Draft, new_state: dict[str, dict[str, object]], log: Callable[[str], None]) -> None:
     for e in draft.entries:
         if e.raw_fallback:
-            code = squash(str(new_state.get(e.page_id, {}).get("Project Code") or "")) or e.label
+            code = _project_code(new_state, e.page_id) or e.label
             log(f"mom raw project={code} reason={e.raw_reason}")
 
 
@@ -175,9 +179,9 @@ def _send_raw(draft: Draft, new_state: dict[str, dict[str, object]], meeting_dat
     for e in draft.entries:
         if not e.raw_fallback:
             continue
-        code = squash(str(new_state.get(e.page_id, {}).get("Project Code") or "")).upper() or "NO-CODE"
-        key = f"psr-raw-{meeting_date.isoformat()}-{code if code != 'NO-CODE' else e.page_id}"
-        text = escape(f"PSR MOM {meeting_date.isoformat()} raw: {code} ({rule_kind(e.raw_reason)})")
+        code = _project_code(new_state, e.page_id).upper()
+        key = f"psr-raw-{meeting_date.isoformat()}-{code or e.page_id}"  # no code: the page id keeps the key unique
+        text = escape(f"PSR MOM {meeting_date.isoformat()} raw: {code or 'NO-CODE'} ({rule_kind(e.raw_reason)})")
         try:
             gateway.notify(chat, text, key, topic)
         except GatewayError as exc:
