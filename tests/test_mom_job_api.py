@@ -170,7 +170,7 @@ def test_ambiguous_create_with_a_page_id_trashes_the_page_logs_and_dms_cyril(con
     with pytest.raises(MinutesApiError):
         run_draft_mom(conn, n, MEETING, D, log=logs.append, gateway=gw, cyril_contact_id=CYRIL)
     assert [i.note for i in n.api.verbs("trash")] == ["half-1"] and page["in_trash"]
-    assert "mom date=2026-11-16 failed reason=timeout after write page=half-1" in logs
+    assert "mom date=2026-11-16 failed reason=timeout after write page=half-1 mismatched=body" in logs
     ((to, topic, key, text),) = gw.sent
     assert (to, topic, key) == (999, None, "psr-mom-failed-2026-11-16")
     assert "timeout after write" in text and "https://www.notion.so/half1" in text

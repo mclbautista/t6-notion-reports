@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Callable
 
+from .contacts import contact_by_id
 from .holidays import upcoming_entries
 from .telegram_html import escape
 from .llm_api import LlmClient
@@ -13,10 +14,10 @@ from .gateway import GatewayError
 from .minutes_api import MinutesAmbiguous, MinutesApiError, create_draft, trash_draft
 from .mom import Draft, build_draft, condense_draft, render_blocks
 from .schedule import MANILA
+from .shift_report import page_url
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info, squash
 
 TITLE_PREFIX = "PSR MOM"
-NOTION_PAGE = "https://www.notion.so/"
 
 
 class MomAlreadySent(Exception):
@@ -105,7 +106,8 @@ def run_draft_mom(
 
 def _failed_draft(client, exc: MinutesAmbiguous, meeting_date: date, contacts, gateway, cyril_contact_id: str | None,
                   log: Callable[[str], None]) -> None:
-    """Trash the half-built page (when its id is known), log one line and DM Cyril. Never a title or page text."""
+    """Trash the half-built page (when its id is known), log one line and DM Cyril: the reason, the page link and the
+    rerun command, never page text."""
     trash_error = None
     if exc.page_id:
         try:
@@ -113,37 +115,24 @@ def _failed_draft(client, exc: MinutesAmbiguous, meeting_date: date, contacts, g
         except MinutesApiError as trash_exc:
             trash_error = str(trash_exc)
     log(f"mom date={meeting_date} failed reason={exc.reason} page={exc.page_id or 'unknown'}"
-        + (f" trash_failed={trash_error}" if trash_error else ""))
-    rerun = f"draft-mom --date {meeting_date.isoformat()}"
+        f" mismatched={','.join(exc.mismatched) or 'none'}" + (f" trash_failed={trash_error}" if trash_error else ""))
     if exc.page_id is None:
-        lines = [f"⚠️ The Monday minutes draft failed: {exc.reason}.",
-                 f"The page may exist: check Notion for PSR MOM {meeting_date.isoformat()} and trash it by hand.",
-                 f"Rerun: {rerun}"]
+        where = f"The page may exist: check Notion for {title_for(meeting_date)} and trash it by hand."
+    elif trash_error:
+        where = f"Trashing the half-built page failed ({trash_error}): trash it by hand: {page_url(exc.page_id)}"
     else:
-        link = NOTION_PAGE + exc.page_id.replace("-", "")
-        first = f"⚠️ The Monday minutes draft failed: {exc.reason}."
-        if trash_error:
-            lines = [first, f"Trashing the half-built page failed ({trash_error}): trash it by hand: {link}", f"Rerun: {rerun}"]
-        else:
-            lines = [first, f"The half-built page was trashed: {link}", f"Rerun: {rerun}"]
-    _dm_cyril(gateway, contacts, cyril_contact_id, "\n".join(escape(line) for line in lines),
-              f"psr-mom-failed-{meeting_date.isoformat()}", log)
-
-
-def _dm_cyril(gateway, contacts, cyril_contact_id: str | None, text: str, key: str, log: Callable[[str], None]) -> None:
-    """The brief's path: ``cyril_contact_id`` -> the Contact's Telegram ID -> ``gateway.notify``. Logs what stops it."""
-    if gateway is None or not cyril_contact_id:
-        log("mom failure dm skipped: no gateway or cyril_contact_id")
-        return
-    norm = lambda cid: cid.replace("-", "").lower()  # noqa: E731
-    cyril = next((c for cid, c in contacts.items() if norm(cid) == norm(cyril_contact_id)), None)
-    if cyril is None or cyril.telegram_id is None:
-        log("mom failure dm skipped: Cyril has no Telegram ID")
+        where = f"The half-built page was trashed: {page_url(exc.page_id)}"
+    lines = (f"⚠️ The Monday minutes draft failed: {exc.reason}.", where,
+             f"Rerun: draft-mom --date {meeting_date.isoformat()}")
+    key = f"psr-mom-failed-{meeting_date.isoformat()}"
+    cyril = contact_by_id(contacts, cyril_contact_id) if cyril_contact_id else None
+    if gateway is None or cyril is None or cyril.telegram_id is None:
+        log("mom failure dm skipped: no gateway, cyril_contact_id or Telegram ID")
         return
     try:
-        gateway.notify(cyril.telegram_id, text, key)
-    except GatewayError as exc:
-        log(f"mom failure dm failed error={type(exc).__name__}")
+        gateway.notify(cyril.telegram_id, "\n".join(escape(line) for line in lines), key)
+    except GatewayError as exc_gw:
+        log(f"mom failure dm failed error={type(exc_gw).__name__}")
 
 
 def _log_raw(draft: Draft, new_state: dict[str, dict[str, object]], log: Callable[[str], None]) -> None:

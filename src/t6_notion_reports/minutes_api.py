@@ -27,6 +27,7 @@ class MinutesAmbiguous(MinutesApiError):
     """The API could not confirm the write (t6-core#699). ``page_id`` is the page it may have left, when known."""
 
     def __init__(self, what: str, reason: str, page_id: str | None, mismatched: list[str]):
+        # ``mismatched``: the fields the API could not confirm (field names, never values)
         super().__init__(f"{what} ambiguous")
         self.reason, self.page_id, self.mismatched = reason, page_id, mismatched
 
