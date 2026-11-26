@@ -317,6 +317,15 @@ Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.
 that date and makes a new one, and exits 1 without touching a page whose `Sent at` is set. The
 `Sent at` (date) property must exist on Meeting Notes (spec 3.3); it is only read here.
 
+**A failed draft.** When the t6 API cannot confirm a create or an append (an Ambiguous answer), the run does not
+retry. If the API names the page, the half-built page is trashed. The log has one line,
+`mom date=<date> failed reason=<reason> page=<page id or unknown>`, and Cyril gets a DM (key
+`psr-mom-failed-<date>`, through `cyril_contact_id`, his Contact's Telegram ID and the gateway, like the brief's
+private notes) with the reason, the page link (or "check Notion for PSR MOM <date>" when no page id came back), the
+`draft-mom --date <date>` command to rerun, and a note when trashing failed. It never holds page text.
+Without the briefing keys or `cyril_contact_id` the failure is only logged. The Monday job logs
+`mom draft failed: ...` and the scheduler keeps running; `draft-mom` exits 1.
+
 ## Sending the approved minutes
 
 The minutes owner edits the draft in Notion and ticks `Ready to send`. Every 5 minutes (when the briefing keys

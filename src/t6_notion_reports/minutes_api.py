@@ -23,6 +23,15 @@ class MinutesApiError(OSError):
     """The API did not do the write: unreachable, refused, or unclear."""
 
 
+class MinutesAmbiguous(MinutesApiError):
+    """The API could not confirm the write (t6-core#699). ``page_id`` is the page it may have left, when known."""
+
+    def __init__(self, what: str, reason: str, page_id: str | None, mismatched: list[str]):
+        # ``mismatched``: the fields the API could not confirm (field names, never values)
+        super().__init__(f"{what} ambiguous")
+        self.reason, self.page_id, self.mismatched = reason, page_id, mismatched
+
+
 def _done(what: str, call, inputs) -> dict[str, Any]:
     try:
         outcome = call(inputs)
@@ -33,7 +42,9 @@ def _done(what: str, call, inputs) -> dict[str, Any]:
     if isinstance(outcome, Refused):
         raise MinutesApiError(f"{what} refused rule={outcome.rule}")
     if isinstance(outcome, Ambiguous):
-        raise MinutesApiError(f"{what} ambiguous")
+        pending = next((c for c in outcome.candidates if isinstance(c, dict)), {})
+        raise MinutesAmbiguous(what, str(pending.get("reason") or "unknown"), pending.get("page_id") or None,
+                               list(pending.get("mismatched") or []))
     if not isinstance(outcome, Done):
         raise MinutesApiError(f"{what} answered {outcome.outcome}")
     return outcome.result
@@ -51,8 +62,12 @@ def create_draft(client, title: str, meeting_date: date, project_ids: list[str],
         attendee_ids=attendee_ids, blocks=body[:CHUNK]))
     page_id = created["meeting_note"]["page_id"]
     for i in range(CHUNK, len(body), CHUNK):
-        _done("meeting-notes append", client.meeting_notes_append,
-              MeetingNotesAppendInput(note=page_id, blocks=body[i:i + CHUNK]))
+        try:
+            _done("meeting-notes append", client.meeting_notes_append,
+                  MeetingNotesAppendInput(note=page_id, blocks=body[i:i + CHUNK]))
+        except MinutesAmbiguous as exc:
+            exc.page_id = exc.page_id or page_id  # the half-built page is the one just created
+            raise
     return page_id
 
 

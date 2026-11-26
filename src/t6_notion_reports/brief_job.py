@@ -13,7 +13,7 @@ from .concern_api import ConcernApiError, observe, open_concerns, raise_at_psr_c
 from .concerns import AgedConcerns, RaiseConcern, aged_from_reply, raise_concerns
 from .config import BriefSettings
 from .consolidate import Outcome, Window, build_payload, consolidate
-from .contacts import Contact
+from .contacts import Contact, contact_by_id
 from .diff import diff_snapshots, display_names, sort_projects, unchanged_project
 from .flags import ProjectFlags, project_flags
 from .gateway import GatewayError
@@ -192,8 +192,7 @@ def run_brief(
     changes = with_drive_activity(changes, notion, names, new_state, rules, new_day, today, log)
     # Private warnings go only to the explicitly identified owner, never to whoever is listed first.
     cyril_id = brief.cyril_contact_id
-    norm = lambda cid: cid.replace("-", "").lower()  # a hyphen-less or upper-case id in the config still names the owner
-    cyril = next((c for cid, c in contacts.items() if norm(cid) == norm(cyril_id)), Contact(cyril_id, "Cyril")) if cyril_id else None
+    cyril = (contact_by_id(contacts, cyril_id) or Contact(cyril_id, "Cyril")) if cyril_id else None
     try:
         masters = notion.master_brief_pages(log)
     except OSError as exc:  # no reader is known: the Master brief goes to nobody, and the run fails below

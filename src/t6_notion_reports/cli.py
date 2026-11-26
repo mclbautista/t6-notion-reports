@@ -18,6 +18,7 @@ from .diff import diff_snapshots, format_diff
 from .schedule import BRIEF_SLOT, MANILA, SEND_MOM_SLOT, SHIFT_SLOTS as SHIFT_JOB_SLOTS, SLOTS, Scheduler
 from .brief_job import BriefFailed, run_brief
 from .llm_api import LLM_TIMEOUT, ApiLlm, UnavailableLlm
+from .minutes_api import MinutesApiError
 from .mom_job import MomAlreadySent, run_draft_mom
 from .mom_send import MomSendFailed, run_send_ready_mom
 from .concern_switch import BACKUP_SUFFIX, switch_concerns
@@ -327,9 +328,17 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
             return
         _snapshot(conn, notion, kind, moment)
         if kind == "monday" and cfg.meeting_notes_data_source and cfg.mom_enabled:
-            run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
-                          log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"))
+            try:
+                run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
+                              log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"),
+                              gateway=gateway, cyril_contact_id=_cyril(cfg))
+            except MinutesApiError as exc:  # logged here so the scheduler keeps running; no automatic retry
+                print(f"mom draft failed: {exc}", flush=True)
     return job
+
+
+def _cyril(cfg) -> str | None:
+    return cfg.brief.cyril_contact_id if cfg.brief else None
 
 
 def _draft_mom(args, notion, now) -> int:
@@ -347,10 +356,15 @@ def _draft_mom(args, notion, now) -> int:
     meeting_date = args.date or (now or datetime.now(timezone.utc)).astimezone(MANILA).date()
     conn = connect(db)
     try:
+        gateway = None if args.dry_print or cfg.brief is None else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
         result = run_draft_mom(conn, notion, cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
-                               llm=_task_llm(cfg, "minutes_condense", args.dry_print), dry_print=args.dry_print)
+                               llm=_task_llm(cfg, "minutes_condense", args.dry_print), dry_print=args.dry_print,
+                               gateway=gateway, cyril_contact_id=_cyril(cfg))
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
+        return 1
+    except MinutesApiError as exc:
+        print(f"draft-mom failed: {exc}", file=sys.stderr)
         return 1
     finally:
         conn.close()
