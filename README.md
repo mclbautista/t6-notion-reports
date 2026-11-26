@@ -317,6 +317,12 @@ Holidays and Leaves" whose month-and-day (or range) falls in the next 14 days.
 that date and makes a new one, and exits 1 without touching a page whose `Sent at` is set. The
 `Sent at` (date) property must exist on Meeting Notes (spec 3.3); it is only read here.
 
+**Raw Projects in Telegram.** With the gateway (the briefing keys) and both `bots_test_chat_id` and `bots_test_topic_id`
+set, once the page exists the draft sends one line per raw Project to that topic, key `psr-raw-<date>-<code>`:
+`PSR MOM <date> raw: <CODE> (<rule kind>)`, where the rule kind is `grounding word`, `grounding date`, `masking leak`
+and the like, never the word or a name. A gateway failure is logged and the draft still succeeds; `--dry-print` sends
+nothing.
+
 **A failed draft.** When the t6 API cannot confirm a create or an append (an Ambiguous answer), the run does not
 retry. If the API names the page, the half-built page is trashed. The log has one line,
 `mom date=<date> failed reason=<reason> page=<page id or unknown>`, and Cyril gets a DM (key

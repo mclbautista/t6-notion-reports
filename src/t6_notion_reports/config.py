@@ -33,7 +33,9 @@ BRIEF_REQUIRED = ("gateway_url", "psr_group_chat_id")
 # digest_recipients: the Master brief goes to the Persons with ``master_brief`` on. concern_scan: the API scans on its own.
 IGNORED_KEYS = ("projects_data_source", "contacts_data_source", "jo_data_source", "fuzzy_min_score", "fuzzy_min_lead", "honorifics",
                 "concern_chronic_weeks", "digest_recipients", "concern_scan")
-KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled", "mom_enabled"} | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
+# Where the raw-Project lines of the minutes draft go (the bots test topic). Values live only in the Sixto config.
+BOTS_TEST_KEYS = {"bots_test_chat_id", "bots_test_topic_id"}
+KEYS = {"database_path", "meeting_notes_data_source", "llm_enabled", "mom_enabled"} | BOTS_TEST_KEYS | set(IGNORED_KEYS) | BRIEF_KEYS | SHIFT_KEYS
 _NOTION_ID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
 
 
@@ -93,6 +95,8 @@ class Config:
     ignored_keys: tuple[str, ...] = ()  # keys in config.yaml that no longer do anything
     llm_enabled: bool = True  # false: no model is called; summaries fall back to three words, a real brief says "LLM unavailable"
     mom_enabled: bool = False  # the MOM is paused: no Monday minutes draft and no MOM send are scheduled until this is true
+    bots_test_chat_id: int | None = None  # with the gateway: the minutes draft's raw-Project lines go here
+    bots_test_topic_id: int | None = None
 
 
 def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
@@ -120,6 +124,8 @@ def load_config(path: str, env: Mapping[str, str] | None = None) -> Config:
         ignored_keys=tuple(k for k in IGNORED_KEYS if k in raw),
         llm_enabled=_flag(raw, "llm_enabled"),
         mom_enabled=_flag(raw, "mom_enabled", default=False),
+        bots_test_chat_id=_integer(raw, "bots_test_chat_id") if "bots_test_chat_id" in raw else None,
+        bots_test_topic_id=_integer(raw, "bots_test_topic_id") if "bots_test_topic_id" in raw else None,
     )
 
 

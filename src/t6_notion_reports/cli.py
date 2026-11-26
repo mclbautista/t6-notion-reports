@@ -331,7 +331,7 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
             try:
                 run_draft_mom(conn, notion, cfg.meeting_notes_data_source, moment.astimezone(MANILA).date(),
                               log=lambda text: print(text, flush=True), llm=_task_llm(cfg, "minutes_condense"),
-                              gateway=gateway, cyril_contact_id=_cyril(cfg))
+                              gateway=gateway, cyril_contact_id=_cyril(cfg), raw_destination=_bots_test(cfg))
             except MinutesApiError as exc:  # logged here so the scheduler keeps running; no automatic retry
                 print(f"mom draft failed: {exc}", flush=True)
     return job
@@ -339,6 +339,13 @@ def make_job(conn, notion, cfg, gateway, clock, shift_target=None):
 
 def _cyril(cfg) -> str | None:
     return cfg.brief.cyril_contact_id if cfg.brief else None
+
+
+def _bots_test(cfg) -> tuple[int, int | None] | None:
+    """The bots test topic for raw-Project lines, or None unless both ``bots_test_chat_id`` and ``bots_test_topic_id`` are set."""
+    if cfg.bots_test_chat_id is None or cfg.bots_test_topic_id is None:
+        return None
+    return (cfg.bots_test_chat_id, cfg.bots_test_topic_id)
 
 
 def _draft_mom(args, notion, now) -> int:
@@ -359,7 +366,7 @@ def _draft_mom(args, notion, now) -> int:
         gateway = None if args.dry_print or cfg.brief is None else GatewayClient(cfg.brief.gateway_url, cfg.brief.psr_secret)
         result = run_draft_mom(conn, notion, cfg.meeting_notes_data_source, meeting_date, log=lambda t: print(t, flush=True),
                                llm=_task_llm(cfg, "minutes_condense", args.dry_print), dry_print=args.dry_print,
-                               gateway=gateway, cyril_contact_id=_cyril(cfg))
+                               gateway=gateway, cyril_contact_id=_cyril(cfg), raw_destination=_bots_test(cfg))
     except MomAlreadySent as exc:
         print(f"draft-mom refused: {exc}", file=sys.stderr)
         return 1

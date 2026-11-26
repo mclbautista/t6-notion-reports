@@ -1,6 +1,7 @@
 """Draft the PSR minutes (written through the t6 API): after the Monday 11:00 snapshot, or by hand with ``draft-mom``."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -39,10 +40,11 @@ def run_draft_mom(
     conn: sqlite3.Connection, notion, meeting_notes_ds: str,
     meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
     dry_print: bool = False, out: Callable[[str], None] = print,
-    gateway=None, cyril_contact_id: str | None = None,
+    gateway=None, cyril_contact_id: str | None = None, raw_destination: tuple[int, int | None] | None = None,
 ) -> MomResult:
     """Draft the minutes. A write the API cannot confirm (Ambiguous) trashes the half-built page when its id is known,
-    DMs Cyril through ``gateway`` (when given, with ``cyril_contact_id``) and raises; nothing is retried."""
+    DMs Cyril through ``gateway`` (when given, with ``cyril_contact_id``) and raises; nothing is retried. Once the page
+    exists, each raw Project gets one line (code and rule kind) in ``raw_destination`` (chat, topic) through ``gateway``."""
     pair = mom_diff_pair(conn, meeting_date)
     if pair is None:
         log("mom page=none reason=no Monday snapshot with an earlier Friday one")
@@ -101,6 +103,8 @@ def run_draft_mom(
     log(f"mom date={meeting_date} shown={len(draft.entries)} unchanged={len(draft.unchanged)} "
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
     _log_raw(draft, new_state, log)
+    if gateway is not None and raw_destination is not None:
+        _send_raw(draft, new_state, meeting_date, gateway, raw_destination, log)
     return MomResult(page_id, len(draft.entries), len(draft.unchanged))
 
 
@@ -135,11 +139,53 @@ def _failed_draft(client, exc: MinutesAmbiguous, meeting_date: date, contacts, g
         log(f"mom failure dm failed error={type(exc_gw).__name__}")
 
 
+def _project_code(new_state: dict[str, dict[str, object]], page_id: str) -> str:
+    return squash(str(new_state.get(page_id, {}).get("Project Code") or ""))
+
+
 def _log_raw(draft: Draft, new_state: dict[str, dict[str, object]], log: Callable[[str], None]) -> None:
     for e in draft.entries:
         if e.raw_fallback:
-            code = squash(str(new_state.get(e.page_id, {}).get("Project Code") or "")) or e.label
+            code = _project_code(new_state, e.page_id) or e.label
             log(f"mom raw project={code} reason={e.raw_reason}")
+
+
+_GROUNDING_KINDS = (  # (start of the grounding reason, kind); a reason that names a word ends up "grounding word"
+    ("date ", "grounding date"), ("number ", "grounding number"), ("episode ", "grounding episode"),
+    ("unresolved placeholder", "grounding placeholder"), ("more than one date", "grounding older date"),
+    ("older date", "grounding older date"), ("no bullets", "grounding no bullets"),
+)
+_REFUSED = re.compile(r"refused rule=([a-z_]+) failure=([a-z_]+)$")
+
+
+def rule_kind(reason: str | None) -> str:
+    """The kind of rule that sent a Project raw, from ``condense_bullets``' reason, without the word it names."""
+    reason = reason or ""
+    if reason.startswith("grounding: "):
+        why = reason[len("grounding: "):]
+        return next((kind for start, kind in _GROUNDING_KINDS if why.startswith(start)), "grounding word")
+    if (refused := _REFUSED.match(reason)) is not None:
+        return f"{refused.group(1)} {refused.group(2)}"
+    if reason.startswith("output invalid"):
+        return "output invalid"
+    return "llm error"
+
+
+def _send_raw(draft: Draft, new_state: dict[str, dict[str, object]], meeting_date: date, gateway,
+              destination: tuple[int, int | None], log: Callable[[str], None]) -> None:
+    """One line per raw Project in the bots test topic: its code and rule kind, never a name or the word. A failed
+    send is logged; the draft has already succeeded."""
+    chat, topic = destination
+    for e in draft.entries:
+        if not e.raw_fallback:
+            continue
+        code = _project_code(new_state, e.page_id).upper()
+        key = f"psr-raw-{meeting_date.isoformat()}-{code or e.page_id}"  # no code: the page id keeps the key unique
+        text = escape(f"PSR MOM {meeting_date.isoformat()} raw: {code or 'NO-CODE'} ({rule_kind(e.raw_reason)})")
+        try:
+            gateway.notify(chat, text, key, topic)
+        except GatewayError as exc:
+            log(f"mom raw telegram failed project={code} error={type(exc).__name__}")
 
 
 def _local_date(taken_at: str) -> date:
