@@ -7,13 +7,16 @@ from datetime import date, datetime
 from typing import Callable
 
 from .holidays import upcoming_entries
+from .telegram_html import escape
 from .llm_api import LlmClient
-from .minutes_api import MinutesApiError, create_draft, trash_draft
+from .gateway import GatewayError
+from .minutes_api import MinutesAmbiguous, MinutesApiError, create_draft, trash_draft
 from .mom import Draft, build_draft, condense_draft, render_blocks
 from .schedule import MANILA
 from .snapshots import load_snapshot, mom_diff_pair, snapshot_info, squash
 
 TITLE_PREFIX = "PSR MOM"
+NOTION_PAGE = "https://www.notion.so/"
 
 
 class MomAlreadySent(Exception):
@@ -35,7 +38,10 @@ def run_draft_mom(
     conn: sqlite3.Connection, notion, meeting_notes_ds: str,
     meeting_date: date, log: Callable[[str], None] = print, llm: LlmClient | None = None,
     dry_print: bool = False, out: Callable[[str], None] = print,
+    gateway=None, cyril_contact_id: str | None = None,
 ) -> MomResult:
+    """Draft the minutes. A write the API cannot confirm (Ambiguous) trashes the half-built page when its id is known,
+    DMs Cyril through ``gateway`` (when given, with ``cyril_contact_id``) and raises; nothing is retried."""
     pair = mom_diff_pair(conn, meeting_date)
     if pair is None:
         log("mom page=none reason=no Monday snapshot with an earlier Friday one")
@@ -79,7 +85,11 @@ def run_draft_mom(
 
     if len(draft.project_ids) > 100:
         log(f"mom date={meeting_date} project_cap=100 dropped={len(draft.project_ids) - 100}")
-    page_id = create_draft(notion.client, title, meeting_date, draft.project_ids[:100], [i for i, _ in people], blocks)
+    try:
+        page_id = create_draft(notion.client, title, meeting_date, draft.project_ids[:100], [i for i, _ in people], blocks)
+    except MinutesAmbiguous as exc:
+        _failed_draft(notion.client, exc, meeting_date, all_contacts, gateway, cyril_contact_id, log)
+        raise
     # A re-run replaces the unsent draft, but only once the new page exists. A failed trash leaves two
     # unsent drafts; the next run finds both by title and trashes them.
     for old_page in existing:
@@ -91,6 +101,49 @@ def run_draft_mom(
         f"projects={len(draft.project_ids)} others={len(others)} condensed={condensed} raw={raw}")
     _log_raw(draft, new_state, log)
     return MomResult(page_id, len(draft.entries), len(draft.unchanged))
+
+
+def _failed_draft(client, exc: MinutesAmbiguous, meeting_date: date, contacts, gateway, cyril_contact_id: str | None,
+                  log: Callable[[str], None]) -> None:
+    """Trash the half-built page (when its id is known), log one line and DM Cyril. Never a title or page text."""
+    trash_error = None
+    if exc.page_id:
+        try:
+            trash_draft(client, exc.page_id)
+        except MinutesApiError as trash_exc:
+            trash_error = str(trash_exc)
+    log(f"mom date={meeting_date} failed reason={exc.reason} page={exc.page_id or 'unknown'}"
+        + (f" trash_failed={trash_error}" if trash_error else ""))
+    rerun = f"draft-mom --date {meeting_date.isoformat()}"
+    if exc.page_id is None:
+        lines = [f"⚠️ The Monday minutes draft failed: {exc.reason}.",
+                 f"The page may exist: check Notion for PSR MOM {meeting_date.isoformat()} and trash it by hand.",
+                 f"Rerun: {rerun}"]
+    else:
+        link = NOTION_PAGE + exc.page_id.replace("-", "")
+        first = f"⚠️ The Monday minutes draft failed: {exc.reason}."
+        if trash_error:
+            lines = [first, f"Trashing the half-built page failed ({trash_error}): trash it by hand: {link}", f"Rerun: {rerun}"]
+        else:
+            lines = [first, f"The half-built page was trashed: {link}", f"Rerun: {rerun}"]
+    _dm_cyril(gateway, contacts, cyril_contact_id, "\n".join(escape(line) for line in lines),
+              f"psr-mom-failed-{meeting_date.isoformat()}", log)
+
+
+def _dm_cyril(gateway, contacts, cyril_contact_id: str | None, text: str, key: str, log: Callable[[str], None]) -> None:
+    """The brief's path: ``cyril_contact_id`` -> the Contact's Telegram ID -> ``gateway.notify``. Logs what stops it."""
+    if gateway is None or not cyril_contact_id:
+        log("mom failure dm skipped: no gateway or cyril_contact_id")
+        return
+    norm = lambda cid: cid.replace("-", "").lower()  # noqa: E731
+    cyril = next((c for cid, c in contacts.items() if norm(cid) == norm(cyril_contact_id)), None)
+    if cyril is None or cyril.telegram_id is None:
+        log("mom failure dm skipped: Cyril has no Telegram ID")
+        return
+    try:
+        gateway.notify(cyril.telegram_id, text, key)
+    except GatewayError as exc:
+        log(f"mom failure dm failed error={type(exc).__name__}")
 
 
 def _log_raw(draft: Draft, new_state: dict[str, dict[str, object]], log: Callable[[str], None]) -> None:

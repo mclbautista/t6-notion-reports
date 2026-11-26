@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from t6.client import Unavailable
-from t6.verbs import Done, Preview, Refused
+from t6.verbs import Ambiguous, Done, Preview, Refused
 
 MANILA = timezone(timedelta(hours=8))
 
@@ -515,6 +515,11 @@ def refused(rule="notion"):
 
 def down():
     return Unavailable("connection refused")
+
+
+def ambiguous(reason="timeout", page_id=None, mismatched=()):
+    """The API's answer to a meeting-notes write it could not confirm (t6-core#699): one pending candidate."""
+    return Ambiguous(candidates=[{"pending": True, "reason": reason, "page_id": page_id, "mismatched": list(mismatched)}])
 
 
 def rules_of(states):
